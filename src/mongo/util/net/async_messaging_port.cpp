@@ -13,18 +13,19 @@ namespace network {
 AsyncMessagingPort::AsyncMessagingPort(ConnectionInfo* const connInfo) : _connInfo(connInfo) {
 }
 
-void asyncSend(Message& toSend, int responseTo) {
+void AsyncMessagingPort::asyncSend(Message& toSend, int responseTo) {
+    //TODO: get rid of nextMessageId
     toSend.header().setId(nextMessageId());
     toSend.header().setResponseTo(responseTo);
     //TODO: Piggyback data is added here
     toSend.isSingleData() ? asyncSendSingle(toSend) : asyncSendMulti(toSend);
 }
 
-void asyncSendSingle(const Message& toSend)  {
-
+void AsyncMessagingPort::asyncSendSingle(const Message& toSend)  {
+    _connInfo->asyncSendMessage(toSend.singleData(), toSend.size());
 }
 
-void asyncSendMulti(const Message& toSend) {
+void AsyncMessagingPort::asyncSendMulti(const Message& toSend) {
 
 }
 

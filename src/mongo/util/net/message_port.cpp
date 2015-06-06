@@ -345,7 +345,7 @@ again:
         return _remoteParsed;
     }
 
-    std::string MessagingPort::localAddr() const {
+    std::string MessagingPort::localAddrString() const {
         return psock->localAddr().getAddr();
     }
 

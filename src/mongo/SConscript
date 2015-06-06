@@ -225,6 +225,7 @@ env.Install(
             "s/server.cpp",
             "s/mongos_options.cpp",
             "s/mongos_options_init.cpp",
+	    "util/net/network_server.cpp",
         ],
         LIBDEPS=[
             's/catalog/legacy/catalog_manager_legacy',

@@ -1,8 +1,5 @@
 Import("env")
 
-env.Library(
-    target="asio",
-    source=[
-        "asio/src/asio.cpp",
-    ]
-)
+env.Library("asio", ["asio/src/asio.cpp"])
+
+env.Append(CCFLAGS=['-Isrc/third_party/asio-asio-1-11-0'])

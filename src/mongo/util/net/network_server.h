@@ -9,6 +9,7 @@
 
 #include "mongo/platform/platform_specific.h"
 
+#include <array>
 #include <asio/include/asio.hpp>
 #include <atomic>
 #include <tuple>
@@ -24,6 +25,8 @@ namespace network {
  */
 
 /*
+ * We really need a _simple_ buffer type (that other buffers can then derive from)
+ *
  * afaict asio leaves state info behind, so it has problems scaling
  * to move socket's io_servce have to get the native socket handle,
  * duplicate the native socket handle, assign the handle to a new socket and io_servicet
@@ -35,7 +38,8 @@ namespace network {
  * 1. ConnectionId
  * 2. MessageId
  */
-
+using BufferSet = std::vector< std::pair<char*, int>>;
+const auto HEADERSIZE = size_t(sizeof(MSGHEADER::Value));
 class Connections;
 /*
  * Functions starting with async return immediately after queueing work
@@ -46,15 +50,13 @@ class Connections;
 MONGO_ALIGN_TO_CACHE class ConnectionInfo {
     MONGO_DISALLOW_COPYING(ConnectionInfo);
 public:
-    static const auto HEADERSIZE = size_t(sizeof(MSGHEADER::Value));
-
     ConnectionInfo(Connections* const owner,
             asio::ip::tcp::socket socket,
             ConnectionId connectionId) :
         _owner(owner),
         _socket(std::move(socket)),
         _connectionId(std::move(connectionId)),
-        _buf(HEADERSIZE)
+        _buf(0)
     { }
 
     MsgData::View& getMsgData() {
@@ -62,8 +64,67 @@ public:
         return reinterpret_cast<MsgData::View&>(*_buf.data());
     }
 
+    void closeOnComplete() { _closeOnComplete = true; }
     void asyncReceiveMessage();
-    void asyncSendMessage();
+    void setLastError();
+    //TODO: type checking of handler function
+    //Data should be small, i.e. a pointer or number
+    template <typename Buffer, typename Callback, typename Data>
+    void asyncSendMessage(Buffer&& buffer,
+            Data data = nullptr,
+            Callback callback = [] (ConnectionInfo, size_t, std::error_code, Data) {}) {
+        //We have no guarantee the sender persists
+        //TODO: revisit this and see what assumptions are possible about existence
+        _socket.async_send(std::forward<Buffer>(buffer),
+                [this, data, callback](std::error_code ec, size_t len) {
+            _bytesOut += len;
+            callback(this, len, ec, data);
+            if (ec) {
+                asyncSocketError(ec);
+                return;
+            }
+            if (len != HEADERSIZE) {
+                log() << "Error, invalid header size received: " << len << std::endl;
+                asyncSocketShutdownRemove(conn);
+                return;
+            }
+            doClose() ? asyncSocketShutdownRemove() : asyncReceiveMessage();
+        });
+    }
+
+    //For single data Message
+    template <typename Callback, typename Data>
+    void asyncSendMessage(const char* const buf, const size_t size,
+            Data data = nullptr,
+            Callback callback = [] (ConnectionInfo, size_t, std::error_code, Data) {}) {
+        //We have no guarantee the sender persists
+        //TODO: revisit this and see what assumptions are possible about existence, need to copy header regardless
+        _buf.clear();
+        _buf.resize(size);
+        memcpy(_buf.data(), buf, size);
+        asyncSendMessage(asio::const_buffer(_buf.data(), size), data, callback);
+    }
+
+    //For multi data Message
+    template <typename Callback, typename Data>
+    void asyncSendMessage(const char* const buf, const size_t size,
+            BufferSet* buffers,
+            Data data = nullptr,
+            Callback callback = [] (ConnectionInfo, size_t, std::error_code, Data) {}) {
+        //We have no guarantee the sender persists
+        //TODO: revisit this and see what assumptions are possible about existence
+        //Copy the header into _buf, need to do this regardless so we have the info
+        _buf.clear();
+        _buf.resize(HEADERSIZE);
+        memcpy(_buf.data(), buf, HEADERSIZE);
+        _buffers = std::move(*buffers);
+        std::vector<asio::const_buffer> ioBuf;
+        ioBuf.emplace_back(_buf.data(), HEADERSIZE);
+        for (auto& i: _buffers) {
+            ioBuf.emplace_back(i.first, i.second);
+        }
+        asyncSendMessage(ioBuf, data, callback);
+    }
 
 private:
     void asyncGetHeader();
@@ -71,6 +132,7 @@ private:
     void asyncQueueMessage();
     void asyncSocketError(std::error_code ec);
     void asyncSocketShutdownRemove();
+    bool doClose() { return _closeOnComplete; }
 
     //A cache line is 64 bytes, or 8x8 byte numbers
     std::atomic<uint64_t> _bytesIn{};
@@ -87,6 +149,10 @@ private:
     Connections* const _owner;
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector _buf;
+    BufferSet _buffers;
+    //TODO: Add last error saving
+    //TODO: Turn this into state and verify it's correct at all stages
+    std::atomic<bool> _closeOnComplete{};
 };
 
 class ListenerPool {

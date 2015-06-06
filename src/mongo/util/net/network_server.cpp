@@ -145,17 +145,18 @@ void ConnectionInfo::asyncReceiveMessage() {
 }
 
 void ConnectionInfo::asyncGetHeader() {
-    static_assert(NETWORK_MIN_MESSAGE_SIZE > ConnectionInfo::HEADERSIZE, "Min alloc must be > message header size");
-    //TODO: capture average message size and resize up if it's higher than min
+    static_assert(NETWORK_MIN_MESSAGE_SIZE > HEADERSIZE, "Min alloc must be > message header size");
+    //TODO: capture average message size and use that if > min
+    _buf.clear();
     _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
-    auto b = asio::buffer(_buf.data(), ConnectionInfo::HEADERSIZE);
-    asio::async_read(_socket, b, [this](std::error_code ec, size_t len) {
+    _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
+            [this](std::error_code ec, size_t len) {
         _bytesIn += len;
         if (ec) {
             asyncSocketError(ec);
             return;
         }
-        if (len != ConnectionInfo::HEADERSIZE) {
+        if (len != HEADERSIZE) {
             log() << "Error, invalid header size received: " << len << std::endl;
             asyncSocketShutdownRemove(conn);
             return;
@@ -170,21 +171,21 @@ void ConnectionInfo::asyncGetMessage() {
     _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
     //Message size may be -1 to check endian?  Not sure if that is current spec
     fassert(-1, msgSize >= 0);
-    if ( static_cast<size_t>(msgSize) < ConnectionInfo::HEADERSIZE ||
+    if ( static_cast<size_t>(msgSize) < HEADERSIZE ||
          static_cast<size_t>(msgSize) > MaxMessageSizeBytes ) {
         LOG(0) << "recv(): message len " << len << " is invalid. "
-               << "Min " << ConnectionInfo::HEADERSIZE << " Max: " << MaxMessageSizeBytes;
+               << "Min " << HEADERSIZE << " Max: " << MaxMessageSizeBytes;
         //TODO: can we return an error on the socket to the client?
         asyncSocketShutdownRemove(conn);
     }
-    auto b = asio::buffer(_buf.data() + ConnectionInfo::HEADERSIZE, msgSize - ConnectionInfo::HEADERSIZE);
-    asio::async_read(_socket, b, [this](std::error_code ec, size_t len) {
+    _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
+            [this](std::error_code ec, size_t len) {
         _bytesIn += len;
         if (ec) {
             asyncSocketError(ec);
             return;
         }
-        if (len != ConnectionInfo::HEADERSIZE) {
+        if (len != HEADERSIZE) {
             log() << "Error, invalid header size received: " << len << std::endl;
             asyncSocketShutdownRemove(conn);
             return;

@@ -375,7 +375,7 @@ namespace mongo {
         }
 
         const MsgVec& multiData() const {
-            massert( 13273, "multi data buffer expected", !isSingleData() );
+            verify( !isSingleData() );
             return _data;
         }
 
