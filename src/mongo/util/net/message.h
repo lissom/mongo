@@ -327,6 +327,8 @@ namespace mongo {
     } // namespace MsgData
 
     class Message {
+        //This isn't copied anywhere and copying is non-trivial
+        MONGO_DISALLOW_COPYING(Message);
     public:
         // we assume here that a vector with initial size 0 does no allocation (0 is the default, but wanted to make it explicit).
         Message() : _buf( 0 ), _data( 0 ), _freeIt( false ) {}
@@ -334,14 +336,27 @@ namespace mongo {
             _buf( 0 ), _data( 0 ), _freeIt( false ) {
             _setData( reinterpret_cast< char* >( data ), freeIt );
         };
-        Message(Message& r) : _buf( 0 ), _data( 0 ), _freeIt( false ) {
-            *this = r;
+
+        Message(Message&& rhs) : _buf(rhs._buf), _data(std::move(rhs._data)), _freeIt(rhs._freeIt) {
+            rhs._buf = nullptr;
+            rhs._freeIt = false;
         }
+
+        Message& operator=(Message&& r) {
+            //we could get tricky, but it appears _freeIt is always is false in the code
+            if (_freeIt)
+                reset();
+            _data = std::move(r._data);
+            _buf = r._buf;
+            _freeIt = r._freeIt;
+            r._buf = nullptr;
+            r._freeIt = false;
+            return *this;
+        }
+
         ~Message() {
             reset();
         }
-
-        SockAddr _from;
 
         MsgData::View header() const {
             verify( !empty() );
@@ -394,20 +409,6 @@ namespace mongo {
             }
             reset();
             _setData( buf, true );
-        }
-
-        // vector swap() so this is fast
-        Message& operator=(Message& r) {
-            verify( empty() );
-            verify( r._freeIt );
-            _buf = r._buf;
-            r._buf = 0;
-            if ( r._data.size() > 0 ) {
-                _data.swap( r._data );
-            }
-            r._freeIt = false;
-            _freeIt = true;
-            return *this;
         }
 
         void reset() {

@@ -32,38 +32,65 @@ namespace network {
  * jemalloc arenas
  */
 
-struct ConnectionInfo {
+class Connections;
+/*
+ * Functions starting with async return immediately after queueing work
+ * _socket is *not* cleaned up properly for the OS, the holder does this
+ *
+ * Do not make virtual, counting cache lines for counters
+ */
+MONGO_ALIGN_TO_CACHE class ConnectionInfo {
+    MONGO_DISALLOW_COPYING(ConnectionInfo);
+public:
+    static const auto HEADERSIZE = size_t(sizeof(MSGHEADER::Value));
+
+    ConnectionInfo(Connections* const owner,
+            asio::ip::tcp::socket socket,
+            std::string connectionId) :
+        _owner(owner),
+        _socket(std::move(socket)),
+        _connectionId(std::move(connectionId)),
+        _buf(HEADERSIZE)
+    { }
+
+    MsgData::View& getMsgData() {
+        verify(_buf.data());
+        return reinterpret_cast<MsgData::View&>(*_buf.data());
+    }
+
+    void asyncReceiveMessage();
+    void asyncSendMessage();
+
+private:
+    void asyncGetHeader();
+    void asyncGetMessage();
+    void asyncQueueMessage();
+    void asyncSocketError(std::error_code ec);
+    void asyncSocketShutdownRemove();
+
+    //A cache line is 64 bytes, or 8x8 byte numbers
+    std::atomic<uint64_t> _bytesIn{};
+    std::atomic<uint64_t> _bytesOut{};
+    std::atomic<uint64_t> _queries{};
+    std::atomic<uint64_t> _inserts{};
+    std::atomic<uint64_t> _updates{};
+    std::atomic<uint64_t> _deletes{};
+    std::atomic<uint64_t> _commands{};
+    std::atomic<uint64_t> _dummy{}; //one cache line left for counters
+    //pos 8, place for one more counter
     asio::ip::tcp::socket _socket;
     std::string _connectionId;
-    std::vector<char> _buf;
-
-    ConnectionInfo(asio::ip::tcp::socket socket, std::string connectionId) :
-        _socket(std::move(socket)),
-        _connectionId(std::move(connectionId))
-    { }
+    Connections* const _owner;
+    //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
+    std::vector _buf;
 };
 
 class ListenerPool {
     uint64_t connectionCount;
 };
 
-/*
- * Using unsigned ints so they can safely rollover
- * Not used as we're not gather stats presently
- */
-MONGO_ALIGN_TO_CACHE struct ConnStats {
-    std::atomic<uint64_t> bytesIn{};
-    std::atomic<uint64_t> bytesOut{};
-    const char connId[2];
-};
-
-/*
- * Thread
- */
-class ConnThread {
-    ConnStats connStats;
-};
-
+//If this changes the mask for allocation needs to change too
+const size_t NETWORK_MIN_MESSAGE_SIZE = 1024;
 const size_t NETWORK_DEFAULT_STACK_SIZE = 1024 * 1024;
 /*
  * Options for a network server
@@ -82,13 +109,13 @@ public:
 };
 
 /*
- * TODO: NUMA aware handling
+ * TODO: NUMA aware handling will be added one day, so NONE of this is static
+ * All funcions starting with async are calling from async functions, should not
+ * take locks if at all possible
  */
 class Connections {
 public:
     void newConnHandler(asio::ip::tcp::socket&& socket);
-    void GetHeader(ConnectionInfo* conn);
-    void GetMessage(ConnectionInfo* conn);
 
 private:
     std::unordered_map<ConnectionInfo*, std::unique_ptr<ConnectionInfo>> _conns;
@@ -102,8 +129,8 @@ private:
 class NetworkServer : public Server {
 public:
     NetworkServer(const NetworkOptions options, Connections* connections);
-    void run() final;
     ~NetworkServer() final;
+    void run() final;
 
 private:
     struct Initiator {
@@ -116,6 +143,7 @@ private:
     asio::io_service _service;
     //Holds the end points and currently waiting socket
     std::vector<Initiator> _endPoints;
+    std::vector<boost::thread> _threads;
 
     void serviceRun();
     void startAllWaits();

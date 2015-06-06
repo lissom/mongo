@@ -25,18 +25,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
-#include "mongo/util/net/network_server.h"
-
-
-
 #include "mongo/util/net/message.h"
-
-
+#include "mongo/util/net/network_server.h"
 
 namespace mongo {
 namespace network {
 
-OnConnect OnConnectEvent = nullptr;
 const std::string NETWORK_PREFIX = "conn";
 
 NetworkServer::NetworkServer(NetworkOptions options, Connections* connections) :
@@ -69,11 +63,13 @@ void NetworkServer::startAllWaits() {
 void NetworkServer::startWait(Initiator* const initiator) {
     initiator->_acceptor.async_accept(initiator->_socket, [this, initiator] (std::error_code ec) {
         if (!ec)
-            _connections->newConn(std::move(socket));
+            //TOOO: Ensure that move is enabled: ASIO_HAS_MOVE
+            _connections->newConnHandler(std::move(initiator->_socket));
         else {
             //Clear the socket just in case
             asio::ip::tcp::socket sock(std::move(initiator->_socket));
-            (void) sock;
+            sock.shutdown(asio::socket_base::shutdown_type::shutdown_both);
+            sock.close();
             switch (ec) {
             default:
                 log() << "Error code: " << ec << " on port " << initiator->_acceptor.local_endpoint()
@@ -113,8 +109,8 @@ void NetworkServer::run() {
     boost::thread::attributes attrs;
     attrs.set_stack_size(NETWORK_DEFAULT_STACK_SIZE);
     try {
-        for (int i = 0; i < threads; ++i)
-            boost::thread(attrs, [this]{ serviceRun(); });
+        for(; threads > 0; --threads)
+            _threads.emplace_back(attrs, [this]{ serviceRun(); });
     }
     catch (boost::thread_resource_error&) {
         log() << "can't create new thread for listening, shutting down" << std::endl;
@@ -128,45 +124,95 @@ void NetworkServer::run() {
 
 NetworkServer::~NetworkServer() {
     _service.stop();
+    for (auto& t: _threads)
+        t.join();
 }
 
 
 void Connections::newConnHandler(asio::ip::tcp::socket&& socket) {
-    std::unique_ptr<ConnectionInfo> ci(std::move(socket), NETWORK_PREFIX + std::to_string(++_connectionCount));
+    std::unique_ptr<ConnectionInfo> ci(std::move(socket),
+            NETWORK_PREFIX + std::to_string(++_connectionCount));
     ConnectionInfo* conn = ci.get();
     std::unique_lock lock(_mutex);
     auto pos = _conns.emplace(ci.get(), ci);
-    assert(pos.second);
+    verify(pos.second);
     (void)pos;
     lock.release();
-    GetHeader(conn);
+    conn->asyncReceiveMessage();
 }
 
-void Connections::GetHeader(ConnectionInfo* conn) {
-    conn->_buf(sizeof(MSGHEADER::Value));
-    asio::buffer b(conn->_buf.data(), conn->_buf.size());
-    asio::async_read(b, [this, conn](std::error_code ec, size_t len) {
-    })
-    if(asio::error_code err = conn->_socket.async_receive(
-            asio::buffer(conn->_buf),
-            [this, conn] {
+void ConnectionInfo::asyncReceiveMessage() {
+    asyncGetHeader();
+}
 
-    })) {
-        log() << "Error waiting for header " << err << std::endl;
-        conn->_socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
-        std::unique_lock lock(_mutex);
-        auto pos = std::find_if(_conns.begin(), _conns.end(), [conn](const ConnectionInfo &ci)
-                ->bool {
-            return conn == &ci;
-        });
-        assert(pos != _conns.end());
-        lock.release();
+void ConnectionInfo::asyncGetHeader() {
+    static_assert(NETWORK_MIN_MESSAGE_SIZE > ConnectionInfo::HEADERSIZE, "Min alloc must be > message header size");
+    //TODO: capture average message size and resize up if it's higher than min
+    _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
+    auto b = asio::buffer(_buf.data(), ConnectionInfo::HEADERSIZE);
+    asio::async_read(_socket, b, [this](std::error_code ec, size_t len) {
+        _bytesIn += len;
+        if (ec) {
+            asyncSocketError(ec);
+            return;
+        }
+        if (len != ConnectionInfo::HEADERSIZE) {
+            log() << "Error, invalid header size received: " << len << std::endl;
+            asyncSocketShutdownRemove(conn);
+            return;
+        }
+        asyncGetMessage(conn);
+    });
+}
 
+void ConnectionInfo::asyncGetMessage() {
+    const auto msgSize = getMsgData().getLen();
+    //Forcing into the nearest 1024 size block.  Assuming this was to always hit a tcmalloc size?
+    _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
+    //Message size may be -1 to check endian?  Not sure if that is current spec
+    fassert(-1, msgSize >= 0);
+    if ( static_cast<size_t>(msgSize) < ConnectionInfo::HEADERSIZE ||
+         static_cast<size_t>(msgSize) > MaxMessageSizeBytes ) {
+        LOG(0) << "recv(): message len " << len << " is invalid. "
+               << "Min " << ConnectionInfo::HEADERSIZE << " Max: " << MaxMessageSizeBytes;
+        //TODO: can we return an error on the socket to the client?
+        asyncSocketShutdownRemove(conn);
     }
+    auto b = asio::buffer(_buf.data() + ConnectionInfo::HEADERSIZE, msgSize - ConnectionInfo::HEADERSIZE);
+    asio::async_read(_socket, b, [this](std::error_code ec, size_t len) {
+        _bytesIn += len;
+        if (ec) {
+            asyncSocketError(ec);
+            return;
+        }
+        if (len != ConnectionInfo::HEADERSIZE) {
+            log() << "Error, invalid header size received: " << len << std::endl;
+            asyncSocketShutdownRemove(conn);
+            return;
+        }
+        asyncQueueMessage(conn);
+    });
 }
 
-void Connections::GetMessage(ConnectionInfo* conn) {
+void ConnectionInfo::asyncQueueMessage() {
 
+}
+
+void ConnectionInfo::asyncSocketError(std::error_code ec) {
+    fassert(-1, ec != 0);
+    log() << "Error waiting for header " << ec << std::endl;
+    asyncSocketShutdownRemove(conn);
+}
+
+void ConnectionInfo::asyncSocketShutdownRemove() {
+    _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
+    _socket.close();
+    //Now that the socket's work is done, post to the async work queue to remove it
+    _socket.get_io_service().post([this]{
+        std::unique_lock lock(_owner->_mutex);
+        verify(_owner->_conns.erase(this));
+        lock.release();
+    });
 }
 
 /*
@@ -177,11 +223,7 @@ void Connections::GetMessage(ConnectionInfo* conn) {
 int z = (len+1023)&0xfffffc00;
 
 MONGO_ALIGN_TO_CACHE struct ConnStats {
-    uint64_t queries{};
-    uint64_t inserts{};
-    uint64_t updates{};
-    uint64_t deletes{};
-    uint64_t commands{};
+
 };
 
     try {
@@ -203,7 +245,23 @@ MONGO_ALIGN_TO_CACHE struct ConnStats {
         error() << "Uncaught std::exception: " << e.what() << ", terminating" << std::endl;
         dbexit( EXIT_UNCAUGHT );
     }
-
+    if ( len == 542393671 ) {
+        // an http GET
+        string msg = "It looks like you are trying to access MongoDB over HTTP on the native driver port.\n";
+        LOG( psock->getLogLevel() ) << msg;
+        std::stringstream ss;
+        ss << "HTTP/1.0 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: " << msg.size() << "\r\n\r\n" << msg;
+        string s = ss.str();
+        send( s.c_str(), s.size(), "http" );
+        return false;
+    }
+    else if ( len == -1 ) {
+        // Endian check from the client, after connecting, to see what mode server is running in.
+        unsigned foo = 0x10203040;
+        send( (char *) &foo, 4, "endian" );
+        psock->setHandshakeReceived();
+        goto again;
+    }
  */
 
 } /* namespace network */
