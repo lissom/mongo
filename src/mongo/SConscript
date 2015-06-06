@@ -30,6 +30,7 @@ env.SConscript(
         'crypto',
         'db',
         'dbtests',
+        'executor',
         'installer',
         'logger',
         'platform',
@@ -145,13 +146,13 @@ config_header_substs = (
     ('@mongo_config_have___declspec_thread@', 'MONGO_CONFIG_HAVE___DECLSPEC_THREAD'),
     ('@mongo_config_have___thread@', 'MONGO_CONFIG_HAVE___THREAD'),
     ('@mongo_config_have_execinfo_backtrace@', 'MONGO_CONFIG_HAVE_EXECINFO_BACKTRACE'),
+    ('@mongo_config_have_fips_mode_set@', 'MONGO_CONFIG_HAVE_FIPS_MODE_SET'),
     ('@mongo_config_have_header_unistd_h@', 'MONGO_CONFIG_HAVE_HEADER_UNISTD_H'),
     ('@mongo_config_have_posix_monotonic_clock@', 'MONGO_CONFIG_HAVE_POSIX_MONOTONIC_CLOCK'),
     ('@mongo_config_have_std_is_trivially_copyable@', 'MONGO_CONFIG_HAVE_STD_IS_TRIVIALLY_COPYABLE'),
     ('@mongo_config_have_std_make_unique@', 'MONGO_CONFIG_HAVE_STD_MAKE_UNIQUE'),
     ('@mongo_config_optimized_build@', 'MONGO_CONFIG_OPTIMIZED_BUILD'),
     ('@mongo_config_ssl@', 'MONGO_CONFIG_SSL'),
-    ('@mongo_config_ssl_fips@', 'MONGO_CONFIG_SSL_FIPS'),
     ('@mongo_config_use_gdbserver@', 'MONGO_CONFIG_USE_GDBSERVER'),
 )
 
@@ -189,6 +190,7 @@ mongod = env.Program(
         "db/mongodandmongos",
         "db/mongodwebserver",
         "db/serveronly",
+        "db/repl/storage_interface_impl",
         "util/ntservice",
     ],
 )

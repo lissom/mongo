@@ -41,7 +41,6 @@
 #include "mongo/db/operation_context_noop.h"
 #include "mongo/db/repl/handshake_args.h"
 #include "mongo/db/repl/is_master_response.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/operation_context_repl_mock.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/read_after_optime_args.h"
@@ -57,6 +56,7 @@
 #include "mongo/db/repl/update_position_args.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/write_concern_options.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
@@ -68,6 +68,7 @@ namespace mongo {
 namespace repl {
 namespace {
 
+    using executor::NetworkInterfaceMock;
     typedef ReplicationCoordinator::ReplSetReconfigArgs ReplSetReconfigArgs;
     Status kInterruptedStatus(ErrorCodes::Interrupted, "operation was interrupted");
 
@@ -285,7 +286,7 @@ namespace {
         getNet()->scheduleResponse(
                 noi,
                 startDate + Milliseconds(10),
-                ResponseStatus(RemoteCommandResponse(hbResp.toBSON(), Milliseconds(8))));
+                ResponseStatus(RemoteCommandResponse(hbResp.toBSON(false), Milliseconds(8))));
         getNet()->runUntil(startDate + Milliseconds(10));
         getNet()->exitNetwork();
         ASSERT_EQUALS(startDate + Milliseconds(10), getNet()->now());
@@ -857,7 +858,8 @@ namespace {
 
     TEST_F(ReplCoordTest, AwaitReplicationInterrupt) {
         // Tests that a thread blocked in awaitReplication can be killed by a killOp operation
-        OperationContextReplMock txn;
+        const unsigned int opID = 100;
+        OperationContextReplMock txn{opID};
         assertStartSuccess(
                 BSON("_id" << "mySet" <<
                      "version" << 2 <<
@@ -878,8 +880,6 @@ namespace {
         writeConcern.wTimeout = WriteConcernOptions::kNoTimeout;
         writeConcern.wNumNodes = 2;
 
-        unsigned int opID = 100;
-        txn.setOpID(opID);
 
         // 2 nodes waiting for time2
         awaiter.setOpTime(time2);
@@ -917,6 +917,45 @@ namespace {
             myRid = getReplCoord()->getMyRID();
         }
     };
+
+    TEST_F(ReplCoordTest, UpdateTerm) {
+        ReplCoordTest::setUp();
+        init("mySet/test1:1234,test2:1234,test3:1234");
+
+        assertStartSuccess(
+                BSON("_id" << "mySet" <<
+                     "version" << 1 <<
+                     "members" << BSON_ARRAY(BSON("_id" << 0 << "host" << "test1:1234") <<
+                                             BSON("_id" << 1 << "host" << "test2:1234") <<
+                                             BSON("_id" << 2 << "host" << "test3:1234")) <<
+                     "protocolVersion" << 1),
+                HostAndPort("test1", 1234));
+        getReplCoord()->setMyLastOptime(OpTime(Timestamp (100, 1), 0));
+        ASSERT(getReplCoord()->setFollowerMode(MemberState::RS_SECONDARY));
+        ASSERT_TRUE(getReplCoord()->getMemberState().secondary());
+
+        simulateSuccessfulV1Election();
+
+        ASSERT_EQUALS(1, getReplCoord()->getTerm());
+        ASSERT_TRUE(getReplCoord()->getMemberState().primary());
+
+        // lower term, no change
+        getReplCoord()->updateTerm(0);
+        ASSERT_EQUALS(1, getReplCoord()->getTerm());
+        ASSERT_TRUE(getReplCoord()->getMemberState().primary());
+
+        // same term, no change
+        getReplCoord()->updateTerm(1);
+        ASSERT_EQUALS(1, getReplCoord()->getTerm());
+        ASSERT_TRUE(getReplCoord()->getMemberState().primary());
+
+        // higher term, step down and change term
+        Handle cbHandle;
+        getReplCoord()->updateTerm_forTest(2);
+        ASSERT_EQUALS(2, getReplCoord()->getTerm());
+        ASSERT_TRUE(getReplCoord()->getMemberState().secondary());
+
+    }
 
     TEST_F(StepDownTest, StepDownNotPrimary) {
         OperationContextReplMock txn;
@@ -974,7 +1013,7 @@ namespace {
             hbResp.setOpTime(optime1);
             BSONObjBuilder respObj;
             respObj << "ok" << 1;
-            hbResp.addToBSON(&respObj);
+            hbResp.addToBSON(&respObj, false);
             getNet()->scheduleResponse(noi, getNet()->now(), makeResponseStatus(respObj.obj()));
         }
         while (getNet()->hasReadyRequests()) {
@@ -1162,7 +1201,7 @@ namespace {
             hbResp.setOpTime(optime2);
             BSONObjBuilder respObj;
             respObj << "ok" << 1;
-            hbResp.addToBSON(&respObj);
+            hbResp.addToBSON(&respObj, false);
             getNet()->scheduleResponse(noi, getNet()->now(), makeResponseStatus(respObj.obj()));
         }
         while (getNet()->hasReadyRequests()) {
@@ -1176,7 +1215,8 @@ namespace {
     }
 
     TEST_F(StepDownTest, InterruptStepDown) {
-        OperationContextReplMock txn;
+        const unsigned int opID = 100;
+        OperationContextReplMock txn{opID};
         OpTimeWithTermZero optime1(100, 1);
         OpTimeWithTermZero optime2(100, 2);
         // No secondary is caught up
@@ -1195,8 +1235,6 @@ namespace {
 
         runner.start(&txn);
 
-        unsigned int opID = 100;
-        txn.setOpID(opID);
         txn.setCheckForInterruptStatus(kInterruptedStatus);
         getReplCoord()->interrupt(opID);
 
@@ -1683,7 +1721,7 @@ namespace {
         hbResp.setConfigVersion(2);
         BSONObjBuilder respObj;
         respObj << "ok" << 1;
-        hbResp.addToBSON(&respObj);
+        hbResp.addToBSON(&respObj, false);
         net->scheduleResponse(noi, net->now(), makeResponseStatus(respObj.obj()));
         net->runReadyNetworkOperations();
         getNet()->exitNetwork();
@@ -1753,7 +1791,7 @@ namespace {
         hbResp.setConfigVersion(2);
         BSONObjBuilder respObj;
         respObj << "ok" << 1;
-        hbResp.addToBSON(&respObj);
+        hbResp.addToBSON(&respObj, false);
         net->scheduleResponse(noi, net->now(), makeResponseStatus(respObj.obj()));
         net->runReadyNetworkOperations();
         getNet()->exitNetwork();
@@ -1821,7 +1859,7 @@ namespace {
         hbResp.setConfigVersion(2);
         BSONObjBuilder respObj;
         respObj << "ok" << 1;
-        hbResp.addToBSON(&respObj);
+        hbResp.addToBSON(&respObj, false);
         net->scheduleResponse(noi, net->now(), makeResponseStatus(respObj.obj()));
         net->runReadyNetworkOperations();
         getNet()->exitNetwork();

@@ -33,7 +33,6 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/operation_context_noop.h"
 #include "mongo/db/repl/is_master_response.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/operation_context_repl_mock.h"
 #include "mongo/db/repl/repl_set_heartbeat_args_v1.h"
 #include "mongo/db/repl/repl_set_heartbeat_response.h"
@@ -41,12 +40,15 @@
 #include "mongo/db/repl/replication_coordinator_external_state_mock.h"
 #include "mongo/db/repl/replication_coordinator_impl.h"
 #include "mongo/db/repl/replication_coordinator_test_fixture.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
 namespace repl {
 namespace {
+
+    using executor::NetworkInterfaceMock;
 
     class ReplCoordElectV1Test : public ReplCoordTest {
     protected:
@@ -70,7 +72,7 @@ namespace {
                 hbResp.setState(MemberState::RS_SECONDARY);
                 hbResp.setConfigVersion(rsConfig.getConfigVersion());
                 BSONObjBuilder respObj;
-                net->scheduleResponse(noi, net->now(), makeResponseStatus(hbResp.toBSON()));
+                net->scheduleResponse(noi, net->now(), makeResponseStatus(hbResp.toBSON(true)));
             }
             else {
                 error() << "Black holing unexpected request to " << request.target << ": " <<
@@ -316,7 +318,7 @@ namespace {
         hbResp2.setState(MemberState::RS_SECONDARY);
         net->runUntil(net->now() + Seconds(10)); // run until we've sent a heartbeat request
         const NetworkInterfaceMock::NetworkOperationIterator noi2 = net->getNextReadyRequest();
-        net->scheduleResponse(noi2, net->now(), makeResponseStatus(hbResp2.toBSON()));
+        net->scheduleResponse(noi2, net->now(), makeResponseStatus(hbResp2.toBSON(true)));
         net->runReadyNetworkOperations();
         getNet()->exitNetwork();
 
@@ -346,7 +348,7 @@ namespace {
                 hbResp.setState(MemberState::RS_SECONDARY);
                 hbResp.setConfigVersion(rsConfig.getConfigVersion());
                 BSONObjBuilder respObj;
-                net->scheduleResponse(noi, net->now(), makeResponseStatus(hbResp.toBSON()));
+                net->scheduleResponse(noi, net->now(), makeResponseStatus(hbResp.toBSON(true)));
             }
             else {
                 error() << "Black holing unexpected request to " << request.target << ": " <<

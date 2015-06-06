@@ -77,7 +77,7 @@ namespace mongo {
 namespace repl {
 
 namespace {
-    typedef StatusWith<ReplicationExecutor::CallbackHandle> CBHStatus;
+    using executor::NetworkInterface;
 
     void lockAndCall(boost::unique_lock<boost::mutex>* lk, const stdx::function<void ()>& fn) {
         if (!lk->owns_lock()) {
@@ -159,13 +159,16 @@ namespace {
                                                 ReplicationCoordinatorExternalState* externalState,
                                                 TopologyCoordinator* topCoord,
                                                 int64_t prngSeed,
-                                                ReplicationExecutor::NetworkInterface* network,
+                                                NetworkInterface* network,
+                                                StorageInterface* storage,
                                                 ReplicationExecutor* replExec) :
                         _settings(settings),
                         _replMode(getReplicationModeFromSettings(settings)),
                         _topCoord(topCoord),
                         _replExecutorIfOwned(replExec ? nullptr :
-                                                        new ReplicationExecutor(network, prngSeed)),
+                                                        new ReplicationExecutor(network,
+                                                                                storage,
+                                                                                prngSeed)),
                         _replExecutor(replExec ? *replExec : *_replExecutorIfOwned),
                         _externalState(externalState),
                         _inShutdown(false),
@@ -198,13 +201,15 @@ namespace {
     ReplicationCoordinatorImpl::ReplicationCoordinatorImpl(
             const ReplSettings& settings,
             ReplicationCoordinatorExternalState* externalState,
-            ReplicationExecutor::NetworkInterface* network,
+            NetworkInterface* network,
+            StorageInterface* storage,
             TopologyCoordinator* topCoord,
             int64_t prngSeed) : ReplicationCoordinatorImpl(settings,
                                                            externalState,
                                                            topCoord,
                                                            prngSeed,
                                                            network,
+                                                           storage,
                                                            nullptr) { }
 
     ReplicationCoordinatorImpl::ReplicationCoordinatorImpl(
@@ -216,6 +221,7 @@ namespace {
                                                            externalState,
                                                            topCoord,
                                                            prngSeed,
+                                                           nullptr,
                                                            nullptr,
                                                            replExec) { }
 
@@ -461,25 +467,25 @@ namespace {
     }
 
     bool ReplicationCoordinatorImpl::setFollowerMode(const MemberState& newState) {
-        StatusWith<ReplicationExecutor::EventHandle> finishedSettingFollowerState =
+        StatusWith<ReplicationExecutor::EventHandle> finishedSettingFollowerMode =
             _replExecutor.makeEvent();
-        if (finishedSettingFollowerState.getStatus() == ErrorCodes::ShutdownInProgress) {
+        if (finishedSettingFollowerMode.getStatus() == ErrorCodes::ShutdownInProgress) {
             return false;
         }
-        fassert(18812, finishedSettingFollowerState.getStatus());
+        fassert(18812, finishedSettingFollowerMode.getStatus());
         bool success = false;
         CBHStatus cbh = _replExecutor.scheduleWork(
                 stdx::bind(&ReplicationCoordinatorImpl::_setFollowerModeFinish,
                            this,
                            stdx::placeholders::_1,
                            newState,
-                           finishedSettingFollowerState.getValue(),
+                           finishedSettingFollowerMode.getValue(),
                            &success));
         if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
             return false;
         }
         fassert(18699, cbh.getStatus());
-        _replExecutor.waitForEvent(finishedSettingFollowerState.getValue());
+        _replExecutor.waitForEvent(finishedSettingFollowerMode.getValue());
         return success;
     }
 
@@ -529,10 +535,10 @@ namespace {
 
         const PostMemberStateUpdateAction action =
             _updateMemberStateFromTopologyCoordinator_inlock();
-        *success = true;
-        _replExecutor.signalEvent(finishedSettingFollowerMode);
         lk.unlock();
         _performPostMemberStateUpdateAction(action);
+        *success = true;
+        _replExecutor.signalEvent(finishedSettingFollowerMode);
     }
 
     bool ReplicationCoordinatorImpl::isWaitingForApplierToDrain() {
@@ -767,7 +773,7 @@ namespace {
     }
 
     ReadAfterOpTimeResponse ReplicationCoordinatorImpl::waitUntilOpTime(
-            const OperationContext* txn,
+            OperationContext* txn,
             const ReadAfterOpTimeArgs& settings) {
         const auto& ts = settings.getOpTime();
         const auto& timeout = settings.getTimeout();
@@ -1035,7 +1041,7 @@ namespace {
     }
 
     ReplicationCoordinator::StatusAndDuration ReplicationCoordinatorImpl::awaitReplication(
-            const OperationContext* txn,
+            OperationContext* txn,
             const OpTime& opTime,
             const WriteConcernOptions& writeConcern) {
         Timer timer;
@@ -1045,7 +1051,7 @@ namespace {
 
     ReplicationCoordinator::StatusAndDuration
             ReplicationCoordinatorImpl::awaitReplicationOfLastOpForClient(
-                    const OperationContext* txn,
+                    OperationContext* txn,
                     const WriteConcernOptions& writeConcern) {
         Timer timer;
         boost::unique_lock<boost::mutex> lock(_mutex);
@@ -1060,7 +1066,7 @@ namespace {
     ReplicationCoordinator::StatusAndDuration ReplicationCoordinatorImpl::_awaitReplication_inlock(
             const Timer* timer,
             boost::unique_lock<boost::mutex>* lock,
-            const OperationContext* txn,
+            OperationContext* txn,
             const OpTime& opTime,
             const WriteConcernOptions& writeConcern) {
 
@@ -2541,6 +2547,9 @@ namespace {
         if (!isV1ElectionProtocol()) {
             return {ErrorCodes::BadValue, "not using election protocol v1"};
         }
+
+        updateTerm(args.getTerm());
+
         Status result{ErrorCodes::InternalError, "didn't set status in processReplSetRequestVotes"};
         CBHStatus cbh = _replExecutor.scheduleWork(
             stdx::bind(&ReplicationCoordinatorImpl::_processReplSetRequestVotes_finish,
@@ -2558,9 +2567,9 @@ namespace {
             lastVote.setTerm(args.getTerm());
             lastVote.setCandidateId(args.getCandidateId());
 
-            Status status = _externalState->storeLocalConfigDocument(txn, lastVote.toBSON());
+            Status status = _externalState->storeLocalLastVoteDocument(txn, lastVote);
             if (!status.isOK()) {
-                error() << "replSetReconfig failed to store config document; " << status;
+                error() << "replSetRequestVotes failed to store LastVote document; " << status;
                 return status;
             }
 
@@ -2589,6 +2598,9 @@ namespace {
         if (!isV1ElectionProtocol()) {
             return {ErrorCodes::BadValue, "not using election protocol v1"};
         }
+
+        updateTerm(args.getTerm());
+
         Status result{ErrorCodes::InternalError,
                       "didn't set status in processReplSetDeclareElectionWinner"};
         CBHStatus cbh = _replExecutor.scheduleWork(
@@ -2733,6 +2745,75 @@ namespace {
             return;
         }
         *term = _topCoord->getTerm();
+    }
+
+    bool ReplicationCoordinatorImpl::updateTerm(long long term) {
+        bool updated = false;
+        CBHStatus cbh = _replExecutor.scheduleWork(
+            stdx::bind(&ReplicationCoordinatorImpl::_updateTerm_helper,
+                       this,
+                       stdx::placeholders::_1,
+                       term,
+                       &updated,
+                       nullptr));
+        if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
+            return false;
+        }
+        fassert(28670, cbh.getStatus());
+        _replExecutor.wait(cbh.getValue());
+        return updated;
+    }
+
+    bool ReplicationCoordinatorImpl::updateTerm_forTest(long long term) {
+        bool updated = false;
+        Handle cbHandle;
+        CBHStatus cbh = _replExecutor.scheduleWork(
+            stdx::bind(&ReplicationCoordinatorImpl::_updateTerm_helper,
+                       this,
+                       stdx::placeholders::_1,
+                       term,
+                       &updated,
+                       &cbHandle));
+        if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
+            return false;
+        }
+        fassert(28673, cbh.getStatus());
+        _replExecutor.wait(cbh.getValue());
+        _replExecutor.wait(cbHandle);
+        return updated;
+    }
+
+    void ReplicationCoordinatorImpl::_updateTerm_helper(
+            const ReplicationExecutor::CallbackData& cbData,
+            long long term,
+            bool* updated,
+            Handle* cbHandle) {
+        if (cbData.status == ErrorCodes::CallbackCanceled) {
+            return;
+        }
+
+        *updated = _updateTerm_incallback(term, cbHandle);
+    }
+
+    bool ReplicationCoordinatorImpl::_updateTerm_incallback(long long term, Handle* cbHandle) {
+        bool updated = _topCoord->updateTerm(term);
+
+        if (updated && getMemberState().primary()) {
+            log() << "stepping down from primary, because a new term has begun";
+            _topCoord->prepareForStepDown();
+            CBHStatus cbh = _replExecutor.scheduleWorkWithGlobalExclusiveLock(
+                    stdx::bind(&ReplicationCoordinatorImpl::_stepDownFinish,
+                               this,
+                               stdx::placeholders::_1));
+            if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
+                return true;
+            }
+            fassert(28672, cbh.getStatus());
+            if (cbHandle) {
+                *cbHandle = cbh.getValue();
+            }
+        }
+        return updated;
     }
 
 } // namespace repl

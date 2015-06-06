@@ -36,6 +36,7 @@
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/clientcursor.h"
+#include "mongo/db/namespace_string.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/stdx/condition_variable.h"
@@ -55,29 +56,32 @@ namespace repl {
         typedef std::vector<BSONObj> Documents;
 
         /**
-         * Documents in current batch with cursor ID.
-         * If cursor ID is zero, there will be no additional batches.
+         * Documents in current batch with cursor ID and associated namespace name.
+         * If cursor ID is zero, there are no additional batches.
          */
         struct BatchData {
-            BatchData();
-            BatchData(CursorId theCursorId, Documents theDocuments);
-            CursorId cursorId;
+            BatchData() = default;
+            BatchData(CursorId theCursorId, const NamespaceString& theNss, Documents theDocuments);
+            CursorId cursorId = 0;
+            NamespaceString nss;
             Documents documents;
         };
 
         /**
          * Represents next steps of fetcher.
          */
-        enum class NextAction {
+        enum class NextAction : int {
             kInvalid=0,
             kNoAction=1,
-            kContinue=2
+            kGetMore=2
         };
 
         /**
          * Type of a fetcher callback function.
          */
-        typedef stdx::function<void (const StatusWith<BatchData>&, NextAction*)> CallbackFn;
+        typedef stdx::function<void (const StatusWith<BatchData>&,
+                                     NextAction*,
+                                     BSONObjBuilder*)> CallbackFn;
 
         /**
          * Creates Fetcher task but does not schedule it to be run by the executor.

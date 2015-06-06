@@ -38,7 +38,6 @@
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/client/find_and_modify_request.h"
 #include "mongo/db/catalog/document_validation.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
@@ -55,6 +54,7 @@
 #include "mongo/db/ops/update_lifecycle_impl.h"
 #include "mongo/db/ops/update_request.h"
 #include "mongo/db/query/explain.h"
+#include "mongo/db/query/find_and_modify_request.h"
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/repl/repl_client_info.h"
@@ -466,11 +466,12 @@ namespace {
             } MONGO_WRITE_CONFLICT_RETRY_LOOP_END(txn, "findAndModify", nsString.ns());
 
             WriteConcernResult res;
-            wcResult = waitForWriteConcern(
-                    txn,
-                    repl::ReplClientInfo::forClient(txn->getClient()).getLastOp(),
-                    &res);
-            appendCommandWCStatus(result, wcResult.getStatus());
+            auto waitForWCStatus = waitForWriteConcern(
+                txn,
+                repl::ReplClientInfo::forClient(txn->getClient()).getLastOp(),
+                &res
+            );
+            appendCommandWCStatus(result, waitForWCStatus);
 
             return true;
         }

@@ -667,6 +667,7 @@ namespace {
             if (shardConnectionString.type() == ConnectionString::SET) {
                 ReplicaSetMonitor::remove(shardConnectionString.getSetName());
             }
+
             return Status(ErrorCodes::OperationFailed,
                           str::stream() << "couldn't connect to new shard "
                                         << e.what());
@@ -822,7 +823,7 @@ namespace {
 
             Shard::removeShard(name);
             shardConnectionPool.removeHost(name);
-            ReplicaSetMonitor::remove(name, true);
+            ReplicaSetMonitor::remove(name);
 
             Shard::reloadShardInfo();
             conn.done();
@@ -1147,7 +1148,9 @@ namespace {
             if (!settingsResult.isOK()) {
                 return settingsResult.getStatus();
             }
+
             const SettingsType& settings = settingsResult.getValue();
+
             Status validationStatus = settings.validate();
             if (!validationStatus.isOK()) {
                 return validationStatus;

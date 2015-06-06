@@ -90,7 +90,6 @@ env.Library(
 env.Library(
     target='remote_command_runner',
     source=[
-        'find_and_modify_request.cpp',
         'remote_command_runner.cpp',
     ],
     LIBDEPS=[
@@ -109,7 +108,7 @@ env.Library(
     LIBDEPS=[
         'connection_pool',
         'remote_command_runner',
-        '$BUILD_DIR/mongo/db/query/getmore_request',
+        '$BUILD_DIR/mongo/db/query/command_request_response',
         '$BUILD_DIR/mongo/db/query/lite_parsed_query',
     ]
 )
@@ -145,9 +144,17 @@ env.Library(
     ]
 )
 
-env.CppUnitTest("replica_set_monitor_test",
-                ["replica_set_monitor_test.cpp"],
-                LIBDEPS=["clientdriver"])
+env.CppUnitTest(
+    target='replica_set_monitor_test',
+    source=[
+        'replica_set_monitor_node_test.cpp',
+        'replica_set_monitor_read_preference_test.cpp',
+        'replica_set_monitor_test.cpp',
+    ],
+    LIBDEPS=[
+        'clientdriver'
+    ]
+)
 
 env.CppUnitTest("dbclient_rs_test",
                 ["dbclient_rs_test.cpp"],
@@ -202,14 +209,4 @@ env.Library(
     ],
     LIBDEPS=[
     ],
-)
-
-env.CppUnitTest(
-    target="find_and_modify_request_test",
-    source=[
-        "find_and_modify_request_test.cpp",
-    ],
-    LIBDEPS=[
-        'remote_command_runner'
-    ]
 )

@@ -627,7 +627,6 @@ namespace {
     }
 
     TEST(MultiHostQueryOp, ThreeHostsOneHang) {
-
         // Initialize notifier before the thread pool
         Notification unhangNotify;
 
@@ -637,26 +636,31 @@ namespace {
         ConnectionString hostA = uassertStatusOK(ConnectionString::parse("$hostA:1000"));
         ConnectionString hostB = uassertStatusOK(ConnectionString::parse("$hostB:1000"));
         ConnectionString hostC = uassertStatusOK(ConnectionString::parse("$hostC:1000"));
+
         vector<ConnectionString> hosts;
         hosts.push_back(hostA);
         hosts.push_back(hostB);
         hosts.push_back(hostC);
 
-        // One host hangs, last host is fastest with result
+        // Host A hangs
         mockSystem.addMockHungHostAt(hostA, 1000, &unhangNotify);
-        mockSystem.addMockHostResultAt(hostB, 3000);
-        mockSystem.addMockHostResultAt(hostC, 2000);
+        mockSystem.addMockHostResultAt(hostB, 2000);
+        mockSystem.addMockHostResultAt(hostC, 3000);
 
         MultiHostQueryOp queryOp(&mockSystem, &threadPool);
 
         QuerySpec query;
         StatusWith<DBClientCursor*> result = queryOp.queryAny(hosts, query, 4000);
+
         // Unhang before checking status, in case it throws
         unhangNotify.notifyOne();
 
         ASSERT_OK(result.getStatus());
         ASSERT(NULL != result.getValue());
-        ASSERT_EQUALS(result.getValue()->originalHost(), hostC.toString());
+
+        // We should never have results from hostA
+        ASSERT_NOT_EQUALS(result.getValue()->originalHost(), hostA.toString());
+
         delete result.getValue();
     }
 

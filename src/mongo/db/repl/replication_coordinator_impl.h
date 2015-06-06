@@ -38,13 +38,14 @@
 #include "mongo/base/status.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/data_replicator.h"
+#include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/replica_set_config.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_external_state.h"
 #include "mongo/db/repl/replication_executor.h"
+#include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/update_position_args.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/unordered_map.h"
@@ -81,7 +82,8 @@ namespace repl {
         // Takes ownership of the "externalState", "topCoord" and "network" objects.
         ReplicationCoordinatorImpl(const ReplSettings& settings,
                                    ReplicationCoordinatorExternalState* externalState,
-                                   ReplicationExecutor::NetworkInterface* network,
+                                   executor::NetworkInterface* network,
+                                   StorageInterface* storage,
                                    TopologyCoordinator* topoCoord,
                                    int64_t prngSeed);
         // Takes ownership of the "externalState" and "topCoord" objects.
@@ -123,12 +125,12 @@ namespace repl {
         virtual void interruptAll();
 
         virtual ReplicationCoordinator::StatusAndDuration awaitReplication(
-                const OperationContext* txn,
+                OperationContext* txn,
                 const OpTime& opTime,
                 const WriteConcernOptions& writeConcern);
 
         virtual ReplicationCoordinator::StatusAndDuration awaitReplicationOfLastOpForClient(
-                const OperationContext* txn,
+                OperationContext* txn,
                 const WriteConcernOptions& writeConcern);
 
         virtual Status stepDown(OperationContext* txn,
@@ -160,7 +162,7 @@ namespace repl {
         virtual OpTime getMyLastOptime() const override;
 
         virtual ReadAfterOpTimeResponse waitUntilOpTime(
-                const OperationContext* txn,
+                OperationContext* txn,
                 const ReadAfterOpTimeArgs& settings) override;
 
         virtual OID getElectionId() override;
@@ -267,7 +269,9 @@ namespace repl {
         /**
          * Get current term from topology coordinator
          */
-        long long getTerm() override;
+        virtual long long getTerm() override;
+
+        virtual bool updateTerm(long long term) override;
 
         // ================== Test support API ===================
 
@@ -287,12 +291,15 @@ namespace repl {
          */
         Status setLastOptime_forTest(long long cfgVer, long long memberId, const OpTime& opTime);
 
+        bool updateTerm_forTest(long long term);
+
     private:
         ReplicationCoordinatorImpl(const ReplSettings& settings,
                                    ReplicationCoordinatorExternalState* externalState,
                                    TopologyCoordinator* topCoord,
                                    int64_t prngSeed,
-                                   ReplicationExecutor::NetworkInterface* network,
+                                   executor::NetworkInterface* network,
+                                   StorageInterface* storage,
                                    ReplicationExecutor* replExec);
         /**
          * Configuration states for a replica set node.
@@ -492,7 +499,7 @@ namespace repl {
         ReplicationCoordinator::StatusAndDuration _awaitReplication_inlock(
                 const Timer* timer,
                 boost::unique_lock<boost::mutex>* lock,
-                const OperationContext* txn,
+                OperationContext* txn,
                 const OpTime& opTime,
                 const WriteConcernOptions& writeConcern);
 
@@ -862,6 +869,16 @@ namespace repl {
          */
         void _getTerm_helper(const ReplicationExecutor::CallbackData& cbData, long long* term);
 
+
+        /**
+         * Callback that attempts to set the current term in topology coordinator and
+         * relinquishes primary if the term actually changes and we are primary.
+         */
+        void _updateTerm_helper(const ReplicationExecutor::CallbackData& cbData,
+                                long long term,
+                                bool* updated,
+                                Handle* cbHandle);
+        bool _updateTerm_incallback(long long term, Handle* cbHandle);
 
         //
         // All member variables are labeled with one of the following codes indicating the

@@ -498,7 +498,8 @@ namespace {
             {
                 [](OperationContext* txn, const char* ns, BSONObj& cmd) -> Status {
                     return dropDatabase(txn, NamespaceString(ns).db().toString());
-                }
+                },
+                {ErrorCodes::DatabaseNotFound} 
             }
         },
         {"drop", 
@@ -828,6 +829,7 @@ namespace {
                 Lock::TempRelease release(txn->lockState());
 
                 BackgroundOperation::awaitNoBgOpInProgForDb(nsToDatabaseSubstring(ns));
+                txn->recoveryUnit()->abandonSnapshot();
                 break;
             }
             case ErrorCodes::BackgroundOperationInProgressForNamespace: {
@@ -836,6 +838,7 @@ namespace {
                 Command* cmd = Command::findCommand(o.firstElement().fieldName());
                 invariant(cmd);
                 BackgroundOperation::awaitNoBgOpInProgForNs(cmd->parseNs(nsToDatabase(ns), o));
+                txn->recoveryUnit()->abandonSnapshot();
                 break;
             }
             default:

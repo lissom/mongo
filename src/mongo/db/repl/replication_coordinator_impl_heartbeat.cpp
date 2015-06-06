@@ -57,7 +57,6 @@ namespace repl {
 
 namespace {
 
-    typedef StatusWith<ReplicationExecutor::CallbackHandle> CBHStatus;
     typedef ReplicationExecutor::CallbackHandle CBHandle;
 
 }  //namespace
@@ -139,8 +138,6 @@ namespace {
             resp = cbData.response.getValue().data;
             responseStatus = hbResponse.initialize(resp, _topCoord->getTerm());
         }
-        const bool isUnauthorized = (responseStatus.code() == ErrorCodes::Unauthorized) ||
-                                    (responseStatus.code() == ErrorCodes::AuthenticationFailed);
         const Date_t now = _replExecutor.now();
         const OpTime lastApplied = getMyLastOptime();  // Locks and unlocks _mutex.
         Milliseconds networkTime(0);
@@ -148,6 +145,7 @@ namespace {
 
         if (responseStatus.isOK()) {
             networkTime = cbData.response.getValue().elapsedMillis;
+            _updateTerm_incallback(hbStatusResponse.getValue().getTerm(), nullptr);
         }
         else {
             log() << "Error in heartbeat request to " << target << "; " << responseStatus;
@@ -155,9 +153,6 @@ namespace {
                 LOG(3) << "heartbeat response: " << resp;
             }
 
-            if (isUnauthorized) {
-                networkTime = cbData.response.getValue().elapsedMillis;
-            }
             hbStatusResponse = StatusWith<ReplSetHeartbeatResponse>(responseStatus);
         }
 

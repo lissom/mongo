@@ -52,6 +52,7 @@
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/concurrency/lock_state.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
+#include "mongo/db/curop_metrics.h"
 #include "mongo/db/db.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/dbdirectclient.h"
@@ -92,6 +93,7 @@
 #include "mongo/rpc/legacy_reply_builder.h"
 #include "mongo/rpc/legacy_request.h"
 #include "mongo/rpc/legacy_request_builder.h"
+#include "mongo/rpc/request_interface.h"
 #include "mongo/rpc/metadata.h"
 #include "mongo/s/catalog/catalog_manager.h"
 #include "mongo/s/d_state.h"
@@ -172,11 +174,10 @@ namespace {
         return Status::OK();
     }
 
-    // TODO: need a version of this that can return an OP_COMMANDREPLY
-    void generateErrorResponse(const AssertionException* exception,
-                               const QueryMessage& queryMessage,
-                               CurOp* curop,
-                               Message* response) {
+    void generateLegacyQueryErrorResponse(const AssertionException* exception,
+                                          const QueryMessage& queryMessage,
+                                          CurOp* curop,
+                                          Message* response) {
         curop->debug().exceptionInfo = exception->getInfo();
 
         log(LogComponent::kQuery) << "assertion " << exception->toString()
@@ -240,46 +241,41 @@ namespace {
         DbMessage dbMessage(message);
         QueryMessage queryMessage(dbMessage);
 
-        rpc::LegacyRequest request{&message};
-
         CurOp* op = CurOp::get(txn);
 
-        std::unique_ptr<Message> response(new Message());
+        rpc::LegacyReplyBuilder builder{};
 
         try {
+            rpc::LegacyRequest request{&message};
             // Do the namespace validity check under the try/catch block so it does not cause the
             // connection to be terminated.
             uassert(ErrorCodes::InvalidNamespace,
                     str::stream() << "Invalid ns [" << request.getDatabase() << ".$cmd" << "]",
                     NamespaceString::validDBName(request.getDatabase()));
 
-            rpc::LegacyReplyBuilder builder{std::move(response)};
-
             // Auth checking for Commands happens later.
             int nToReturn = queryMessage.ntoreturn;
-            beginQueryOp(nss, queryMessage.query, nToReturn, queryMessage.ntoskip, op);
-            op->markCommand();
+            beginQueryOp(txn, nss, queryMessage.query, nToReturn, queryMessage.ntoskip);
+            {
+                stdx::lock_guard<Client> lk(*txn->getClient());
+                op->markCommand_inlock();
+            }
 
             uassert(16979, str::stream() << "bad numberToReturn (" << nToReturn
                                          << ") for $cmd type ns - can only be 1 or -1",
                     nToReturn == 1 || nToReturn == -1);
 
-            if (!runCommands(txn, request, &builder)) {
-                uasserted(13530, "bad or malformed command request?");
-            }
+            runCommands(txn, request, &builder);
 
             op->debug().iscommand = true;
             // TODO: Does this get overwritten/do we really need to set this twice?
             op->debug().query = request.getCommandArgs();
-
-            response = builder.done();
-
-            invariant(!response->empty());
         }
-        catch (const AssertionException& exception) {
-            response.reset(new Message());
-            generateErrorResponse(&exception, queryMessage, op, response.get());
+        catch (const DBException& exception) {
+            Command::generateErrorResponse(txn, &builder, exception);
         }
+
+        auto response = builder.done();
 
         op->debug().responseLength = response->header().dataLen();
 
@@ -309,22 +305,20 @@ namespace {
             // We construct a legacy $cmd namespace so we can fill in curOp using
             // the existing logic that existed for OP_QUERY commands
             NamespaceString nss(request.getDatabase(), "$cmd");
-            beginQueryOp(nss, request.getCommandArgs(), 1, 0, curOp);
-            curOp->markCommand();
-
-            if (!runCommands(txn, request, &replyBuilder)) {
-                uasserted(28654, "bad or malformed command request?");
+            beginQueryOp(txn, nss, request.getCommandArgs(), 1, 0);
+            {
+                stdx::lock_guard<Client> lk(*txn->getClient());
+                curOp->markCommand_inlock();
             }
+
+            runCommands(txn, request, &replyBuilder);
 
             curOp->debug().iscommand = true;
             curOp->debug().query = request.getCommandArgs();
 
         }
-        catch (...) {
-            // TODO handle SendStaleConfigException here when OP_COMMAND
-            // is implemented in mongos (SERVER-18292).
-            replyBuilder.setMetadata(rpc::metadata::empty())
-                        .setCommandReply(exceptionToStatus());
+        catch (const DBException& exception) {
+            Command::generateErrorResponse(txn, &replyBuilder, exception);
         }
 
         auto response = replyBuilder.done();
@@ -406,12 +400,12 @@ namespace {
             audit::logQueryAuthzCheck(client, nss, q.query, status.code());
             uassertStatusOK(status);
 
-            dbResponse.exhaustNS = runQuery(txn, q, nss, op, *resp);
+            dbResponse.exhaustNS = runQuery(txn, q, nss, *resp);
             verify( !resp->empty() );
         }
         catch (const AssertionException& exception) {
             resp.reset(new Message());
-            generateErrorResponse(&exception, q, &op, resp.get());
+            generateLegacyQueryErrorResponse(&exception, q, &op, resp.get());
         }
 
         op.debug().responseLength = resp->header().dataLen();
@@ -516,13 +510,11 @@ namespace {
             break;
         }
 
-        scoped_ptr<CurOp> nestedOp;
-        if (CurOp::get(txn)->active()) {
-            nestedOp.reset(new CurOp(&c));
-        }
-
         CurOp& currentOp = *CurOp::get(txn);
-        currentOp.reset(op);
+        {
+            stdx::lock_guard<Client> lk(*txn->getClient());
+            currentOp.setOp_inlock(op);
+        }
 
         OpDebug& debug = currentOp.debug();
         debug.op = op;
@@ -661,7 +653,7 @@ namespace {
             }
         }
 
-        debug.recordStats();
+        recordCurOpMetrics(txn);
         debug.reset();
     }
 
@@ -718,7 +710,10 @@ namespace {
         uassertStatusOK(status);
 
         op.debug().query = query;
-        op.setQuery(query);
+        {
+            stdx::lock_guard<Client> lk(*txn->getClient());
+            op.setQuery_inlock(query);
+        }
 
         UpdateRequest request(nsString);
         request.setUpsert(upsert);
@@ -841,7 +836,10 @@ namespace {
         uassertStatusOK(status);
 
         op.debug().query = pattern;
-        op.setQuery(pattern);
+        {
+            stdx::lock_guard<Client> lk(*txn->getClient());
+            op.setQuery_inlock(pattern);
+        }
 
         DeleteRequest request(nsString);
         request.setQuery(pattern);
@@ -940,7 +938,6 @@ namespace {
                                   ns,
                                   ntoreturn,
                                   cursorid,
-                                  curop,
                                   pass,
                                   exhaust,
                                   &isCursorAuthorized);
@@ -1136,13 +1133,12 @@ namespace {
                 auto indexNs = NamespaceString(d.getns());
                 auto cmdRequestMsg = requestBuilder.setDatabase(indexNs.db())
                                                    .setCommandName("createIndexes")
-                                                   .setMetadata(rpc::metadata::empty())
+                                                   .setMetadata(rpc::makeEmptyMetadata())
                                                    .setCommandArgs(cmdObj).done();
                 rpc::LegacyRequest cmdRequest{cmdRequestMsg.get()};
                 rpc::LegacyReplyBuilder cmdReplyBuilder{};
                 Command::execCommand(txn,
                                      createIndexesCmd,
-                                     cmdObj, // TODO remove (SERVER-18236)
                                      cmdRequest,
                                      &cmdReplyBuilder);
                 auto cmdReplyMsg = cmdReplyBuilder.done();
