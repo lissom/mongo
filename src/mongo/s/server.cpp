@@ -143,7 +143,6 @@ namespace mongo {
             Request r( m , p );
 
             try {
-                r.init();
                 r.process();
             }
             catch ( const AssertionException& ex ) {

@@ -30,6 +30,10 @@ namespace network {
  * unistd.h int dup(int old fd); WSADuplicateSocket();
  *
  * jemalloc arenas
+ *
+ * Prefix the global counters and remove them
+ * 1. ConnectionId
+ * 2. MessageId
  */
 
 class Connections;
@@ -46,7 +50,7 @@ public:
 
     ConnectionInfo(Connections* const owner,
             asio::ip::tcp::socket socket,
-            std::string connectionId) :
+            ConnectionId connectionId) :
         _owner(owner),
         _socket(std::move(socket)),
         _connectionId(std::move(connectionId)),
@@ -79,7 +83,7 @@ private:
     std::atomic<uint64_t> _dummy{}; //one cache line left for counters
     //pos 8, place for one more counter
     asio::ip::tcp::socket _socket;
-    std::string _connectionId;
+    ConnectionId _connectionId;
     Connections* const _owner;
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector _buf;

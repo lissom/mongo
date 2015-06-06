@@ -130,8 +130,7 @@ NetworkServer::~NetworkServer() {
 
 
 void Connections::newConnHandler(asio::ip::tcp::socket&& socket) {
-    std::unique_ptr<ConnectionInfo> ci(std::move(socket),
-            NETWORK_PREFIX + std::to_string(++_connectionCount));
+    std::unique_ptr<ConnectionInfo> ci(std::move(socket), ++_connectionCount);
     ConnectionInfo* conn = ci.get();
     std::unique_lock lock(_mutex);
     auto pos = _conns.emplace(ci.get(), ci);

@@ -330,6 +330,8 @@ namespace mongo {
         //This isn't copied anywhere and copying is non-trivial
         MONGO_DISALLOW_COPYING(Message);
     public:
+        typedef std::vector< std::pair< char*, int > > MsgVec;
+
         // we assume here that a vector with initial size 0 does no allocation (0 is the default, but wanted to make it explicit).
         Message() : _buf( 0 ), _data( 0 ), _freeIt( false ) {}
         Message( void * data , bool freeIt ) :
@@ -358,6 +360,8 @@ namespace mongo {
             reset();
         }
 
+        bool isSingleData() const { return _buf != nullptr; }
+
         MsgData::View header() const {
             verify( !empty() );
             return _buf ? _buf : _data[ 0 ].first;
@@ -366,15 +370,20 @@ namespace mongo {
         int operation() const { return header().getOperation(); }
 
         MsgData::View singleData() const {
-            massert( 13273, "single data buffer expected", _buf );
+            massert( 13273, "single data buffer expected", isSingleData() );
             return header();
+        }
+
+        const MsgVec& multiData() const {
+            massert( 13273, "multi data buffer expected", !isSingleData() );
+            return _data;
         }
 
         bool empty() const { return !_buf && _data.empty(); }
 
         int size() const {
             int res = 0;
-            if ( _buf ) {
+            if ( isSingleData() ) {
                 res =  MsgData::ConstView(_buf).getLen();
             }
             else {
@@ -481,7 +490,6 @@ namespace mongo {
         // if just one buffer, keep it in _buf, otherwise keep a sequence of buffers in _data
         char* _buf;
         // byte buffer(s) - the first must contain at least a full MsgData unless using _buf for storage instead
-        typedef std::vector< std::pair< char*, int > > MsgVec;
         MsgVec _data;
         bool _freeIt;
     };

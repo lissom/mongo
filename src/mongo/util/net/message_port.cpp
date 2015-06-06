@@ -345,12 +345,8 @@ again:
         return _remoteParsed;
     }
 
-    SockAddr MessagingPort::remoteAddr() const {
-        return psock->remoteAddr();
-    }
-
-    SockAddr MessagingPort::localAddr() const {
-        return psock->localAddr();
+    std::string MessagingPort::localAddr() const {
+        return psock->localAddr().getAddr();
     }
 
 } // namespace mongo
