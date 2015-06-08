@@ -583,7 +583,8 @@ namespace {
                 }
                 else {
                     if (remote != DBDirectClient::dummyHost) {
-                        const ShardedConnectionInfo* connInfo = ShardedConnectionInfo::get(false);
+                        const ShardedConnectionInfo* connInfo =
+                            ShardedConnectionInfo::get(&c, false);
                         uassert(18663,
                                 str::stream() << "legacy writeOps not longer supported for "
                                               << "versioned connections, ns: " << nsString.ns()
@@ -930,7 +931,7 @@ namespace {
                         last = getLastSetTimestamp();
                     }
                     else {
-                        repl::waitForTimestampChange(last, Seconds(1));
+                        repl::waitUpToOneSecondForTimestampChange(last);
                     }
                 }
 
