@@ -14,15 +14,15 @@ AsyncMessagingPort::AsyncMessagingPort(ConnectionInfo* const connInfo) : _connIn
 }
 
 void AsyncMessagingPort::asyncSend(Message& toSend, int responseTo) {
-    //TODO: get rid of nextMessageId
+    //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
     toSend.header().setId(nextMessageId());
     toSend.header().setResponseTo(responseTo);
-    //TODO: Piggyback data is added here
+    //TODO: Piggyback data is added here, only seems relevant to kill cursor
     toSend.isSingleData() ? asyncSendSingle(toSend) : asyncSendMulti(toSend);
 }
 
 void AsyncMessagingPort::asyncSendSingle(const Message& toSend)  {
-    _connInfo->asyncSendMessage(toSend.singleData(), toSend.size());
+    //_connInfo->asyncSendMessage(toSend.singleData(), toSend.size());
 }
 
 void AsyncMessagingPort::asyncSendMulti(const Message& toSend) {

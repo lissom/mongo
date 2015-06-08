@@ -487,6 +487,7 @@ namespace mongo {
             _freeIt = freeIt;
             _buf = d;
         }
+        //TODO: check perf, if fine get rid of _buf
         // if just one buffer, keep it in _buf, otherwise keep a sequence of buffers in _data
         char* _buf;
         // byte buffer(s) - the first must contain at least a full MsgData unless using _buf for storage instead
