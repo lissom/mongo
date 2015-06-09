@@ -68,7 +68,7 @@ namespace mongo {
             boost::thread t(timeTrackerSetup);
 
             // Wait for listener thread to start tracking time.
-            while (Listener::getElapsedTimeMillis() == 0) {
+            while (clock::getElapsedTimeMillis() == 0) {
                 sleepmillis(10);
             }
             return Status::OK();

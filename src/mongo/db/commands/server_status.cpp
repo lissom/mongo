@@ -90,7 +90,7 @@ namespace mongo {
             
             _runCalled = true;
 
-            long long start = Listener::getElapsedTimeMillis();
+            long long start = clock::getElapsedTimeMillis();
             BSONObjBuilder timeBuilder(256);
 
             const auto authSession = AuthorizationSession::get(ClientBasic::getCurrent());
@@ -106,7 +106,7 @@ namespace mongo {
             result.append("uptimeEstimate",(double) (start/1000));
             result.appendDate( "localTime" , jsTime() );
 
-            timeBuilder.appendNumber( "after basic" , Listener::getElapsedTimeMillis() - start );
+            timeBuilder.appendNumber( "after basic" , clock::getElapsedTimeMillis() - start );
             
             // --- all sections
             
@@ -134,7 +134,7 @@ namespace mongo {
 
                 result.append( section->getSectionName(), data );
                 timeBuilder.appendNumber( static_cast<string>(str::stream() << "after " << section->getSectionName()), 
-                                          Listener::getElapsedTimeMillis() - start );
+                                          clock::getElapsedTimeMillis() - start );
             }
 
             // --- counters
@@ -159,8 +159,8 @@ namespace mongo {
                 }
             }
 
-            timeBuilder.appendNumber( "at end" , Listener::getElapsedTimeMillis() - start );
-            if ( Listener::getElapsedTimeMillis() - start > 1000 ) {
+            timeBuilder.appendNumber( "at end" , clock::getElapsedTimeMillis() - start );
+            if ( clock::getElapsedTimeMillis() - start > 1000 ) {
                 BSONObj t = timeBuilder.obj();
                 log() << "serverStatus was very slow: " << t << endl;
                 result.append( "timing" , t );

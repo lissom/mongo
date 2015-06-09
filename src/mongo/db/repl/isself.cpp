@@ -185,11 +185,8 @@ namespace {
         }
 
         // Ensure that the server is up and ready to accept incoming network requests.
-        const Listener* listener = Listener::getTimeTracker();
-        if (!listener) {
+        if (!ifListenerWaitReady())
             return false;
-        }
-        listener->waitUntilListening();
 
         try {
             DBClientConnection conn;

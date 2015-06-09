@@ -575,9 +575,9 @@ namespace {
                             try {
                                 // TODO: IIRC cappedTruncateAfter does not handle completely empty.
                                 // this will crazy slow if no _id index.
-                                long long start = Listener::getElapsedTimeMillis();
+                                long long start = clock::getElapsedTimeMillis();
                                 RecordId loc = Helpers::findOne(txn, collection, pattern, false);
-                                if (Listener::getElapsedTimeMillis() - start > 200)
+                                if (clock::getElapsedTimeMillis() - start > 200)
                                     warning() << "roll back slow no _id index for "
                                           << doc.ns << " perhaps?";
                                 // would be faster but requires index:

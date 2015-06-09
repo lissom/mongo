@@ -40,17 +40,17 @@ namespace mongo {
         _hitsBetweenMarks( hitsBetweenMarks ),
         _msBetweenMarks( msBetweenMarks ),
         _pings( 0 ),
-        _last( Listener::getElapsedTimeMillis() ) {
+        _last( clock::getElapsedTimeMillis() ) {
     }
 
     bool ElapsedTracker::intervalHasElapsed() {
         if ( ++_pings >= _hitsBetweenMarks ) {
             _pings = 0;
-            _last = Listener::getElapsedTimeMillis();
+            _last = clock::getElapsedTimeMillis();
             return true;
         }
 
-        long long now = Listener::getElapsedTimeMillis();
+        long long now = clock::getElapsedTimeMillis();
         if ( now - _last > _msBetweenMarks ) {
             _pings = 0;
             _last = now;
@@ -62,7 +62,7 @@ namespace mongo {
 
     void ElapsedTracker::resetLastTime() {
         _pings = 0;
-        _last = Listener::getElapsedTimeMillis();
+        _last = clock::getElapsedTimeMillis();
     }
 
 } // namespace mongo

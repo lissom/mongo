@@ -666,4 +666,23 @@ namespace mongo {
         delete paths;
     }
 
+    bool ifListenerWaitReady() {
+        const Listener* listener = Listener::getTimeTracker();
+        if (!listener) {
+            return false;
+        }
+        listener->waitUntilListening();
+        return true;
+    }
+
+    namespace clock {
+    long long getElapsedTimeMillis() {
+        const Listener* timeTracker = Listener::getTimeTracker();
+        if ( timeTracker )
+            return timeTracker->getMyElapsedTimeMillis();
+        //Original comment
+        // should this assert or throw?  seems like callers may not expect to get zero back, certainly not forever.
+        return 0;
+    }
+    } //namespace clock
 }

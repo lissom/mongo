@@ -167,4 +167,13 @@ namespace mongo {
         static ListeningSockets* _instance;
     };
 
+    /*
+     * Probably should assert instead of return, but keeping with legacy behvaior
+     * Only current used in repl::isSelf
+     */
+    bool ifListenerWaitReady();
+
+    namespace clock {
+    long long getElapsedTimeMillis();
+    } //namespace clock
 }
