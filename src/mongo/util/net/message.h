@@ -51,7 +51,6 @@ namespace mongo {
 
     class Message;
     class MessagingPort;
-    class PiggyBackData;
 
     typedef uint32_t MSGID;
 

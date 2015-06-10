@@ -163,6 +163,13 @@ namespace mongo {
             }
             return t;
         }
+
+        T* release() {
+            T* t = get();
+            verify( pthread_setspecific( _key, nullptr ) == 0 );
+            return t;
+        }
+
     };
 
 #  define TSP_DECLARE(T,p) extern TSP<T> p;

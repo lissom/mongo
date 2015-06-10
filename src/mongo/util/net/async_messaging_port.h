@@ -7,8 +7,6 @@
 
 #pragma once
 
-#include "mongo/platform/basic.h"
-
 #include <algorithm>
 #include <boost/thread/thread.hpp>
 #include <errno.h>
@@ -30,7 +28,7 @@ namespace network {
  */
 class AsyncMessagingPort: public AbstractMessagingPort {
 public:
-    AsyncMessagingPort(ConnectionInfo* const connInfo);
+    AsyncMessagingPort(AsyncClientConnection* const connInfo);
     virtual ~AsyncMessagingPort() {};
 
     void reply(Message& received, Message& response, MSGID responseTo) final {
@@ -44,14 +42,21 @@ public:
      * All of the below function expose implementation details and shouldn't exist
      * Consider returning std::string for error logging, etc.
      */
-    //Only used for mongoD and MessagingPort... and that is pretty iffy...
+    //Only used for mongoD and MessagingPort, breaks abstraction so leaving it alone
     HostAndPort remote() const final { fassert(-2, false); return SockAddr(); }
     //Only used for an error string for sasl logging
     //TODO: fix sasl logging to use a string
     std::string localAddrString() const final;
 
+    void setClientInfo(std::unique_ptr<ServiceContext::UniqueClient> clientInfo) {
+        _connInfo->setClientInfo(std::move(clientInfo));
+    }
+    std::unique_ptr<ServiceContext::UniqueClient> releaseClientInfo() {
+        return _connInfo->releaseClientInfo();
+    }
+
 private:
-    ConnectionInfo* const _connInfo;
+    AsyncClientConnection* const _connInfo;
 
     void asyncSend(Message& toSend, int responseTo = 0);
     void asyncSendSingle(const Message& toSend);

@@ -5,12 +5,17 @@
  *      Author: charlie
  */
 
-#include "async_messaging_port.h"
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
+
+#include "mongo/platform/basic.h"
+
+#include "mongo/util/net/async_messaging_port.h"
 
 namespace mongo {
 namespace network {
 
-AsyncMessagingPort::AsyncMessagingPort(ConnectionInfo* const connInfo) : _connInfo(connInfo) {
+AsyncMessagingPort::AsyncMessagingPort(AsyncClientConnection* const connInfo) : _connInfo(connInfo) {
+    this->setConnectionId(connInfo->getConnectionId());
 }
 
 void AsyncMessagingPort::asyncSend(Message& toSend, int responseTo) {

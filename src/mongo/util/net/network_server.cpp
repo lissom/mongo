@@ -33,10 +33,10 @@ namespace network {
 
 const std::string NETWORK_PREFIX = "conn";
 
-NetworkServer::NetworkServer(NetworkOptions options, Connections* connections) :
-        _options(std::move(options)),
-        _connections(connections) {
-    invariant(OnConnectEvent != nullptr);
+NetworkServer::NetworkServer(NetworkOptions options, MessagePipeline* const pipeline) :
+        _connections(new Connections(this)),
+        _pipeline(pipeline),
+        _options(std::move(options)) {
     //If ipList is specified bind on those ips, otherwise bind to all ips for that port
     if (_options.ipList.size()) {
         for (auto &i : _options.ipList) {
@@ -49,10 +49,14 @@ NetworkServer::NetworkServer(NetworkOptions options, Connections* connections) :
                 _options.port));
 }
 
-NetworkServer::Initiator::Initiator(
-        asio::io_service& service,
-        const asio::ip::tcp::endpoint& endPoint)
-        : _acceptor(service, endPoint), _socket(service) {
+NetworkServer::~NetworkServer() {
+    _service.stop();
+    for (auto& t: _threads)
+        t.join();
+}
+
+void NetworkServer::newMessageHandler(NewMessageEventData message) {
+    _pipeline->enqueueMessage(message);
 }
 
 void NetworkServer::startAllWaits() {
@@ -122,16 +126,15 @@ void NetworkServer::run() {
     }
 }
 
-NetworkServer::~NetworkServer() {
-    _service.stop();
-    for (auto& t: _threads)
-        t.join();
+NetworkServer::Initiator::Initiator(
+        asio::io_service& service,
+        const asio::ip::tcp::endpoint& endPoint)
+        : _acceptor(service, endPoint), _socket(service) {
 }
 
-
 void Connections::newConnHandler(asio::ip::tcp::socket&& socket) {
-    std::unique_ptr<ConnectionInfo> ci(std::move(socket), ++_connectionCount);
-    ConnectionInfo* conn = ci.get();
+    std::unique_ptr<AsyncClientConnection> ci(std::move(socket), ++_connectionCount);
+    AsyncClientConnection* conn = ci.get();
     std::unique_lock lock(_mutex);
     auto pos = _conns.emplace(ci.get(), ci);
     verify(pos.second);
@@ -140,18 +143,22 @@ void Connections::newConnHandler(asio::ip::tcp::socket&& socket) {
     conn->asyncReceiveMessage();
 }
 
-void ConnectionInfo::asyncReceiveMessage() {
+void Connections::newMessageHandler(NewMessageEventData message) {
+    _server->newMessageHandler(this);
+}
+
+void AsyncClientConnection::asyncReceiveMessage() {
     asyncGetHeader();
 }
 
-void ConnectionInfo::asyncGetHeader() {
+void AsyncClientConnection::asyncGetHeader() {
     static_assert(NETWORK_MIN_MESSAGE_SIZE > HEADERSIZE, "Min alloc must be > message header size");
     //TODO: capture average message size and use that if > min
     _buf.clear();
     _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
     _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
             [this](std::error_code ec, size_t len) {
-        _bytesIn += len;
+        _stats._bytesIn += len;
         if (ec) {
             asyncSocketError(ec);
             return;
@@ -165,7 +172,7 @@ void ConnectionInfo::asyncGetHeader() {
     });
 }
 
-void ConnectionInfo::asyncGetMessage() {
+void AsyncClientConnection::asyncGetMessage() {
     const auto msgSize = getMsgData().getLen();
     //Forcing into the nearest 1024 size block.  Assuming this was to always hit a tcmalloc size?
     _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
@@ -180,7 +187,7 @@ void ConnectionInfo::asyncGetMessage() {
     }
     _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
             [this](std::error_code ec, size_t len) {
-        _bytesIn += len;
+        _stats._bytesIn += len;
         if (ec) {
             asyncSocketError(ec);
             return;
@@ -190,79 +197,30 @@ void ConnectionInfo::asyncGetMessage() {
             asyncSocketShutdownRemove(conn);
             return;
         }
-        asyncQueueMessage(conn);
+        asyncQueueMessage();
     });
 }
 
-void ConnectionInfo::asyncQueueMessage() {
-
+void AsyncClientConnection::asyncQueueMessage() {
+    _owner->newMessageHandler(this);
 }
 
-void ConnectionInfo::asyncSocketError(std::error_code ec) {
+void AsyncClientConnection::asyncSocketError(std::error_code ec) {
     fassert(-1, ec != 0);
     log() << "Error waiting for header " << ec << std::endl;
     asyncSocketShutdownRemove(conn);
 }
 
-void ConnectionInfo::asyncSocketShutdownRemove() {
+void AsyncClientConnection::asyncSocketShutdownRemove() {
     _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
     _socket.close();
     //Now that the socket's work is done, post to the async work queue to remove it
     _socket.get_io_service().post([this]{
         std::unique_lock lock(_owner->_mutex);
-        verify(_owner->_conns.erase(this));
+        fassert(-1, _owner->_conns.erase(this) > 0);
         lock.release();
     });
 }
-
-/*
- *
-//Ensure allocation is a multiple of 1024 and large enough
-//Taken from the other networking code in case there are any hidden assumpitons
-//Not sure I see the propose given that there are other non-aligned allocs so
-int z = (len+1023)&0xfffffc00;
-
-MONGO_ALIGN_TO_CACHE struct ConnStats {
-
-};
-
-    try {
-
-    }
-    catch ( AssertionException& e ) {
-        log() << "AssertionException handling request, closing client connection: " << e << std::endl;
-        portWithHandler->shutdown();
-    }
-    catch ( SocketException& e ) {
-        log() << "SocketException handling request, closing client connection: " << e << std::endl;
-        portWithHandler->shutdown();
-    }
-    catch ( const DBException& e ) { // must be right above std::exception to avoid catching subclasses
-        log() << "DBException handling request, closing client connection: " << e << std::endl;
-        portWithHandler->shutdown();
-    }
-    catch ( std::exception &e ) {
-        error() << "Uncaught std::exception: " << e.what() << ", terminating" << std::endl;
-        dbexit( EXIT_UNCAUGHT );
-    }
-    if ( len == 542393671 ) {
-        // an http GET
-        string msg = "It looks like you are trying to access MongoDB over HTTP on the native driver port.\n";
-        LOG( psock->getLogLevel() ) << msg;
-        std::stringstream ss;
-        ss << "HTTP/1.0 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: " << msg.size() << "\r\n\r\n" << msg;
-        string s = ss.str();
-        send( s.c_str(), s.size(), "http" );
-        return false;
-    }
-    else if ( len == -1 ) {
-        // Endian check from the client, after connecting, to see what mode server is running in.
-        unsigned foo = 0x10203040;
-        send( (char *) &foo, 4, "endian" );
-        psock->setHandshakeReceived();
-        goto again;
-    }
- */
 
 } /* namespace network */
 } /* namespace mongo */

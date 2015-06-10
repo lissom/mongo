@@ -7,8 +7,6 @@
 
 #pragma once
 
-#include "mongo/platform/platform_specific.h"
-
 #include <array>
 #include <asio/include/asio.hpp>
 #include <atomic>
@@ -16,6 +14,9 @@
 #include <vector>
 #include <unordered_map>
 
+#include "mongo/db/lasterror.h"
+#include "mongo/platform/platform_specific.h"
+#include "mongo/s/message_pipeline.h"
 
 namespace mongo {
 namespace network {
@@ -41,16 +42,33 @@ namespace network {
 using BufferSet = std::vector< std::pair<char*, int>>;
 const auto HEADERSIZE = size_t(sizeof(MSGHEADER::Value));
 class Connections;
+class NetworkServer;
+class AsyncClientConnection;
+using NewMessageEventData = AsyncClientConnection*;
+
+struct ConnStats {
+//A cache line is 64 bytes, or 8x8 byte numbers
+    std::atomic<uint64_t> _bytesIn{};
+    std::atomic<uint64_t> _bytesOut{};
+    std::atomic<uint64_t> _queries{};
+    std::atomic<uint64_t> _inserts{};
+    std::atomic<uint64_t> _updates{};
+    std::atomic<uint64_t> _deletes{};
+    std::atomic<uint64_t> _commands{};
+    std::atomic<uint64_t> _dummy{}; //one cache line left for counters
+    //pos 8, place for one more counter
+}
 /*
  * Functions starting with async return immediately after queueing work
  * _socket is *not* cleaned up properly for the OS, the holder does this
  *
  * Do not make virtual, counting cache lines for counters
  */
-MONGO_ALIGN_TO_CACHE class ConnectionInfo {
-    MONGO_DISALLOW_COPYING(ConnectionInfo);
+//TODO: Merge with AsyncMessagingPort, move ConnStats and Connections over too
+MONGO_ALIGN_TO_CACHE class AsyncClientConnection {
+    MONGO_DISALLOW_COPYING(AsyncClientConnection);
 public:
-    ConnectionInfo(Connections* const owner,
+    AsyncClientConnection(Connections* const owner,
             asio::ip::tcp::socket socket,
             ConnectionId connectionId) :
         _owner(owner),
@@ -66,18 +84,28 @@ public:
 
     void closeOnComplete() { _closeOnComplete = true; }
     void asyncReceiveMessage();
-    void setLastError();
+    LastError& getLastError() { return _clientInfo; }
+    void setClientInfo(std::unique_ptr<ServiceContext::UniqueClient> clientInfo) { 
+        _clientInfo = std::move(clientInfo);
+    }
+    //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
+    std::unique_ptr<ServiceContext::UniqueClient> releaseClientInfo() { 
+        return _clientInfo.release();
+    }
+    char* getBuffer() { return _buf.data(); }
+    const ConnStats& getStats() const { return _stats; }
+    ConnectionId getConnectionId() { return _connectionId; }
     //TODO: type checking of handler function
     //Data should be small, i.e. a pointer or number
     template <typename Buffer, typename Callback, typename Data>
     void asyncSendMessage(Buffer&& buffer,
             Data data = nullptr,
-            Callback callback = [] (ConnectionInfo, size_t, std::error_code, Data) {}) {
+            Callback callback = [] (AsyncClientConnection*, size_t, std::error_code, Data) {}) {
         //We have no guarantee the sender persists
         //TODO: revisit this and see what assumptions are possible about existence
         _socket.async_send(std::forward<Buffer>(buffer),
                 [this, data, callback](std::error_code ec, size_t len) {
-            _bytesOut += len;
+            _stats._bytesOut += len;
             callback(this, len, ec, data);
             if (ec) {
                 asyncSocketError(ec);
@@ -92,11 +120,12 @@ public:
         });
     }
 
+    //TODO: Just have static calls backs that record errors, at this point a reply is sent and it's over
     //For single data Message
     template <typename Callback, typename Data>
     void asyncSendMessage(const char* const buf, const size_t size,
             Data data = nullptr,
-            Callback callback = [] (ConnectionInfo, size_t, std::error_code, Data) {}) {
+            Callback callback = [] (AsyncClientConnection*, size_t, std::error_code, Data) {}) {
         //We have no guarantee the sender persists
         //TODO: revisit this and see what assumptions are possible about existence, need to copy header regardless
         _buf.clear();
@@ -110,7 +139,7 @@ public:
     void asyncSendMessage(const char* const buf, const size_t size,
             BufferSet* buffers,
             Data data = nullptr,
-            Callback callback = [] (ConnectionInfo, size_t, std::error_code, Data) {}) {
+            Callback callback = [] (AsyncClientConnection*, size_t, std::error_code, Data) {}) {
         //We have no guarantee the sender persists
         //TODO: revisit this and see what assumptions are possible about existence
         //Copy the header into _buf, need to do this regardless so we have the info
@@ -134,29 +163,16 @@ private:
     void asyncSocketShutdownRemove();
     bool doClose() { return _closeOnComplete; }
 
-    //A cache line is 64 bytes, or 8x8 byte numbers
-    std::atomic<uint64_t> _bytesIn{};
-    std::atomic<uint64_t> _bytesOut{};
-    std::atomic<uint64_t> _queries{};
-    std::atomic<uint64_t> _inserts{};
-    std::atomic<uint64_t> _updates{};
-    std::atomic<uint64_t> _deletes{};
-    std::atomic<uint64_t> _commands{};
-    std::atomic<uint64_t> _dummy{}; //one cache line left for counters
-    //pos 8, place for one more counter
+    ConnStats _stats;
     asio::ip::tcp::socket _socket;
     ConnectionId _connectionId;
     Connections* const _owner;
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector _buf;
     BufferSet _buffers;
-    //TODO: Add last error saving
+    std::unique_ptr<ServiceContext::UniqueClient> _clientInfo;
     //TODO: Turn this into state and verify it's correct at all stages
     std::atomic<bool> _closeOnComplete{};
-};
-
-class ListenerPool {
-    uint64_t connectionCount;
 };
 
 //If this changes the mask for allocation needs to change too
@@ -183,24 +199,36 @@ public:
  * All funcions starting with async are calling from async functions, should not
  * take locks if at all possible
  */
-class Connections {
+MONGO_ALIGN_TO_CACHE class Connections {
+    MONGO_DISALLOW_COPYING(Connections);
 public:
+    Connections(NetworkServer* const server) : _server (server) { }
     void newConnHandler(asio::ip::tcp::socket&& socket);
+    //Passing message, which shouldn't allocate any buffers
+    void newMessageHandler(NewMessageEventData message);
+    const ConnStats& getStats() const { return _stats; }
 
 private:
-    std::unordered_map<ConnectionInfo*, std::unique_ptr<ConnectionInfo>> _conns;
+    friend class AsyncClientConnection;
+    ConnStats _stats;
+    //TODO: more concurrent
+    std::unordered_map<AsyncClientConnection*, std::unique_ptr<AsyncClientConnection>> _conns;
     uint64_t _connectionCount{};
     std::mutex _mutex; //Protects access to _conns and _connectionCount
+    NetworkServer* const _server;
 };
 
 /*
  *  Network Server using ASIO
  */
 class NetworkServer : public Server {
+    MONGO_DISALLOW_COPYING(NetworkServer);
 public:
-    NetworkServer(const NetworkOptions options, Connections* connections);
+    NetworkServer(const NetworkOptions options, MessagePipeline* const pipeline);
     ~NetworkServer() final;
     void run() final;
+
+    void newMessageHandler(NewMessageEventData message);
 
 private:
     struct Initiator {
@@ -208,12 +236,15 @@ private:
         asio::ip::tcp::acceptor _acceptor;
         asio::ip::tcp::socket _socket;
     };
-    const NetworkOptions _options;
-    Connections* _connections;
+    //Connections can outlive the server, no point presently
+    std::unique_ptr<Connections> _connections;
     asio::io_service _service;
     //Holds the end points and currently waiting socket
-    std::vector<Initiator> _endPoints;
     std::vector<boost::thread> _threads;
+    MessagePipeline* const _pipeline;
+    std::vector<Initiator> _endPoints;
+    //Options should be last, they are very cold
+    const NetworkOptions _options;
 
     void serviceRun();
     void startAllWaits();
