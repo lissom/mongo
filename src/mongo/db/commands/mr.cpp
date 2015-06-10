@@ -442,9 +442,9 @@ namespace mongo {
                 // create temp collection and insert the indexes from temporary storage
                 OldClientWriteContext tempCtx(_txn, _config.tempNamespace);
                 WriteUnitOfWork wuow(_txn);
+                NamespaceString tempNss(_config.tempNamespace);
                 uassert(ErrorCodes::NotMaster, "no longer master", 
-                        repl::getGlobalReplicationCoordinator()->
-                        canAcceptWritesForDatabase(nsToDatabase(_config.tempNamespace.c_str())));
+                        repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(tempNss));
                 Collection* tempColl = tempCtx.getCollection();
                 invariant(!tempColl);
 
@@ -659,9 +659,9 @@ namespace mongo {
 
                     bool found;
                     {
-                        OldClientContext tx(txn, _config.outputOptions.finalNamespace);
-                        Collection* coll =
-                            tx.db()->getCollection(_config.outputOptions.finalNamespace);
+                        const std::string& finalNamespace = _config.outputOptions.finalNamespace;
+                        OldClientContext tx(txn, finalNamespace);
+                        Collection* coll = getCollectionOrUassert(tx.db(), finalNamespace);
                         found = Helpers::findOne(_txn,
                                                  coll,
                                                  temp["_id"].wrap(),
@@ -699,9 +699,9 @@ namespace mongo {
 
             OldClientWriteContext ctx(_txn,  ns );
             WriteUnitOfWork wuow(_txn);
+            NamespaceString nss(ns);
             uassert(ErrorCodes::NotMaster, "no longer master", 
-                    repl::getGlobalReplicationCoordinator()->
-                    canAcceptWritesForDatabase(nsToDatabase(ns.c_str())));
+                    repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss));
             Collection* coll = getCollectionOrUassert(ctx.db(), ns);
 
             BSONObjBuilder b;
@@ -1355,9 +1355,8 @@ namespace mongo {
                 if (state.isOnDisk()) {
                     // this means that it will be doing a write operation, make sure we are on Master
                     // ideally this check should be in slaveOk(), but at that point config is not known
-                    repl::ReplicationCoordinator* const replCoord =
-                        repl::getGlobalReplicationCoordinator();
-                    if (!replCoord->canAcceptWritesForDatabase(dbname)) {
+                    NamespaceString nss(config.ns);
+                    if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss)) {
                         errmsg = "not master";
                         return false;
                     }
@@ -1677,7 +1676,7 @@ namespace mongo {
 
                     for ( ChunkMap::const_iterator it = chunkMap.begin(); it != chunkMap.end(); ++it ) {
                         ChunkPtr chunk = it->second;
-                        if (chunk->getShard().getName() == shardName) {
+                        if (chunk->getShardId() == shardName) {
                             chunks.push_back(chunk);
                         }
                     }

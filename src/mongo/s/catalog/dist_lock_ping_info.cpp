@@ -1,5 +1,5 @@
 /**
- *    Copyright (C) 2008-2015 MongoDB Inc.
+ *    Copyright (C) 2015 MongoDB Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -28,45 +28,22 @@
 
 #include "mongo/platform/basic.h"
 
-#include "mongo/client/connection_string.h"
-#include "mongo/s/client/shard.h"
-#include "mongo/unittest/unittest.h"
+#include "mongo/s/catalog/dist_lock_ping_info.h"
 
-namespace {
+namespace mongo {
 
-    using namespace mongo;
-    using unittest::assertGet;
+    DistLockPingInfo::DistLockPingInfo() = default;
 
-    TEST(Shard, EqualityRs) {
-        Shard a("foo", assertGet(ConnectionString::parse("bar/a,b")), 0, false);
-
-        {
-            Shard s("foo", assertGet(ConnectionString::parse("bar/a,b")), 0, false);
-            ASSERT_EQUALS(a, s);
-        }
-
-        {
-            Shard s("foo", assertGet(ConnectionString::parse("bar/b,a")), 0, false);
-            ASSERT_EQUALS(a, s);
-        }
+    DistLockPingInfo::DistLockPingInfo(StringData idArg,
+                                       Date_t lastPingArg,
+                                       Date_t remoteArg,
+                                       OID tsArg,
+                                       OID electionIdArg) :
+            processId(idArg.toString()),
+            lastPing(lastPingArg),
+            configLocalTime(remoteArg),
+            lockSessionId(std::move(tsArg)),
+            electionId(std::move(electionIdArg)) {
     }
 
-    TEST(Shard, EqualitySingle) {
-        ASSERT_EQUALS(
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false),
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false));
-
-        ASSERT_NOT_EQUALS(
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false),
-            Shard("foo", assertGet(ConnectionString::parse("a.foo.com:123")), 0, false));
-
-        ASSERT_NOT_EQUALS(
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false),
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:124")), 0, false));
-
-        ASSERT_NOT_EQUALS(
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false),
-            Shard("foa", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false));
-    }
-
-} // namespace
+}

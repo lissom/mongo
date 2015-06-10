@@ -188,4 +188,24 @@ namespace mongo {
         double _total;
         long long _count;
     };
+
+
+    class AccumulatorStdDev final : public Accumulator {
+    public:
+        void processInternal(const Value& input, bool merging) final;
+        Value getValue(bool toBeMerged) const final;
+        const char* getOpName() const final;
+        void reset() final;
+
+        static boost::intrusive_ptr<Accumulator> createSamp();
+        static boost::intrusive_ptr<Accumulator> createPop();
+
+    private:
+        explicit AccumulatorStdDev(bool isSamp);
+
+        const bool _isSamp;
+        long long _count;
+        double _mean;
+        double _m2; // Running sum of squares of delta from mean. Named to match algorithm.
+    };
 }

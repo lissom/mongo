@@ -29,12 +29,18 @@
 #pragma once
 
 #include <boost/shared_ptr.hpp>
+#include <string>
 
+#include "mongo/base/disallow_copying.h"
 #include "mongo/client/connection_string.h"
 
 namespace mongo {
 
     class BSONObj;
+    class RemoteCommandRunner;
+    class RemoteCommandTargeter;
+
+    using ShardId = std::string;
 
     /**
      * Contains runtime information obtained from the shard.
@@ -55,69 +61,34 @@ namespace mongo {
         std::string _mongoVersion;
     };
 
+    class Shard;
+    using ShardPtr = boost::shared_ptr<Shard>;
 
     /*
-     * A "shard" one partition of the overall database (and a replica set typically).
+     * Maintains the targeting and command execution logic for a single shard. Performs polling of
+     * the shard (if replica set).
      */
     class Shard {
+        MONGO_DISALLOW_COPYING(Shard);
     public:
-        Shard();
-
-        Shard(const std::string& name,
-              const ConnectionString& connStr,
-              long long maxSizeMB,
-              bool isDraining);
-
         /**
-         * Returns a Shard corresponding to 'ident', which can
-         * either be a shard name or a connection string.
-         * Assumes that a corresponding shard with name 'ident' already exists.
+         * Instantiates a new shard connection management object for the specified shard and
+         * connection string.
          */
-        static Shard make( const std::string& ident ) {
-            Shard s;
-            s.reset( ident );
-            return s;
-        }
+        Shard(const ShardId& id, const ConnectionString& connStr);
+        ~Shard();
 
-        /**
-         * @param ident either name or address
-         */
-        void reset( const std::string& ident );
+        const ShardId& getId() const { return _id; }
 
-        const std::string& getName() const { return _name; }
         const ConnectionString& getConnString() const { return _cs; }
 
-        long long getMaxSizeMB() const {
-            return _maxSizeMB;
-        }
+        RemoteCommandTargeter* getTargeter() const;
 
-        bool isDraining() const {
-            return _isDraining;
-        }
+        RemoteCommandRunner* getCommandRunner() const;
 
         std::string toString() const {
-            return _name + ":" + _cs.toString();
+            return _id + ":" + _cs.toString();
         }
-
-        friend std::ostream& operator << (std::ostream& out, const Shard& s) {
-            return (out << s.toString());
-        }
-
-        bool operator==( const Shard& s ) const {
-            if ( _name != s._name )
-                return false;
-            return _cs.sameLogicalEndpoint( s._cs );
-        }
-
-        bool operator!=( const Shard& s ) const {
-            return ! ( *this == s );
-        }
-
-        bool operator<(const Shard& o) const {
-            return _name < o._name;
-        }
-
-        bool ok() const { return _cs.isValid(); }
 
         BSONObj runCommand(const std::string& db, const std::string& simple) const;
         BSONObj runCommand(const std::string& db, const BSONObj& cmd) const;
@@ -130,38 +101,23 @@ namespace mongo {
          */
         ShardStatus getStatus() const;
 
-        /**
-         * mostly for replica set
-         * retursn true if node is the shard
-         * of if the replica set contains node
-         */
-        bool containsNode( const std::string& node ) const;
-
-        static Shard lookupRSName( const std::string& name);
+        static ShardPtr lookupRSName(const std::string& name);
         
         /**
          * @parm current - shard where the chunk/database currently lives in
-         * @return the currently emptiest shard, if best then current, or EMPTY
+         * @return the currently emptiest shard, if best then current, or nullptr
          */
-        static Shard pick();
+        static ShardPtr pick();
 
         static void reloadShardInfo();
 
-        static void removeShard( const std::string& name );
-
-        static bool isAShardNode( const std::string& ident );
-
-        static Shard EMPTY;
+        static void removeShard(const ShardId& id);
         
-        static void installShard(const std::string& name, const Shard& shard);
+        static void installShard(const ShardId& id, const Shard& shard);
 
     private:
-        std::string    _name;
-        ConnectionString _cs;
-        long long _maxSizeMB;    // in MBytes, 0 is unlimited
-        bool      _isDraining; // shard is currently being removed
+        const ShardId _id;
+        const ConnectionString _cs;
     };
-
-    typedef boost::shared_ptr<Shard> ShardPtr;
 
 } // namespace mongo

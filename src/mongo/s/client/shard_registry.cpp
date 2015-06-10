@@ -36,9 +36,14 @@
 #include <boost/thread/lock_guard.hpp>
 
 #include "mongo/client/connection_string.h"
+#include "mongo/client/remote_command_runner_impl.h"
+#include "mongo/client/remote_command_targeter.h"
+#include "mongo/client/remote_command_targeter_factory.h"
+#include "mongo/executor/task_executor.h"
 #include "mongo/s/catalog/catalog_manager.h"
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/client/shard.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 
@@ -48,13 +53,30 @@ namespace mongo {
     using std::string;
     using std::vector;
 
-
-    ShardRegistry::ShardRegistry(CatalogManager* catalogManager)
-        : _catalogManager(catalogManager) {
+    ShardRegistry::ShardRegistry(std::unique_ptr<RemoteCommandTargeterFactory> targeterFactory,
+                                 std::unique_ptr<RemoteCommandRunner> commandRunner,
+                                 std::unique_ptr<executor::TaskExecutor> executor,
+                                 CatalogManager* catalogManager)
+        :  _targeterFactory(std::move(targeterFactory)),
+           _commandRunner(std::move(commandRunner)),
+           _executor(std::move(executor)),
+           _catalogManager(catalogManager) {
 
     }
 
     ShardRegistry::~ShardRegistry() = default;
+
+    shared_ptr<RemoteCommandTargeter> ShardRegistry::getTargeterForShard(const string& shardId) {
+        auto targeter = _findTargeter(shardId);
+        if (targeter) {
+            return targeter;
+        }
+
+        // If we can't find the shard, we might just need to reload the cache
+        reload();
+
+        return _findTargeter(shardId);
+    }
 
     void ShardRegistry::reload() {
         vector<ShardType> shards;
@@ -68,6 +90,7 @@ namespace mongo {
         boost::lock_guard<boost::mutex> lk(_mutex);
 
         _lookup.clear();
+        _targeters.clear();
         _rsLookup.clear();
 
         ShardType configServerShard;
@@ -101,15 +124,15 @@ namespace mongo {
         return _findUsingLookUp(id);
     }
 
-    Shard ShardRegistry::lookupRSName(const string& name) {
+    shared_ptr<Shard> ShardRegistry::lookupRSName(const string& name) {
         boost::lock_guard<boost::mutex> lk(_mutex);
         ShardMap::iterator i = _rsLookup.find(name);
 
-        return (i == _rsLookup.end()) ? Shard::EMPTY : *(i->second.get());
+        return (i == _rsLookup.end()) ? nullptr : i->second;
     }
 
     void ShardRegistry::set(const ShardId& id, const Shard& s) {
-        shared_ptr<Shard> ss(boost::make_shared<Shard>(s));
+        shared_ptr<Shard> ss(boost::make_shared<Shard>(s.getId(), s.getConnString()));
 
         boost::lock_guard<boost::mutex> lk(_mutex);
         _lookup[id] = ss;
@@ -120,7 +143,7 @@ namespace mongo {
 
         for (ShardMap::iterator i = _lookup.begin(); i != _lookup.end();) {
             shared_ptr<Shard> s = i->second;
-            if (s->getName() == id) {
+            if (s->getId() == id) {
                 _lookup.erase(i++);
             }
             else {
@@ -130,7 +153,7 @@ namespace mongo {
 
         for (ShardMap::iterator i = _rsLookup.begin(); i != _rsLookup.end();) {
             shared_ptr<Shard> s = i->second;
-            if (s->getName() == id) {
+            if (s->getId() == id) {
                 _rsLookup.erase(i++);
             }
             else {
@@ -146,41 +169,18 @@ namespace mongo {
             boost::lock_guard<boost::mutex> lk(_mutex);
             for (ShardMap::const_iterator i = _lookup.begin(); i != _lookup.end(); ++i) {
                 const shared_ptr<Shard>& s = i->second;
-                if (s->getName() == "config") {
+                if (s->getId() == "config") {
                     continue;
                 }
 
-                if (seen.count(s->getName())) {
+                if (seen.count(s->getId())) {
                     continue;
                 }
-                seen.insert(s->getName());
+                seen.insert(s->getId());
             }
         }
 
         all->assign(seen.begin(), seen.end());
-    }
-
-    bool ShardRegistry::isAShardNode(const string& addr) const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
-
-        // Check direct nods or set names
-        ShardMap::const_iterator i = _lookup.find(addr);
-        if (i != _lookup.end()) {
-            return true;
-        }
-
-        // Check for set nodes
-        for (ShardMap::const_iterator i = _lookup.begin(); i != _lookup.end(); ++i) {
-            if (i->first == "config") {
-                continue;
-            }
-
-            if (i->second->containsNode(addr)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     void ShardRegistry::toBSON(BSONObjBuilder* result) const {
@@ -207,30 +207,55 @@ namespace mongo {
 
         const ConnectionString& shardHost(shardHostStatus.getValue());
 
-        shared_ptr<Shard> shard = boost::make_shared<Shard>(shardType.getName(),
-                                                            shardHost,
-                                                            shardType.getMaxSize(),
-                                                            shardType.getDraining());
+        shared_ptr<Shard> shard = boost::make_shared<Shard>(shardType.getName(), shardHost);
         _lookup[shardType.getName()] = shard;
+
+        // Sync cluster connections (legacy config server) do not go through the normal targeting
+        // mechanism and must only be reachable through CatalogManagerLegacy or legacy-style
+        // queries and inserts. Do not create targeter for these connections. This code should go
+        // away after 3.2 is released.
+        if (shardHost.type() == ConnectionString::SYNC) {
+            return;
+        }
+
+        // TODO: The only reason to have the shard host names in the lookup table is for the
+        // setShardVersion call, which resolves the shard id from the shard address. This is
+        // error-prone and will go away eventually when we switch all communications to go through
+        // the remote command runner.
         _lookup[shardType.getHost()] = shard;
 
-        if (shardHost.type() == ConnectionString::SET) {
-            if (shardHost.getSetName().size()) {
-                _rsLookup[shardHost.getSetName()] = shard;
-            }
+        for (const HostAndPort& hostAndPort : shardHost.getServers()) {
+            _lookup[hostAndPort.toString()] = shard;
 
-            vector<HostAndPort> servers = shardHost.getServers();
-            for (unsigned i = 0; i < servers.size(); i++) {
-                _lookup[servers[i].toString()] = shard;
+            // Maintain a mapping from host to shard it belongs to for the case where we need to
+            // update the shard connection string on reconfigurations.
+            if (shardHost.type() == ConnectionString::SET) {
+                _rsLookup[hostAndPort.toString()] = shard;
             }
         }
+
+        if (shardHost.type() == ConnectionString::SET) {
+            _rsLookup[shardHost.getSetName()] = shard;
+        }
+
+        _targeters[shardType.getName()] = std::move(_targeterFactory->create(shardHost));
     }
 
-    shared_ptr<Shard> ShardRegistry::_findUsingLookUp(const ShardId& id) {
+    shared_ptr<Shard> ShardRegistry::_findUsingLookUp(const ShardId& shardId) {
         boost::lock_guard<boost::mutex> lk(_mutex);
-        ShardMap::iterator it = _lookup.find(id);
-
+        ShardMap::iterator it = _lookup.find(shardId);
         if (it != _lookup.end()) {
+            return it->second;
+        }
+
+        return nullptr;
+    }
+
+    boost::shared_ptr<RemoteCommandTargeter> ShardRegistry::_findTargeter(const string& shardId) {
+        boost::lock_guard<boost::mutex> lk(_mutex);
+
+        TargeterMap::iterator it = _targeters.find(shardId);
+        if (it != _targeters.end()) {
             return it->second;
         }
 
