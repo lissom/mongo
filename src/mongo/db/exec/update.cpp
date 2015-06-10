@@ -869,9 +869,11 @@ namespace mongo {
             }
 
             try {
+                std::unique_ptr<RecordCursor> cursor;
                 if (_txn->recoveryUnit()->getSnapshotId() != member->obj.snapshotId()) {
+                    cursor = _collection->getCursor(_txn);
                     // our snapshot has changed, refetch
-                    if (!WorkingSetCommon::fetch(_txn, member, _collection)) {
+                    if (!WorkingSetCommon::fetch(_txn, member, cursor)) {
                         // document was deleted, we're done here
                         ++_commonStats.needTime;
                         return PlanStage::NEED_TIME;
@@ -1011,7 +1013,7 @@ namespace mongo {
 
         // We may have stepped down during the yield.
         bool userInitiatedWritesAndNotPrimary = opCtx->writesAreReplicated() &&
-            !repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(nsString.db());
+            !repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString);
 
         if (userInitiatedWritesAndNotPrimary) {
             return Status(ErrorCodes::NotMaster,

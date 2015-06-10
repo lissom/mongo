@@ -442,9 +442,9 @@ namespace mongo {
                 // create temp collection and insert the indexes from temporary storage
                 OldClientWriteContext tempCtx(_txn, _config.tempNamespace);
                 WriteUnitOfWork wuow(_txn);
+                NamespaceString tempNss(_config.tempNamespace);
                 uassert(ErrorCodes::NotMaster, "no longer master", 
-                        repl::getGlobalReplicationCoordinator()->
-                        canAcceptWritesForDatabase(nsToDatabase(_config.tempNamespace.c_str())));
+                        repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(tempNss));
                 Collection* tempColl = tempCtx.getCollection();
                 invariant(!tempColl);
 
@@ -573,7 +573,8 @@ namespace mongo {
          *
          * TODO: make count work with versioning
          */
-        unsigned long long _safeCount( // Can't be const b/c count isn't
+        unsigned long long _safeCount( Client* client,
+                                       // Can't be const b/c count isn't
                                        /* const */ DBDirectClient& db,
                                        const string &ns,
                                        const BSONObj& query = BSONObj(),
@@ -581,7 +582,7 @@ namespace mongo {
                                        int limit = 0,
                                        int skip = 0 )
         {
-            ShardForceVersionOkModeBlock ignoreVersion; // ignore versioning here
+            ShardForceVersionOkModeBlock ignoreVersion(client); // ignore versioning here
             return db.count( ns, query, options, limit, skip );
         }
 
@@ -592,11 +593,13 @@ namespace mongo {
         long long State::postProcessCollectionNonAtomic(
                                 OperationContext* txn, CurOp* op, ProgressMeterHolder& pm) {
 
+            auto client = txn->getClient();
+
             if ( _config.outputOptions.finalNamespace == _config.tempNamespace )
-                return _safeCount( _db, _config.outputOptions.finalNamespace );
+                return _safeCount( client, _db, _config.outputOptions.finalNamespace );
 
             if (_config.outputOptions.outType == Config::REPLACE ||
-                    _safeCount(_db, _config.outputOptions.finalNamespace) == 0) {
+                    _safeCount(client, _db, _config.outputOptions.finalNamespace) == 0) {
 
                 ScopedTransaction transaction(txn, MODE_X);
                 Lock::GlobalWrite lock(txn->lockState()); // TODO(erh): why global???
@@ -617,7 +620,7 @@ namespace mongo {
             else if ( _config.outputOptions.outType == Config::MERGE ) {
                 // merge: upsert new docs into old collection
                 {
-                    const auto count = _safeCount(_db, _config.tempNamespace, BSONObj());
+                    const auto count = _safeCount(client, _db, _config.tempNamespace, BSONObj());
                     stdx::lock_guard<Client> lk(*txn->getClient());
                     op->setMessage_inlock("m/r: merge post processing",
                                           "M/R Merge Post Processing Progress",
@@ -641,7 +644,7 @@ namespace mongo {
                 BSONList values;
 
                 {
-                    const auto count = _safeCount(_db, _config.tempNamespace, BSONObj());
+                    const auto count = _safeCount(client, _db, _config.tempNamespace, BSONObj());
                     stdx::lock_guard<Client> lk(*txn->getClient());
                     op->setMessage_inlock("m/r: reduce post processing",
                                           "M/R Reduce Post Processing Progress",
@@ -684,7 +687,7 @@ namespace mongo {
                 pm.finished();
             }
 
-            return _safeCount( _db, _config.outputOptions.finalNamespace );
+            return _safeCount( txn->getClient(), _db, _config.outputOptions.finalNamespace );
         }
 
         /**
@@ -696,9 +699,9 @@ namespace mongo {
 
             OldClientWriteContext ctx(_txn,  ns );
             WriteUnitOfWork wuow(_txn);
+            NamespaceString nss(ns);
             uassert(ErrorCodes::NotMaster, "no longer master", 
-                    repl::getGlobalReplicationCoordinator()->
-                    canAcceptWritesForDatabase(nsToDatabase(ns.c_str())));
+                    repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss));
             Collection* coll = getCollectionOrUassert(ctx.db(), ns);
 
             BSONObjBuilder b;
@@ -745,7 +748,7 @@ namespace mongo {
         }
 
         long long State::incomingDocuments() {
-            return _safeCount( _db, _config.ns , _config.filter , QueryOption_SlaveOk , (unsigned) _config.limit );
+            return _safeCount( _txn->getClient(), _db, _config.ns , _config.filter , QueryOption_SlaveOk , (unsigned) _config.limit );
         }
 
         State::~State() {
@@ -1305,7 +1308,9 @@ namespace mongo {
                 if (shouldBypassDocumentValidationForCommand(cmd))
                     maybeDisableValidation.emplace(txn);
 
-                if (txn->getClient()->isInDirectClient()) {
+                auto client = txn->getClient();
+
+                if (client->isInDirectClient()) {
                     return appendCommandStatus(result,
                                                Status(ErrorCodes::IllegalOperation,
                                                       "Cannot run mapReduce command from eval()"));
@@ -1333,7 +1338,7 @@ namespace mongo {
 
                     // Get metadata before we check our version, to make sure it doesn't increment
                     // in the meantime.  Need to do this in the same lock scope as the block.
-                    if (shardingState.needCollectionMetadata(config.ns)) {
+                    if (shardingState.needCollectionMetadata(client, config.ns)) {
                         collMetadata = shardingState.getCollectionMetadata( config.ns );
                     }
                 }
@@ -1350,9 +1355,8 @@ namespace mongo {
                 if (state.isOnDisk()) {
                     // this means that it will be doing a write operation, make sure we are on Master
                     // ideally this check should be in slaveOk(), but at that point config is not known
-                    repl::ReplicationCoordinator* const replCoord =
-                        repl::getGlobalReplicationCoordinator();
-                    if (!replCoord->canAcceptWritesForDatabase(dbname)) {
+                    NamespaceString nss(config.ns);
+                    if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss)) {
                         errmsg = "not master";
                         return false;
                     }
@@ -1672,7 +1676,7 @@ namespace mongo {
 
                     for ( ChunkMap::const_iterator it = chunkMap.begin(); it != chunkMap.end(); ++it ) {
                         ChunkPtr chunk = it->second;
-                        if (chunk->getShard().getName() == shardName) {
+                        if (chunk->getShardId() == shardName) {
                             chunks.push_back(chunk);
                         }
                     }

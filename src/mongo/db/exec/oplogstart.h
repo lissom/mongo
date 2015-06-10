@@ -77,12 +77,12 @@ namespace mongo {
 
         virtual std::vector<PlanStage*> getChildren() const;
 
+        // Returns empty PlanStageStats object
+        virtual PlanStageStats* getStats();
+
         //
         // Exec stats -- do not call these for the oplog start stage.
         //
-
-        virtual PlanStageStats* getStats() { return NULL; }
-
         virtual const CommonStats* getCommonStats() const { return NULL; }
 
         virtual const SpecificStats* getSpecificStats() const { return NULL; }
@@ -93,6 +93,9 @@ namespace mongo {
         void setBackwardsScanTime(int newTime) { _backwardsScanTime = newTime; }
         bool isExtentHopping() { return _extentHopping; }
         bool isBackwardsScanning() { return _backwardsScanning; }
+
+        static const char* kStageType;
+
     private:
         StageState workBackwardsScan(WorkingSetID* out);
 
@@ -107,8 +110,7 @@ namespace mongo {
         boost::scoped_ptr<CollectionScan> _cs;
 
         // This is only used for the extent hopping scan.
-        typedef OwnedPointerVector<RecordIterator> SubIterators;
-        SubIterators _subIterators;
+        std::vector<std::unique_ptr<RecordCursor>> _subIterators;
 
         // Have we done our heavy init yet?
         bool _needInit;

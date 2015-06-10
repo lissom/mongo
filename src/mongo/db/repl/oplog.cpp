@@ -244,11 +244,12 @@ namespace {
                 const BSONObj& obj,
                 BSONObj *o2,
                 bool fromMigrate) {
-        if ( strncmp(ns, "local.", 6) == 0 ) {
+        NamespaceString nss(ns);
+        if (nss.db() == "local") {
             return;
         }
 
-        if (NamespaceString(ns).isSystemDotProfile()) {
+        if (nss.isSystemDotProfile()) {
             return;
         }
 
@@ -267,7 +268,7 @@ namespace {
         ReplicationCoordinator* replCoord = getGlobalReplicationCoordinator();
 
         if (ns[0] && replCoord->getReplicationMode() == ReplicationCoordinator::modeReplSet &&
-                    !replCoord->canAcceptWritesForDatabase(nsToDatabaseSubstring(ns))) {
+                    !replCoord->canAcceptWritesFor(nss)) {
                 severe() << "logOp() but can't accept write to collection " << ns;
                 fassertFailed(17405);
         }
@@ -564,7 +565,7 @@ namespace {
             {
                 [](OperationContext* txn, const char* ns, BSONObj& cmd) -> Status {
                     BSONObjBuilder resultWeDontCareAbout;
-                    return applyOps(txn, ns, cmd, &resultWeDontCareAbout);
+                    return applyOps(txn, nsToDatabase(ns), cmd, &resultWeDontCareAbout);
                 },
                 {ErrorCodes::UnknownError}
             }
@@ -868,11 +869,11 @@ namespace {
         return Status::OK();
     }
 
-    void waitForTimestampChange(const Timestamp& referenceTime, Microseconds timeout) {
+    void waitUpToOneSecondForTimestampChange(const Timestamp& referenceTime) {
         boost::unique_lock<boost::mutex> lk(newOpMutex);
 
         while (referenceTime == getLastSetTimestamp()) {
-            if (boost::cv_status::timeout == newTimestampNotifier.wait_for(lk, timeout))
+            if (!newTimestampNotifier.timed_wait(lk, boost::posix_time::seconds(1)))
                 return;
         }
     }

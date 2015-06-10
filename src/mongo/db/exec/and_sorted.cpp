@@ -43,10 +43,10 @@ namespace mongo {
     // static
     const char* AndSortedStage::kStageType = "AND_SORTED";
 
-    AndSortedStage::AndSortedStage(WorkingSet* ws, 
+    AndSortedStage::AndSortedStage(WorkingSet* ws,
                                    const MatchExpression* filter,
                                    const Collection* collection)
-        : _collection(collection), 
+        : _collection(collection),
           _ws(ws),
           _filter(filter),
           _targetNode(numeric_limits<size_t>::max()),
@@ -192,10 +192,6 @@ namespace mongo {
 
                     // Everyone hit it, hooray.  Return it, if it matches.
                     if (Filter::passes(toMatchTest, _filter)) {
-                        if (NULL != _filter) {
-                            ++_specificStats.matchTested;
-                        }
-
                         *out = toReturn;
                         ++_commonStats.advanced;
                         return PlanStage::ADVANCED;
@@ -243,7 +239,7 @@ namespace mongo {
             _ws->free(_targetId);
             return state;
         }
-        else if (PlanStage::FAILURE == state) {
+        else if (PlanStage::FAILURE == state || PlanStage::DEAD == state) {
             *out = id;
             // If a stage fails, it may create a status WSM to indicate why it
             // failed, in which case 'id' is valid.  If ID is invalid, we

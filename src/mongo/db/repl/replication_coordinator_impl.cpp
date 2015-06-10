@@ -1394,13 +1394,25 @@ namespace {
         return !replAllDead && _settings.master;
     }
 
+    bool ReplicationCoordinatorImpl::canAcceptWritesFor(const NamespaceString& ns) {
+        if (_memberState.rollback() && ns.isOplog()) {
+            return false;
+        }
+        StringData dbName = ns.db();
+        return canAcceptWritesForDatabase(dbName);
+    }
+
     Status ReplicationCoordinatorImpl::checkCanServeReadsFor(OperationContext* txn,
                                                              const NamespaceString& ns,
                                                              bool slaveOk) {
+        if (_memberState.rollback() && ns.isOplog()) {
+            return Status(ErrorCodes::NotMasterOrSecondaryCode,
+                          "cannot read from oplog collection while in rollback");
+        }
         if (txn->getClient()->isInDirectClient()) {
             return Status::OK();
         }
-        if (canAcceptWritesForDatabase(ns.db())) {
+        if (canAcceptWritesFor(ns)) {
             return Status::OK();
         }
         if (_settings.slave || _settings.master) {
@@ -2050,8 +2062,9 @@ namespace {
             }
             return kActionNone;
         }
+
         PostMemberStateUpdateAction result;
-        if (_memberState.primary() || newState.removed()) {
+        if (_memberState.primary() || newState.removed() || newState.rollback()) {
             // Wake up any threads blocked in awaitReplication, close connections, etc.
             for (std::vector<WaiterInfo*>::iterator it = _replicationWaiterList.begin();
                  it != _replicationWaiterList.end(); ++it) {
@@ -2064,16 +2077,18 @@ namespace {
             result = kActionCloseAllConnections;
         }
         else {
-            if (_memberState.secondary() && !newState.primary()) {
-                // Switching out of SECONDARY, but not to PRIMARY.
-                _canServeNonLocalReads.store(0U);
-            }
-            else if (newState.secondary()) {
-                // Switching into SECONDARY, but not from PRIMARY.
-                _canServeNonLocalReads.store(1U);
-            }
             result = kActionFollowerModeStateChange;
         }
+
+        if (_memberState.secondary() && !newState.primary()) {
+            // Switching out of SECONDARY, but not to PRIMARY.
+            _canServeNonLocalReads.store(0U);
+        }
+        else if (!_memberState.primary() && newState.secondary()) {
+            // Switching into SECONDARY, but not from PRIMARY.
+            _canServeNonLocalReads.store(1U);
+        }
+
         if (newState.secondary() && _topCoord->getRole() == TopologyCoordinator::Role::candidate) {
             // When transitioning to SECONDARY, the only way for _topCoord to report the candidate
             // role is if the configuration represents a single-node replica set.  In that case, the

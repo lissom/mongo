@@ -26,47 +26,24 @@
  *    it in the license file.
  */
 
-#pragma once
+#include "mongo/platform/basic.h"
 
-#include <memory>
-#include <string>
-
-#include "mongo/base/string_data.h"
-#include "mongo/s/catalog/dist_lock_manager.h"
+#include "mongo/s/catalog/dist_lock_ping_info.h"
 
 namespace mongo {
 
-    class DistLockCatalog;
+    DistLockPingInfo::DistLockPingInfo() = default;
 
-    class ReplSetDistLockManager: public DistLockManager {
-    public:
-        ReplSetDistLockManager(StringData processID,
-                               std::unique_ptr<DistLockCatalog> catalog);
+    DistLockPingInfo::DistLockPingInfo(StringData idArg,
+                                       Date_t lastPingArg,
+                                       Date_t remoteArg,
+                                       OID tsArg,
+                                       OID electionIdArg) :
+            processId(idArg.toString()),
+            lastPing(lastPingArg),
+            configLocalTime(remoteArg),
+            lockSessionId(std::move(tsArg)),
+            electionId(std::move(electionIdArg)) {
+    }
 
-        virtual ~ReplSetDistLockManager();
-
-        virtual void startUp() override;
-        virtual void shutDown() override;
-
-        virtual StatusWith<DistLockManager::ScopedDistLock> lock(
-                StringData name,
-                StringData whyMessage,
-                stdx::chrono::milliseconds waitFor = stdx::chrono::milliseconds(0),
-                stdx::chrono::milliseconds lockTryInterval =
-                        stdx::chrono::milliseconds(1000)) override;
-
-    protected:
-
-        virtual void unlock(const DistLockHandle& lockHandle) override;
-
-        virtual Status checkStatus(const DistLockHandle& lockHandle) override;
-
-    private:
-
-        void queueUnlock(const OID& lockSessionID);
-
-        std::string _processID;
-        std::unique_ptr<DistLockCatalog> _catalog;
-
-    };
 }

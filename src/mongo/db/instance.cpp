@@ -583,7 +583,8 @@ namespace {
                 }
                 else {
                     if (remote != DBDirectClient::dummyHost) {
-                        const ShardedConnectionInfo* connInfo = ShardedConnectionInfo::get(false);
+                        const ShardedConnectionInfo* connInfo =
+                            ShardedConnectionInfo::get(&c, false);
                         uassert(18663,
                                 str::stream() << "legacy writeOps not longer supported for "
                                               << "versioned connections, ns: " << nsString.ns()
@@ -785,8 +786,7 @@ namespace {
             OldClientContext ctx(txn, nsString);
             uassert(ErrorCodes::NotMaster,
                     str::stream() << "Not primary while performing update on " << nsString.ns(),
-                    repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(
-                        nsString.db()));
+                    repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString));
 
             Database* db = ctx.db();
             if (db->getCollection(nsString)) {
@@ -930,7 +930,7 @@ namespace {
                         last = getLastSetTimestamp();
                     }
                     else {
-                        repl::waitForTimestampChange(last, Seconds(1));
+                        repl::waitUpToOneSecondForTimestampChange(last);
                     }
                 }
 
@@ -1194,7 +1194,7 @@ namespace {
             // CONCURRENCY TODO: is being read locked in big log sufficient here?
             // writelock is used to synchronize stepdowns w/ writes
             uassert(notMasterCodeForInsert, "not master",
-                    repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(nsString.db()));
+                    repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString));
 
             // OldClientContext may implicitly create a database, so check existence
             if (dbHolder().get(txn, nsString.db()) != NULL) {
@@ -1221,7 +1221,7 @@ namespace {
         // CONCURRENCY TODO: is being read locked in big log sufficient here?
         // writelock is used to synchronize stepdowns w/ writes
         uassert(notMasterCodeForInsert, "not master",
-                repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(nsString.db()));
+                repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString));
 
         OldClientContext ctx(txn, ns);
 
