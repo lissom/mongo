@@ -21,6 +21,14 @@ namespace mongo {
 class MessagePipeline;
 class AsyncClientConnection;
 
+struct OpStats {
+    std::atomic<uint64_t> _queries{};
+    std::atomic<uint64_t> _inserts{};
+    std::atomic<uint64_t> _updates{};
+    std::atomic<uint64_t> _deletes{};
+    std::atomic<uint64_t> _commands{};
+    //6-8 are empty
+};
 
 /*
  * Splitting by # of threads so we scale linearly with it
@@ -55,6 +63,7 @@ private:
 
     void workLoop();
 
+    OpStats opStats;
     //TODO: Get a better concurrency structure
     std::mutex _mutex;
     std::condition_variable _wait;

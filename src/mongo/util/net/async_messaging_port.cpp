@@ -10,15 +10,103 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/util/net/async_messaging_port.h"
+#include "mongo/util/net/network_server.h"
 
 namespace mongo {
 namespace network {
 
-AsyncMessagingPort::AsyncMessagingPort(AsyncClientConnection* const connInfo) : _connInfo(connInfo) {
-    this->setConnectionId(connInfo->getConnectionId());
+void Connections::newConnHandler(asio::ip::tcp::socket&& socket) {
+    std::unique_ptr<AsyncClientConnection> ci(std::move(socket), ++_connectionCount);
+    AsyncClientConnection* conn = ci.get();
+    std::unique_lock lock(_mutex);
+    auto pos = _conns.emplace(ci.get(), ci);
+    //Ensure the insert happened
+    verify(pos.second == true);
+    (void)pos;
+    lock.release();
+    conn->asyncReceiveMessage();
 }
 
-void AsyncMessagingPort::asyncSend(Message& toSend, int responseTo) {
+void Connections::newMessageHandler(AsyncClientConnection* conn) {
+    _server->newMessageHandler(conn);
+}
+
+void AsyncClientConnection::asyncReceiveMessage() {
+    asyncGetHeader();
+}
+
+void AsyncClientConnection::asyncGetHeader() {
+    static_assert(NETWORK_MIN_MESSAGE_SIZE > HEADERSIZE, "Min alloc must be > message header size");
+    //TODO: capture average message size and use that if > min
+    _buf.clear();
+    _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
+    _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
+            [this](std::error_code ec, size_t len) {
+        bytesIn(len);
+        if (ec) {
+            asyncSocketError(ec);
+            return;
+        }
+        if (len != HEADERSIZE) {
+            log() << "Error, invalid header size received: " << len << std::endl;
+            asyncSocketShutdownRemove(conn);
+            return;
+        }
+        asyncGetMessage(conn);
+    });
+}
+
+void AsyncClientConnection::asyncGetMessage() {
+    const auto msgSize = getMsgData().getLen();
+    //Forcing into the nearest 1024 size block.  Assuming this was to always hit a tcmalloc size?
+    _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
+    //Message size may be -1 to check endian?  Not sure if that is current spec
+    fassert(-1, msgSize >= 0);
+    if ( static_cast<size_t>(msgSize) < HEADERSIZE ||
+         static_cast<size_t>(msgSize) > MaxMessageSizeBytes ) {
+        LOG(0) << "recv(): message len " << len << " is invalid. "
+               << "Min " << HEADERSIZE << " Max: " << MaxMessageSizeBytes;
+        //TODO: can we return an error on the socket to the client?
+        asyncSocketShutdownRemove(conn);
+    }
+    _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
+            [this](std::error_code ec, size_t len) {
+        bytesIn(len);
+        if (ec) {
+            asyncSocketError(ec);
+            return;
+        }
+        if (len != HEADERSIZE) {
+            log() << "Error, invalid header size received: " << len << std::endl;
+            asyncSocketShutdownRemove(conn);
+            return;
+        }
+        asyncQueueMessage();
+    });
+}
+
+void AsyncClientConnection::asyncQueueMessage() {
+    _owner->newMessageHandler(this);
+}
+
+void AsyncClientConnection::asyncSocketError(std::error_code ec) {
+    fassert(-1, ec != 0);
+    log() << "Error waiting for header " << ec << std::endl;
+    asyncSocketShutdownRemove(conn);
+}
+
+void AsyncClientConnection::asyncSocketShutdownRemove() {
+    _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
+    _socket.close();
+    //Now that the socket's work is done, post to the async work queue to remove it
+    _socket.get_io_service().post([this]{
+        std::unique_lock lock(_owner->_mutex);
+        fassert(-1, _owner->_conns.erase(this) > 0);
+        lock.release();
+    });
+}
+
+void AsyncClientConnection::asyncSend(Message& toSend, int responseTo) {
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
     toSend.header().setId(nextMessageId());
     toSend.header().setResponseTo(responseTo);
@@ -26,11 +114,11 @@ void AsyncMessagingPort::asyncSend(Message& toSend, int responseTo) {
     toSend.isSingleData() ? asyncSendSingle(toSend) : asyncSendMulti(toSend);
 }
 
-void AsyncMessagingPort::asyncSendSingle(const Message& toSend)  {
+void AsyncClientConnection::asyncSendSingle(const Message& toSend)  {
     //_connInfo->asyncSendMessage(toSend.singleData(), toSend.size());
 }
 
-void AsyncMessagingPort::asyncSendMulti(const Message& toSend) {
+void AsyncClientConnection::asyncSendMulti(const Message& toSend) {
 
 }
 
