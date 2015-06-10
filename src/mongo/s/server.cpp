@@ -34,13 +34,14 @@
 
 #include <boost/shared_ptr.hpp>
 #include <boost/thread/thread.hpp>
-#include <iostream>
 
 #include "mongo/base/init.h"
 #include "mongo/base/initializer.h"
 #include "mongo/base/status.h"
 #include "mongo/client/connpool.h"
 #include "mongo/client/dbclient_rs.h"
+#include "mongo/client/remote_command_runner_impl.h"
+#include "mongo/client/remote_command_targeter_factory_impl.h"
 #include "mongo/client/replica_set_monitor.h"
 #include "mongo/config.h"
 #include "mongo/db/audit.h"
@@ -57,10 +58,12 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/service_context_noop.h"
 #include "mongo/db/startup_warnings_common.h"
+#include "mongo/executor/task_executor.h"
 #include "mongo/platform/process_id.h"
 #include "mongo/s/balance.h"
 #include "mongo/s/catalog/legacy/catalog_manager_legacy.h"
 #include "mongo/s/client/sharding_connection_hook.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/config.h"
 #include "mongo/s/cursors.h"
 #include "mongo/s/grid.h"
@@ -249,7 +252,13 @@ static ExitCode runMongosServer( bool doUpgrade ) {
         }
     }
 
-    grid.setCatalogManager(std::move(catalogManager));
+    auto shardRegistry = stdx::make_unique<ShardRegistry>(
+                            stdx::make_unique<RemoteCommandTargeterFactoryImpl>(),
+                            stdx::make_unique<RemoteCommandRunnerImpl>(0),
+                            std::unique_ptr<executor::TaskExecutor>{nullptr},
+                            catalogManager.get());
+
+    grid.init(std::move(catalogManager), std::move(shardRegistry));
 
     ConfigServer::reloadSettings();
 

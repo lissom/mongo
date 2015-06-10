@@ -1,5 +1,5 @@
 /**
- *    Copyright (C) 2008-2015 MongoDB Inc.
+ *    Copyright (C) 2015 MongoDB Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -28,45 +28,38 @@
 
 #include "mongo/platform/basic.h"
 
+#include "mongo/client/remote_command_targeter_factory_impl.h"
+
+#include "mongo/base/status_with.h"
 #include "mongo/client/connection_string.h"
-#include "mongo/s/client/shard.h"
-#include "mongo/unittest/unittest.h"
+#include "mongo/client/remote_command_targeter_rs.h"
+#include "mongo/client/remote_command_targeter_standalone.h"
+#include "mongo/stdx/memory.h"
+#include "mongo/util/assert_util.h"
 
-namespace {
+namespace mongo {
 
-    using namespace mongo;
-    using unittest::assertGet;
+    RemoteCommandTargeterFactoryImpl::RemoteCommandTargeterFactoryImpl() = default;
 
-    TEST(Shard, EqualityRs) {
-        Shard a("foo", assertGet(ConnectionString::parse("bar/a,b")), 0, false);
+    RemoteCommandTargeterFactoryImpl::~RemoteCommandTargeterFactoryImpl() = default;
 
-        {
-            Shard s("foo", assertGet(ConnectionString::parse("bar/a,b")), 0, false);
-            ASSERT_EQUALS(a, s);
+    std::unique_ptr<RemoteCommandTargeter>
+    RemoteCommandTargeterFactoryImpl::create(const ConnectionString& connStr) {
+        switch (connStr.type()) {
+        case ConnectionString::MASTER:
+        case ConnectionString::CUSTOM:
+            invariant(connStr.getServers().size() == 1);
+            return stdx::make_unique<RemoteCommandTargeterStandalone>(connStr.getServers().front());
+        case ConnectionString::SET:
+            return stdx::make_unique<RemoteCommandTargeterRS>(connStr.getSetName(),
+                                                             connStr.getServers());
+        case ConnectionString::INVALID:
+        case ConnectionString::SYNC:
+            // These connections should never be seen
+            break;
         }
 
-        {
-            Shard s("foo", assertGet(ConnectionString::parse("bar/b,a")), 0, false);
-            ASSERT_EQUALS(a, s);
-        }
+        MONGO_UNREACHABLE;
     }
 
-    TEST(Shard, EqualitySingle) {
-        ASSERT_EQUALS(
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false),
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false));
-
-        ASSERT_NOT_EQUALS(
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false),
-            Shard("foo", assertGet(ConnectionString::parse("a.foo.com:123")), 0, false));
-
-        ASSERT_NOT_EQUALS(
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false),
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:124")), 0, false));
-
-        ASSERT_NOT_EQUALS(
-            Shard("foo", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false),
-            Shard("foa", assertGet(ConnectionString::parse("b.foo.com:123")), 0, false));
-    }
-
-} // namespace
+} // namespace mongo
