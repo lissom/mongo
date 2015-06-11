@@ -1,6 +1,7 @@
 # -*- mode: python; -*-
 
 Import('env')
+env.InjectThirdPartyIncludePaths('asio')
 
 env.Library(
     target='hostandport',
@@ -29,6 +30,7 @@ env.Library(
         "listen.cpp",
         "message.cpp",
         "message_port.cpp",
+        "network_server.cpp",
         "sock.cpp",
         "socket_poll.cpp",
         "ssl_expiration.cpp",
@@ -36,6 +38,7 @@ env.Library(
         "ssl_options.cpp",
     ],
     LIBDEPS=[
+    	'$BUILD_DIR/third_party/shim_asio',
         '$BUILD_DIR/mongo/util/background_job',
         '$BUILD_DIR/mongo/util/fail_point',
         '$BUILD_DIR/mongo/db/server_options_core',

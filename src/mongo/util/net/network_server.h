@@ -8,12 +8,12 @@
 #pragma once
 
 #include <array>
-#include <asio/include/asio.hpp>
 #include <atomic>
 #include <tuple>
 #include <vector>
 #include <unordered_map>
 
+#include "asio.hpp"
 #include "mongo/db/lasterror.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/util/net/async_messaging_port.h"
@@ -87,4 +87,3 @@ private:
 } /* namespace network */
 } /* namespace mongo */
 
-#endif /* SRC_MONGO_UTIL_NET_NETWORK_SERVER_H_ */

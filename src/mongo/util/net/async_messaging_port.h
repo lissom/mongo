@@ -10,12 +10,12 @@
 #include <algorithm>
 #include <boost/thread/thread.hpp>
 #include <errno.h>
+#include <mutex>
 #include <utility>
 
 #include "mongo/platform/platform_specific.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/exit.h"
-#include "mongo/util/log.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/message_port.h"
 
@@ -76,7 +76,6 @@ public:
 
     void closeOnComplete() { _closeOnComplete = true; }
     void asyncReceiveMessage();
-    LastError& getLastError() { return _persistantState; }
     void setPersistantState(PersistantState* state) {
         _persistantState.reset(state);
     }
@@ -85,7 +84,7 @@ public:
         return _persistantState.release();
     }
     const std::string& threadName() const { return _threadName; }
-    std::string& setThreadName(const std::string& threadName) { verify(_threadName.empty() == true); _threadName = threadName; }
+    void setThreadName(const std::string& threadName) { verify(_threadName.empty() == true); _threadName = threadName; }
 
     //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
     char* getBuffer() { return _buf.data(); }
@@ -109,7 +108,7 @@ public:
             }
             if (len != HEADERSIZE) {
                 log() << "Error, invalid header size received: " << len << std::endl;
-                asyncSocketShutdownRemove(conn);
+                asyncSocketShutdownRemove();
                 return;
             }
             doClose() ? asyncSocketShutdownRemove() : asyncReceiveMessage();
@@ -166,7 +165,7 @@ public:
      * Consider returning std::string for error logging, etc.
      */
     //Only used for mongoD and MessagingPort, breaks abstraction so leaving it alone
-    HostAndPort remote() const final { fassert(-2, false); return SockAddr(); }
+    HostAndPort remote() const final { fassert(-2, false); return HostAndPort(); }
     //Only used for an error string for sasl logging
     //TODO: fix sasl logging to use a string
     std::string localAddrString() const final;
@@ -193,12 +192,12 @@ private:
         _stats._bytesOut += bytesOut;
     }
 
+    Connections* const _owner;
     ConnStats _stats;
     asio::ip::tcp::socket _socket;
     ConnectionId _connectionId;
-    Connections* const _owner;
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
-    std::vector _buf;
+    std::vector<char> _buf;
     BufferSet _buffers;
     std::unique_ptr<PersistantState> _persistantState;
     std::string _threadName;

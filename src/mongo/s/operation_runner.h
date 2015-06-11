@@ -19,7 +19,6 @@
 
 namespace mongo {
 
-class Operations;
 MONGO_ALIGN_TO_CACHE class OperationRunner {
 public:
     enum class State { init, running, completed, errored };
@@ -75,7 +74,8 @@ private:
     std::atomic<State> _state{State::init};
 };
 
-MONGO_ALIGN_TO_CACHE class Operations {
+//TODO: replace with template
+MONGO_ALIGN_TO_CACHE class OperationsXXX {
 public:
 
 private:
