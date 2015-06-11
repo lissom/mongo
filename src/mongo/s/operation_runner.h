@@ -19,6 +19,7 @@
 
 namespace mongo {
 
+class Operations;
 MONGO_ALIGN_TO_CACHE class OperationRunner {
 public:
     enum class State { init, running, completed, errored };
@@ -55,6 +56,13 @@ private:
      */
     void cleanup() {
 
+        if (!operationsActive()) {
+            remove();
+        }
+    }
+
+    void remove() {
+
     }
 
     //TODO: Test to see if we are waiting on return values
@@ -65,6 +73,17 @@ private:
     //TODO: decompose request
     Request request;
     std::atomic<State> _state{State::init};
+};
+
+MONGO_ALIGN_TO_CACHE class Operations {
+public:
+
+private:
+    MessagePipeline* const _owner;
+    std::mutex _mutex;
+    //TODO: Storing messages in the current processor is going to going to lead to skewed spread,
+    //perhaps move to a fixed size randomly assigned hash queue to hold operations, we assign a global connId anyway (as of this writing)
+    std::unordered_set<std::unique_ptr<OperationRunner>> _runners;
 };
 
 } // namespace mongo

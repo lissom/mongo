@@ -54,11 +54,7 @@ private:
         void run();
 
     private:
-        MessagePipeline* const _owner;
-        std::mutex _mutex;
-        //TODO: Storing messages in the current processor is going to going to lead to skewed spread,
-        //perhaps move to a fixed size randomly assigned hash queue to hold operations, we assign a global connId anyway (as of this writing)
-        std::unordered_set<std::unique_ptr<OperationRunner>> _runners;
+        void persistOperation();
     };
 
     void workLoop();

@@ -40,11 +40,11 @@ void OperationRunner::run() {
     }
     catch (std::exception &e) {
         log() << "Failed to initialize operation runner: " << e.what();
-        markErrored();
+        setErrored();
     }
     catch (...) {
         log() << "Failed to initialize operation runner: unknown exception";
-        markErrored();
+        setErrored();
     }
     setState(State::running);
     processRequest();
