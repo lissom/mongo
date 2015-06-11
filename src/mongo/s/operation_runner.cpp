@@ -36,16 +36,16 @@ void OperationRunner::run() {
     verify(_state == State::init);
     try {
         Client::initThread("conn", port);
-        port->setThreadName(getThreadName());
     }
     catch (std::exception &e) {
-        log() << "Failed to initialize operation runner: " << e.what();
+        log() << "Failed to initialize operation runner thread specific variables: " << e.what();
         setErrored();
     }
     catch (...) {
-        log() << "Failed to initialize operation runner: unknown exception";
+        log() << "Failed to initialize operation runner thread specific variables: unknown exception";
         setErrored();
     }
+    port->setThreadName(getThreadName());
     setState(State::running);
     processRequest();
     onContextEnd();
@@ -86,12 +86,11 @@ void OperationRunner::processRequest() {
 }
 
 void OperationRunner::onContextStart() {
-    currentClient.reset(port->releasePersistantState());
-    setThreadName(port->threadName());
+    port->restoreClientState();
 }
 
 void OperationRunner::onContextEnd() {
-    port->setPersistantState(currentClient.release());
+    port->persistClientState();
 }
 
 } // namespace mongo

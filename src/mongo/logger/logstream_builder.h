@@ -30,6 +30,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <system_error>
 
 #include "mongo/logger/labeled_level.h"
 #include "mongo/logger/log_component.h"
@@ -130,6 +131,7 @@ namespace logger {
         LogstreamBuilder& operator<<(long long x) { stream() << x; return *this; }
         LogstreamBuilder& operator<<(unsigned long long x) { stream() << x; return *this; }
         LogstreamBuilder& operator<<(bool x) { stream() << x; return *this; }
+        LogstreamBuilder& operator<<(const std::error_code& ec) { stream() << ec; return *this; }
 
         template <typename Rep, typename Period>
         LogstreamBuilder& operator<<(stdx::chrono::duration<Rep, Period> d) {

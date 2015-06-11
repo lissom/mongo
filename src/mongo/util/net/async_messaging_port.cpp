@@ -48,8 +48,9 @@ void AsyncClientConnection::asyncGetHeader() {
             return;
         }
         if (len != HEADERSIZE) {
-            log() << "Error, invalid header size received: " << len << std::endl;
-            asyncSocketShutdownRemove(conn);
+            log() << "Error, invalid header size received: " <<
+                    static_cast<int>(len) << std::endl;
+            asyncSocketShutdownRemove();
             return;
         }
         asyncGetMessage(conn);
@@ -64,7 +65,7 @@ void AsyncClientConnection::asyncGetMessage() {
     fassert(-1, msgSize >= 0);
     if ( static_cast<size_t>(msgSize) < HEADERSIZE ||
          static_cast<size_t>(msgSize) > MaxMessageSizeBytes ) {
-        LOG(0) << "recv(): message len " << len << " is invalid. "
+        log() << "recv(): message len " << len << " is invalid. "
                << "Min " << HEADERSIZE << " Max: " << MaxMessageSizeBytes;
         //TODO: can we return an error on the socket to the client?
         asyncSocketShutdownRemove(conn);
@@ -89,9 +90,15 @@ void AsyncClientConnection::asyncQueueMessage() {
     _owner->newMessageHandler(this);
 }
 
+void AsyncClientConnection::asyncSizeError(const char* desc, size_t size) {
+    log() << desc << ". Length: " << len << std::endl;
+    asyncSocketShutdownRemove();
+}
+
+
 void AsyncClientConnection::asyncSocketError(std::error_code ec) {
-    fassert(-1, ec != 0);
-    log() << "Error waiting for header " << ec << std::endl;
+    log() << "Socket error.  Code: " << ec << ".  Remote: " << _socket.remote_endpoint()
+            << std::endl;
     asyncSocketShutdownRemove(conn);
 }
 

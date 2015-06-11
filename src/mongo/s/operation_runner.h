@@ -19,17 +19,20 @@
 
 namespace mongo {
 
+//TODO: Add owner and have the runner pop itself on finish
 MONGO_ALIGN_TO_CACHE class OperationRunner {
 public:
-    enum class State { init, running, completed, errored };
+    enum class State { init, running, completed, errored, finished };
     OperationRunner(network::AsyncClientConnection* const connInfo);
     ~OperationRunner() {
         //Ensure no dangling operations
         fassert(-1, operationsActive() == false);
-        port->setPersistantState(currentClient.release());
+        port->persistClientState();
     }
     void run();
     void callback();
+    //TODO: Test to see if we are waiting on return values
+    bool operationsActive() { return _state != State::finished; }
 
 private:
     void processRequest();
@@ -40,9 +43,13 @@ private:
 
     //All functions below this line are async, so they must be able to be ran concurrently
     void setState(State state) {
-        State currentState = _state.load(std::memory_order_relaxed);
-        while (currentState != State::errored)
-            currentState = _state.compare_exchange_weak(currentState, state, std::memory_order_relaxed);
+        State currentState = _state.load(std::memory_order_consume);
+        verify(currentState != State::finished);
+        while (!_state.compare_exchange_weak(currentState, state, std::memory_order_acquire)) {
+            verify(currentState != State::finished);
+            if (currentState == State::errored)
+                break;
+        }
     }
 
     void setErrored() {
@@ -64,9 +71,6 @@ private:
 
     }
 
-    //TODO: Test to see if we are waiting on return values
-    bool operationsActive() { return false; }
-
     network::AsyncClientConnection* const port;
     Message message;
     //TODO: decompose request
@@ -79,7 +83,7 @@ MONGO_ALIGN_TO_CACHE class OperationsXXX {
 public:
 
 private:
-    MessagePipeline* const _owner;
+    //MessagePipeline* const _owner;
     std::mutex _mutex;
     //TODO: Storing messages in the current processor is going to going to lead to skewed spread,
     //perhaps move to a fixed size randomly assigned hash queue to hold operations, we assign a global connId anyway (as of this writing)

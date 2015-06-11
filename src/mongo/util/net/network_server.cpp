@@ -39,13 +39,23 @@ NetworkServer::NetworkServer(NetworkOptions options, MessagePipeline* const pipe
         _options(std::move(options)) {
     //If ipList is specified bind on those ips, otherwise bind to all ips for that port
     if (_options.ipList.size()) {
-        for (auto &i : _options.ipList) {
-            //create an end point with address and port number for each ip
-            _endPoints.emplace_back(&_service, asio::ip::tcp::endpoint(i, _options.port));
+        const char* start = _options.ipList.c_str();
+        asio::ip::address addr;
+        while(*start) {
+            const char* seperator = strchr(start, ',');
+            if (seperator != nullptr) {
+                asio::ip::address::from_string(std::string(start, seperator - start).c_str());
+                start = seperator + 1;
+            }
+            else {
+                addr = asio::ip::address::from_string(start);
+                start = nullptr;
+            }
+            _endPoints.emplace_back(_service, asio::ip::tcp::endpoint(addr, _options.port));
         }
     }
     else
-        _endPoints.emplace_back(&_service, asio::ip::tcp::endpoint(asio::ip::tcp::v4(),
+        _endPoints.emplace_back(_service, asio::ip::tcp::endpoint(asio::ip::tcp::v4(),
                 _options.port));
 }
 
@@ -56,7 +66,7 @@ NetworkServer::~NetworkServer() {
 }
 
 void NetworkServer::newMessageHandler(AsyncClientConnection* conn) {
-    _pipeline->enqueueMessage(message);
+    _pipeline->enqueueMessage(conn);
 }
 
 void NetworkServer::startAllWaits() {
@@ -74,11 +84,10 @@ void NetworkServer::startWait(Initiator* const initiator) {
             asio::ip::tcp::socket sock(std::move(initiator->_socket));
             sock.shutdown(asio::socket_base::shutdown_type::shutdown_both);
             sock.close();
-            switch (ec) {
-            default:
-                log() << "Error code: " << ec << " on port " << initiator->_acceptor.local_endpoint()
-                        << std::endl;
-            }
+            std::stringstream ss;
+            ss << "Network error. Code: " << ec << " on port " <<
+                    initiator->_acceptor.local_endpoint();
+            log() << ss.str() << std::endl;
         }
         //requeue
         startWait(initiator);

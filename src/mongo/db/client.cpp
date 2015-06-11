@@ -151,4 +151,15 @@ namespace mongo {
 
     bool haveClient() { return currentClient.getMake()->get(); }
 
+    namespace persist {
+        ServiceContext::UniqueClient* releaseClient() {
+            return currentClient.release();
+        }
+
+        void setClient(ServiceContext::UniqueClient* client) {
+            currentClient.reset(client);
+        }
+    }
+
+
 } // namespace mongo

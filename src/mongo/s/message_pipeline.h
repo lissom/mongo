@@ -14,12 +14,12 @@
 #include <thread>
 #include <unordered_set>
 
-#include "operation_runner.h"
+#include "mongo/s/operation_runner.h"
+#include "mongo/util/net/async_messaging_port.h"
 
 namespace mongo {
 
 class MessagePipeline;
-class AsyncClientConnection;
 
 struct OpStats {
     std::atomic<uint64_t> _queries{};
@@ -30,6 +30,9 @@ struct OpStats {
     //6-8 are empty
 };
 
+struct CurrentOp {
+
+};
 /*
  * Splitting by # of threads so we scale linearly with it
  */
@@ -40,21 +43,28 @@ public:
         _terminate = true;
     };
 
-    void enqueueMessage(AsyncClientConnection* conn);
-    AsyncClientConnection* getNextMessage();
+    //TODO: get all the current operations
+    /*
+     * Iterate over the message runners for running currentOps and then the queues for "waiting" currentOps
+     */
+    std::unique_ptr<CurrentOp> currentOp();
+    void enqueueMessage(network::AsyncClientConnection* conn);
+    network::AsyncClientConnection* getNextMessage();
 
 private:
     /*
      * While MessageProcessor is private to the class there will be async call
      *
      */
-    class MessageProcessor {
+    struct MessageProcessor {
     public:
-        MessageProcessor();
+        MessageProcessor(MessagePipeline* const owner);
         void run();
 
-    private:
-        void persistOperation();
+        private:
+        OperationRunner* _runner{};
+        MessagePipeline* const _owner;
+
     };
 
     void workLoop();
@@ -63,7 +73,7 @@ private:
     //TODO: Get a better concurrency structure
     std::mutex _mutex;
     std::condition_variable _notifyNewMessages;
-    std::queue<AsyncClientConnection*> _newMessages;
+    std::queue<network::AsyncClientConnection*> _newMessages;
     std::atomic<bool> _terminate{};
     std::vector<std::thread> _threads;
 };

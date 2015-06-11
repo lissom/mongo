@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <asio.hpp>
 #include <boost/thread/thread.hpp>
 #include <errno.h>
 #include <mutex>
@@ -76,13 +77,24 @@ public:
 
     void closeOnComplete() { _closeOnComplete = true; }
     void asyncReceiveMessage();
-    void setPersistantState(PersistantState* state) {
-        _persistantState.reset(state);
+    PersistantState* const getPersistantState() {
+        return _persistantState.get();
     }
+
     //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
-    PersistantState* releasePersistantState() {
-        return _persistantState.release();
+    //May need to rexamine this choice later, not sure if async will allow the release
+    //Does not store the thread name as this is a const
+    void persistClientState() {
+        _persistantState.reset(persist::releaseClient());
     }
+
+
+    void restoreClientState() {
+        persist::setClient(_persistantState.release());
+        //Set the mongo thread name, not the setThreadName function here
+        mongo::setThreadName(_threadName);
+    }
+
     const std::string& threadName() const { return _threadName; }
     void setThreadName(const std::string& threadName) { verify(_threadName.empty() == true); _threadName = threadName; }
 
@@ -107,8 +119,7 @@ public:
                 return;
             }
             if (len != HEADERSIZE) {
-                log() << "Error, invalid header size received: " << len << std::endl;
-                asyncSocketShutdownRemove();
+                asyncSizeError("Invalid header size recieved", len);
                 return;
             }
             doClose() ? asyncSocketShutdownRemove() : asyncReceiveMessage();
@@ -173,7 +184,6 @@ public:
     // End AbstractMessagingPort
 
 private:
-
     void asyncSend(Message& toSend, int responseTo = 0);
     void asyncSendSingle(const Message& toSend);
     void asyncSendMulti(const Message& toSend);
@@ -181,6 +191,7 @@ private:
     void asyncGetHeader();
     void asyncGetMessage();
     void asyncQueueMessage();
+    void asyncSizeError(const char* desc, size_t size);
     void asyncSocketError(std::error_code ec);
     void asyncSocketShutdownRemove();
     bool doClose() { return _closeOnComplete; }
@@ -199,6 +210,7 @@ private:
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector<char> _buf;
     BufferSet _buffers;
+    //Not sure this value is safe to non-barrier
     std::unique_ptr<PersistantState> _persistantState;
     std::string _threadName;
     //TODO: Turn this into state and verify it's correct at all stages

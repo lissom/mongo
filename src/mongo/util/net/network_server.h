@@ -56,7 +56,7 @@ public:
     ~NetworkServer() final;
     void run() final;
 
-    void newMessageHandler(AsyncClientConnection* message);
+    void newMessageHandler(AsyncClientConnection* conn);
 
 private:
     struct Initiator {
