@@ -32,7 +32,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <boost/optional.hpp>
 #include <time.h>
 
@@ -109,8 +108,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::ostringstream;
     using std::string;
@@ -588,7 +587,7 @@ namespace mongo {
                 // Check shard version at startup.
                 // This will throw before we've done any work if shard version is outdated
                 // We drop and re-acquire these locks every document because md5'ing is expensive
-                scoped_ptr<AutoGetCollectionForRead> ctx(new AutoGetCollectionForRead(txn, ns));
+                unique_ptr<AutoGetCollectionForRead> ctx(new AutoGetCollectionForRead(txn, ns));
                 Collection* coll = ctx->getCollection();
 
                 PlanExecutor* rawExec;
@@ -598,7 +597,7 @@ namespace mongo {
                     return 0;
                 }
 
-                auto_ptr<PlanExecutor> exec(rawExec);
+                unique_ptr<PlanExecutor> exec(rawExec);
                 // Process notifications when the lock is released/reacquired in the loop below
                 exec->registerExec();
 
@@ -665,7 +664,7 @@ namespace mongo {
             DBDirectClient client(txn);
             Query q(query);
             q.sort(sort);
-            auto_ptr<DBClientCursor> c = client.query(ns, q);
+            unique_ptr<DBClientCursor> c = client.query(ns, q);
             while(c->more())
                 PRINT(c->nextSafe());
         }
@@ -729,7 +728,7 @@ namespace mongo {
 
             result.appendBool( "estimate" , estimate );
 
-            auto_ptr<PlanExecutor> exec;
+            unique_ptr<PlanExecutor> exec;
             if ( min.isEmpty() && max.isEmpty() ) {
                 if ( estimate ) {
                     result.appendNumber( "size" , static_cast<long long>(collection->dataSize(txn)) );
@@ -1195,7 +1194,7 @@ namespace {
             BSONObj interposedCmd = request.getCommandArgs();
 
             std::string dbname = request.getDatabase().toString();
-            scoped_ptr<MaintenanceModeSetter> mmSetter;
+            unique_ptr<MaintenanceModeSetter> mmSetter;
 
             if (isHelpRequest(request)) {
                 CurOp::get(txn)->ensureStarted();

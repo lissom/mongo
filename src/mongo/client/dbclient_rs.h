@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 #include <utility>
 
 #include "mongo/client/dbclientinterface.h"
@@ -41,7 +39,7 @@ namespace mongo {
     class ReplicaSetMonitor;
     class TagSet;
     struct ReadPreferenceSetting;
-    typedef boost::shared_ptr<ReplicaSetMonitor> ReplicaSetMonitorPtr;
+    typedef std::shared_ptr<ReplicaSetMonitor> ReplicaSetMonitorPtr;
 
     /** Use this class to connect to a replica set of servers.  The class will manage
        checking for which server in a replica set is master, and do failover automatically.
@@ -80,7 +78,7 @@ namespace mongo {
         // ----------- simple functions --------------
 
         /** throws userassertion "no master found" */
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
+        virtual std::unique_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
                                                const BSONObj *fieldsToReturn = 0, int queryOptions = 0 , int batchSize = 0 );
 
         /** throws userassertion "no master found" */
@@ -207,7 +205,7 @@ namespace mongo {
          * @throws DBException if the directed node cannot accept the query because it
          *     is not a master
          */
-        std::auto_ptr<DBClientCursor> checkSlaveQueryResult( std::auto_ptr<DBClientCursor> result );
+        std::unique_ptr<DBClientCursor> checkSlaveQueryResult( std::unique_ptr<DBClientCursor> result );
 
         DBClientConnection * checkMaster();
 
@@ -223,7 +221,7 @@ namespace mongo {
          * @throws DBException when an error occurred either when trying to connect to
          *     a node that was thought to be ok or when an assertion happened.
          */
-        DBClientConnection* selectNodeUsingTags(boost::shared_ptr<ReadPreferenceSetting> readPref);
+        DBClientConnection* selectNodeUsingTags(std::shared_ptr<ReadPreferenceSetting> readPref);
 
         /**
          * @return true if the last host used in the last slaveOk query is still in the
@@ -269,7 +267,7 @@ namespace mongo {
         std::string _setName;
 
         HostAndPort _masterHost;
-        boost::scoped_ptr<DBClientConnection> _master;
+        std::unique_ptr<DBClientConnection> _master;
 
         // Last used host in a slaveOk query (can be a primary).
         HostAndPort _lastSlaveOkHost;
@@ -277,8 +275,8 @@ namespace mongo {
         // Connection can either be owned here or returned to the connection pool. Note that
         // if connection is primary, it is owned by _master so it is incorrect to return
         // it to the pool.
-        std::auto_ptr<DBClientConnection> _lastSlaveOkConn;
-        boost::shared_ptr<ReadPreferenceSetting> _lastReadPref;
+        std::unique_ptr<DBClientConnection> _lastSlaveOkConn;
+        std::shared_ptr<ReadPreferenceSetting> _lastReadPref;
 
         double _so_timeout;
 

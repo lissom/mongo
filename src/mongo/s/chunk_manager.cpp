@@ -55,7 +55,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
 
     using std::make_pair;
     using std::map;
@@ -470,7 +470,7 @@ namespace {
                             &canonicalQuery,
                             WhereCallbackNoop());
                             
-        boost::scoped_ptr<CanonicalQuery> canonicalQueryPtr(canonicalQuery);
+        std::unique_ptr<CanonicalQuery> canonicalQueryPtr(canonicalQuery);
         
         uassert(status.code(), status.reason(), status.isOK());
 

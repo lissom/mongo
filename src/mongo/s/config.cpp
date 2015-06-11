@@ -32,7 +32,6 @@
 
 #include "mongo/s/config.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/connpool.h"
 #include "mongo/db/client.h"
@@ -57,8 +56,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::set;
     using std::string;
@@ -218,8 +217,8 @@ namespace mongo {
 
     // Handles weird logic related to getting *either* a chunk manager *or* the collection primary shard
     void DBConfig::getChunkManagerOrPrimary(const string& ns,
-                                            boost::shared_ptr<ChunkManager>& manager,
-                                            boost::shared_ptr<Shard>& primary) {
+                                            std::shared_ptr<ChunkManager>& manager,
+                                            std::shared_ptr<Shard>& primary) {
 
         // The logic here is basically that at any time, our collection can become sharded or unsharded
         // via a command.  If we're not sharded, we want to send data to the primary, if sharded, we want
@@ -275,7 +274,7 @@ namespace mongo {
         }
     }
 
-    boost::shared_ptr<ChunkManager> DBConfig::getChunkManager(const string& ns,
+    std::shared_ptr<ChunkManager> DBConfig::getChunkManager(const string& ns,
                                                               bool shouldReload,
                                                               bool forceReload) {
         BSONObj key;
@@ -341,7 +340,7 @@ namespace mongo {
 
         // we are not locked now, and want to load a new ChunkManager
         
-        auto_ptr<ChunkManager> tempChunkManager;
+        unique_ptr<ChunkManager> tempChunkManager;
 
         {
             boost::lock_guard<boost::mutex> lll ( _hitConfigServerLock );

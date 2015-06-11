@@ -30,7 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/parallel.h"
 #include "mongo/db/dbdirectclient.h"
@@ -47,8 +46,8 @@
 
 namespace ShardingTests {
 
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::make_pair;
     using std::map;
     using std::pair;
@@ -218,7 +217,7 @@ namespace ShardingTests {
             string keyName = "_id";
             createChunks( keyName );
 
-            auto_ptr<DBClientCursor> cursor =
+            unique_ptr<DBClientCursor> cursor =
                 _client.query(ChunkType::ConfigNS, QUERY(ChunkType::ns(collName())));
 
             set<int> minorVersions;
@@ -478,7 +477,7 @@ namespace ShardingTests {
             VersionMap maxShardVersions;
 
             // Create a differ which will track our progress
-            boost::shared_ptr< DefaultDiffAdapter > differ( _inverse ? new InverseDiffAdapter() : new DefaultDiffAdapter() );
+            std::shared_ptr< DefaultDiffAdapter > differ( _inverse ? new InverseDiffAdapter() : new DefaultDiffAdapter() );
             differ->attach( "test", ranges, maxVersion, maxShardVersions );
 
             std::vector<ChunkType> chunksVector;

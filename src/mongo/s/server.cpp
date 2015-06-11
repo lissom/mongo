@@ -32,7 +32,6 @@
 
 #include "mongo/s/server.h"
 
-#include <boost/shared_ptr.hpp>
 #include <boost/thread/thread.hpp>
 
 #include "mongo/base/init.h"
@@ -267,7 +266,7 @@ static ExitCode runMongosServer( bool doUpgrade ) {
 #endif
 
     if (serverGlobalParams.isHttpInterfaceEnabled) {
-        boost::shared_ptr<DbWebServer> dbWebServer(
+        std::shared_ptr<DbWebServer> dbWebServer(
                                 new DbWebServer(serverGlobalParams.bind_ip,
                                                 serverGlobalParams.port + 1000,
                                                 new NoAdminAccess()));

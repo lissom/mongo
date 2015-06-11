@@ -32,7 +32,6 @@
 
 #include "mongo/db/commands/write_commands/batch_executor.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <memory>
 
 #include "mongo/base/error_codes.h"
@@ -84,8 +83,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::string;
     using std::vector;
@@ -108,7 +107,7 @@ namespace mongo {
 
         private:
             WriteOpStats _stats;
-            std::auto_ptr<WriteErrorDetail> _error;
+            std::unique_ptr<WriteErrorDetail> _error;
         };
 
     }  // namespace
@@ -247,7 +246,7 @@ namespace mongo {
         // OR if something succeeded and we're unordered.
         //
 
-        auto_ptr<WCErrorDetail> wcError;
+        unique_ptr<WCErrorDetail> wcError;
         bool needToEnforceWC = writeErrors.empty()
                                || ( !request.getOrdered()
                                     && writeErrors.size() < request.sizeWriteOps() );
@@ -1319,7 +1318,7 @@ namespace mongo {
                 invariant(collection);
                 PlanExecutor* rawExec;
                 uassertStatusOK(getExecutorUpdate(txn, collection, &parsedUpdate, debug, &rawExec));
-                boost::scoped_ptr<PlanExecutor> exec(rawExec);
+                std::unique_ptr<PlanExecutor> exec(rawExec);
 
                 uassertStatusOK(exec->executePlan());
                 UpdateResult res = UpdateStage::makeUpdateResult(exec.get(), debug);
@@ -1423,7 +1422,7 @@ namespace mongo {
                                                   autoDb.getDb()->getCollection(nss),
                                                   &parsedDelete,
                                                   &rawExec));
-                boost::scoped_ptr<PlanExecutor> exec(rawExec);
+                std::unique_ptr<PlanExecutor> exec(rawExec);
 
                 // Execute the delete and retrieve the number deleted.
                 uassertStatusOK(exec->executePlan());

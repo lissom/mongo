@@ -27,7 +27,6 @@
  */
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 #include <string>
 
 #include "mongo/db/operation_context.h"
@@ -65,7 +64,7 @@ namespace mongo {
         virtual bool writesAreReplicated() const override;
 
     private:
-        std::auto_ptr<RecoveryUnit> _recovery;
+        std::unique_ptr<RecoveryUnit> _recovery;
         bool _writesAreReplicated;
     };
 

@@ -35,7 +35,6 @@
 #include <boost/thread/thread.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/optional.hpp>
-#include <boost/shared_ptr.hpp>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -124,7 +123,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::cout;
     using std::cerr;
     using std::endl;
@@ -351,7 +350,7 @@ namespace mongo {
             const string systemIndexes = db->name() + ".system.indexes";
 
             Collection* coll = db->getCollection( systemIndexes );
-            auto_ptr<PlanExecutor> exec(
+            unique_ptr<PlanExecutor> exec(
                 InternalPlanner::collectionScan(&txn, systemIndexes, coll));
 
             BSONObj index;
@@ -415,7 +414,7 @@ namespace mongo {
         // do not want connections to just hang if recovery takes a very long time.
         server->setupSockets();
 
-        boost::shared_ptr<DbWebServer> dbWebServer;
+        std::shared_ptr<DbWebServer> dbWebServer;
         if (serverGlobalParams.isHttpInterfaceEnabled) {
             dbWebServer.reset(new DbWebServer(serverGlobalParams.bind_ip,
                                               serverGlobalParams.port + 1000,

@@ -26,7 +26,6 @@
  *    it in the license file.
  */
 
-#include <boost/scoped_ptr.hpp>
 #include <memory>
 
 #include "mongo/db/db_raii.h"
@@ -43,8 +42,8 @@
 
 namespace QueryStageCount {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     const int kDocuments = 100;
@@ -97,7 +96,7 @@ namespace QueryStageCount {
             params.direction = CollectionScanParams::FORWARD;
             params.tailable = false;
 
-            scoped_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
+            unique_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
             while (!scan->isEOF()) {
                 WorkingSetID id = WorkingSet::INVALID_ID;
                 PlanStage::StageState state = scan->work(&id);
@@ -147,10 +146,10 @@ namespace QueryStageCount {
             setup();
             getLocs();
 
-            auto_ptr<WorkingSet> ws(new WorkingSet);
+            unique_ptr<WorkingSet> ws(new WorkingSet);
 
             StatusWithMatchExpression swme = MatchExpressionParser::parse(request.query);
-            auto_ptr<MatchExpression> expression(swme.getValue());
+            unique_ptr<MatchExpression> expression(swme.getValue());
 
             PlanStage* scan;
             if (indexed) {

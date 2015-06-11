@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
 #include <boost/thread/condition_variable.hpp>
 #include <boost/thread/mutex.hpp>
 #include <string>
@@ -435,8 +434,8 @@ namespace repl {
         // PRNG; seeded at class construction time.
         PseudoRandom _random;
 
-        boost::scoped_ptr<executor::NetworkInterface> _networkInterface;
-        boost::scoped_ptr<StorageInterface> _storageInterface;
+        std::unique_ptr<executor::NetworkInterface> _networkInterface;
+        std::unique_ptr<StorageInterface> _storageInterface;
         boost::mutex _mutex;
         boost::mutex _terribleExLockSyncMutex;
         boost::condition_variable _noMoreWaitingThreads;
@@ -572,7 +571,7 @@ namespace repl {
         uint64_t generation;
         bool isSignaled;
         WorkQueue waiters;
-        boost::shared_ptr<boost::condition_variable> isSignaledCondition;
+        std::shared_ptr<boost::condition_variable> isSignaledCondition;
     };
 
 }  // namespace repl

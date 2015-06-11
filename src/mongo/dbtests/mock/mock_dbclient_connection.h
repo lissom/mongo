@@ -27,7 +27,6 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
 #include <string>
 #include <vector>
 
@@ -68,7 +67,7 @@ namespace mongo {
         bool runCommand(const std::string& dbname, const mongo::BSONObj& cmdObj,
                 mongo::BSONObj &info, int options = 0);
 
-        std::auto_ptr<mongo::DBClientCursor> query(const std::string &ns,
+        std::unique_ptr<mongo::DBClientCursor> query(const std::string &ns,
                 mongo::Query query = mongo::Query(),
                 int nToReturn = 0,
                 int nToSkip = 0,

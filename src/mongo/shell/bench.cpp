@@ -37,7 +37,6 @@
 #include <pcrecpp.h>
 
 #include <boost/noncopyable.hpp>
-#include <boost/shared_ptr.hpp>
 #include <boost/thread/thread.hpp>
 #include <iostream>
 
@@ -75,7 +74,7 @@ namespace {
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::cout;
     using std::endl;
     using std::map;
@@ -198,25 +197,25 @@ namespace mongo {
         if ( ! args["trapPattern"].eoo() ){
             const char* regex = args["trapPattern"].regex();
             const char* flags = args["trapPattern"].regexFlags();
-            this->trapPattern = boost::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
+            this->trapPattern = std::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
         }
 
         if ( ! args["noTrapPattern"].eoo() ){
             const char* regex = args["noTrapPattern"].regex();
             const char* flags = args["noTrapPattern"].regexFlags();
-            this->noTrapPattern = boost::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
+            this->noTrapPattern = std::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
         }
 
         if ( ! args["watchPattern"].eoo() ){
             const char* regex = args["watchPattern"].regex();
             const char* flags = args["watchPattern"].regexFlags();
-            this->watchPattern = boost::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
+            this->watchPattern = std::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
         }
 
         if ( ! args["noWatchPattern"].eoo() ){
             const char* regex = args["noWatchPattern"].regex();
             const char* flags = args["noWatchPattern"].regexFlags();
-            this->noWatchPattern = boost::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
+            this->noWatchPattern = std::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
         }
 
         this->ops = args["ops"].Obj().getOwned();
@@ -374,7 +373,7 @@ namespace mongo {
 
                 BSONObj context = e["context"].eoo() ? BSONObj() : e["context"].Obj();
 
-                auto_ptr<Scope> scope;
+                unique_ptr<Scope> scope;
                 ScriptingFunction scopeFunc = 0;
                 BSONObj scopeObj;
 
@@ -457,7 +456,7 @@ namespace mongo {
                         BSONObj filter = e["filter"].eoo() ? BSONObj() : e["filter"].Obj();
                         int expected = e["expected"].eoo() ? -1 : e["expected"].Int();
 
-                        auto_ptr<DBClientCursor> cursor;
+                        unique_ptr<DBClientCursor> cursor;
                         int count;
 
                         BSONObj fixedQuery = fixQuery(e["query"].Obj(), bsonTemplateEvaluator);
@@ -738,7 +737,7 @@ namespace mongo {
     void BenchRunWorker::run() {
         try {
             BenchRunWorkerStateGuard _workerStateGuard( _brState );
-            boost::scoped_ptr<DBClientBase> conn( _config->createConnection() );
+            std::unique_ptr<DBClientBase> conn( _config->createConnection() );
             if ( !_config->username.empty() ) {
                 string errmsg;
                 if (!conn->auth("admin", _config->username, _config->password, errmsg)) {
@@ -776,7 +775,7 @@ namespace mongo {
      void BenchRunner::start( ) {
 
          {
-             boost::scoped_ptr<DBClientBase> conn( _config->createConnection() );
+             std::unique_ptr<DBClientBase> conn( _config->createConnection() );
              // Must authenticate to admin db in order to run serverStatus command
              if (_config->username != "") {
                  string errmsg;
@@ -814,7 +813,7 @@ namespace mongo {
          delete _brTimer;
 
          {
-             boost::scoped_ptr<DBClientBase> conn( _config->createConnection() );
+             std::unique_ptr<DBClientBase> conn( _config->createConnection() );
              if (_config->username != "") {
                  string errmsg;
                  // this can only fail if admin access was revoked since start of run

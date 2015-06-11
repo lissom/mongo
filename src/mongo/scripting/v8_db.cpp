@@ -31,8 +31,6 @@
 
 #include <iostream>
 #include <iomanip>
-#include <boost/scoped_array.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/base/init.h"
 #include "mongo/base/status_with.h"
@@ -50,8 +48,8 @@
 #include "mongo/util/text.h"
 
 using namespace std;
-using boost::scoped_array;
-using boost::shared_ptr;
+using std::unique_ptr;
+using std::shared_ptr;
 
 namespace mongo {
 
@@ -191,12 +189,12 @@ namespace mongo {
         return v8::Undefined();
     }
 
-    boost::shared_ptr<DBClientBase> getConnection(V8Scope* scope, const v8::Arguments& args) {
+    std::shared_ptr<DBClientBase> getConnection(V8Scope* scope, const v8::Arguments& args) {
         verify(scope->MongoFT()->HasInstance(args.This()));
         verify(args.This()->InternalFieldCount() == 1);
         v8::Local<v8::External> c = v8::External::Cast(*(args.This()->GetInternalField(0)));
-        boost::shared_ptr<DBClientBase>* conn =
-            static_cast<boost::shared_ptr<DBClientBase>*>(c->Value());
+        std::shared_ptr<DBClientBase>* conn =
+            static_cast<std::shared_ptr<DBClientBase>*>(c->Value());
         massert(16667, "Unable to get db client connection", conn && conn->get());
         return *conn;
     }
@@ -209,7 +207,7 @@ namespace mongo {
         argumentCheck(args[0]->IsString(), "the database parameter to runCommand must be a string");
         argumentCheck(args[1]->IsObject(), "the cmdObj parameter to runCommand must be an object");
         argumentCheck(args[2]->IsNumber(), "the options parameter to runCommand must be a number");
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         const string database = toSTLString(args[0]);
         BSONObj cmdObj = scope->v8ToMongo(args[1]->ToObject());
         int queryOptions = args[2]->Int32Value();
@@ -225,7 +223,7 @@ namespace mongo {
     v8::Handle<v8::Value> mongoFind(V8Scope* scope, const v8::Arguments& args) {
         argumentCheck(args.Length() == 7, "find needs 7 args")
         argumentCheck(args[1]->IsObject(), "needs to be an object")
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         const string ns = toSTLString(args[0]);
         BSONObj fields;
         BSONObj q = scope->v8ToMongo(args[1]->ToObject());
@@ -234,7 +232,7 @@ namespace mongo {
         if (haveFields)
             fields = scope->v8ToMongo(args[2]->ToObject());
 
-        boost::shared_ptr<mongo::DBClientCursor> cursor;
+        std::shared_ptr<mongo::DBClientCursor> cursor;
         int nToReturn = args[3]->Int32Value();
         int nToSkip = args[4]->Int32Value();
         int batchSize = args[5]->Int32Value();
@@ -259,11 +257,11 @@ namespace mongo {
         argumentCheck(scope->NumberLongFT()->HasInstance(args[1]), "2nd arg must be a NumberLong")
         argumentCheck(args[2]->IsUndefined() || args[2]->IsNumber(), "3rd arg must be a js Number")
 
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         const string ns = toSTLString(args[0]);
         long long cursorId = numberLongVal(scope, args[1]->ToObject());
 
-        boost::shared_ptr<mongo::DBClientCursor> cursor(
+        std::shared_ptr<mongo::DBClientCursor> cursor(
             new DBClientCursor(conn.get(), ns, cursorId, 0, 0));
 
         if (!args[2]->IsUndefined())
@@ -288,7 +286,7 @@ namespace mongo {
             return v8AssertionException("js db in read only mode");
         }
 
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         const string ns = toSTLString(args[0]);
 
         v8::Handle<v8::Integer> flags = args[2]->ToInteger();
@@ -336,7 +334,7 @@ namespace mongo {
             return v8AssertionException("js db in read only mode");
         }
 
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         const string ns = toSTLString(args[0]);
 
         v8::Handle<v8::Object> in = args[1]->ToObject();
@@ -362,7 +360,7 @@ namespace mongo {
             return v8AssertionException("js db in read only mode");
         }
 
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         const string ns = toSTLString(args[0]);
 
         v8::Handle<v8::Object> q = args[1]->ToObject();
@@ -378,7 +376,7 @@ namespace mongo {
     }
 
     v8::Handle<v8::Value> mongoAuth(V8Scope* scope, const v8::Arguments& args) {
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         if (NULL == conn)
             return v8AssertionException("no connection");
 
@@ -407,7 +405,7 @@ namespace mongo {
 
     v8::Handle<v8::Value> mongoLogout(V8Scope* scope, const v8::Arguments& args) {
         argumentCheck(args.Length() == 1, "logout needs 1 arg")
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         const string db = toSTLString(args[0]);
         BSONObj ret;
         conn->logout(db, ret);
@@ -415,7 +413,7 @@ namespace mongo {
     }
 
     v8::Handle<v8::Value> mongoCopyDatabaseWithSCRAM(V8Scope* scope, const v8::Arguments& args) {
-        boost::shared_ptr<DBClientBase> conn = getConnection(scope, args);
+        std::shared_ptr<DBClientBase> conn = getConnection(scope, args);
         if (NULL == conn)
             return v8AssertionException("no connection");
 
@@ -429,7 +427,7 @@ namespace mongo {
         std::string hashedPwd = DBClientWithCommands::createPasswordDigest(user,
                                                                            toSTLString(args[4]));
 
-        boost::scoped_ptr<SaslClientSession> session(new NativeSaslClientSession());
+        std::unique_ptr<SaslClientSession> session(new NativeSaslClientSession());
 
         session->setParameter(SaslClientSession::parameterMechanism, "SCRAM-SHA-1");
         session->setParameter(SaslClientSession::parameterUser, user);
@@ -995,7 +993,7 @@ namespace mongo {
         // up of valid hex digits, and fails in the hex utility functions
 
         int len = hexstr.length() / 2;
-        scoped_array<char> data(new char[len]);
+        unique_ptr<char[]> data(new char[len]);
         const char* src = hexstr.c_str();
         for(int i = 0; i < len; i++) {
             data[i] = fromHex(src + i * 2);

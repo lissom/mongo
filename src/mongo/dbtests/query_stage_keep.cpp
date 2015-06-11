@@ -30,7 +30,6 @@
  * This file tests db/exec/keep_mutations.cpp.
  */
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/catalog/collection.h"
@@ -52,7 +51,7 @@
 
 namespace QueryStageKeep {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::set;
 
     class QueryStageKeepBase {
@@ -143,7 +142,7 @@ namespace QueryStageKeep {
             // Create a KeepMutations stage to merge in the 10 flagged objects.
             // Takes ownership of 'cs'
             MatchExpression* nullFilter = NULL;
-            std::auto_ptr<KeepMutationsStage> keep(new KeepMutationsStage(nullFilter, &ws, cs));
+            std::unique_ptr<KeepMutationsStage> keep(new KeepMutationsStage(nullFilter, &ws, cs));
 
             for (size_t i = 0; i < 10; ++i) {
                 WorkingSetID id = getNextResult(keep.get());
@@ -191,7 +190,7 @@ namespace QueryStageKeep {
             // Create a KeepMutationsStage with an EOF child, and flag 50 objects.  We expect these
             // objects to be returned by the KeepMutationsStage.
             MatchExpression* nullFilter = NULL;
-            std::auto_ptr<KeepMutationsStage> keep(new KeepMutationsStage(nullFilter, &ws,
+            std::unique_ptr<KeepMutationsStage> keep(new KeepMutationsStage(nullFilter, &ws,
                                                                           new EOFStage()));
             for (size_t i = 0; i < 50; ++i) {
                 WorkingSetID id = ws.allocate();

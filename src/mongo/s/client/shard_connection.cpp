@@ -49,7 +49,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::map;
     using std::set;
     using std::string;
@@ -208,7 +208,7 @@ namespace {
 
             Status* s = _getStatus(addr);
 
-            auto_ptr<DBClientBase> c;
+            unique_ptr<DBClientBase> c;
             if (s->avail) {
                 c.reset(s->avail);
                 s->avail = 0;
@@ -416,7 +416,7 @@ namespace {
 
     ShardConnection::ShardConnection(const ConnectionString& connectionString,
                                      const string& ns,
-                                     boost::shared_ptr<ChunkManager> manager)
+                                     std::shared_ptr<ChunkManager> manager)
         : _cs(connectionString),
           _ns(ns),
           _manager(manager) {

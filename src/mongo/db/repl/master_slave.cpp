@@ -43,8 +43,6 @@
 #include "mongo/db/repl/master_slave.h"
 
 #include <pcrecpp.h>
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 #include <boost/thread/thread.hpp>
 
 #include "mongo/db/auth/authorization_manager.h"
@@ -73,8 +71,8 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 
-using boost::scoped_ptr;
-using std::auto_ptr;
+using std::unique_ptr;
+using std::unique_ptr;
 using std::cout;
 using std::endl;
 using std::max;
@@ -251,7 +249,7 @@ namespace repl {
             }
         }
 
-        v.push_back( boost::shared_ptr< ReplSource >( new ReplSource( s ) ) );
+        v.push_back( std::shared_ptr< ReplSource >( new ReplSource( s ) ) );
     }
 
     /* we reuse our existing objects so that we can keep our existing connection
@@ -269,7 +267,7 @@ namespace repl {
             // check that no items are in sources other than that
             // add if missing
             int n = 0;
-            auto_ptr<PlanExecutor> exec(
+            unique_ptr<PlanExecutor> exec(
                 InternalPlanner::collectionScan(txn,
                                                 localSources,
                                                 ctx.db()->getCollection(localSources)));
@@ -314,7 +312,7 @@ namespace repl {
             }
         }
 
-        auto_ptr<PlanExecutor> exec(
+        unique_ptr<PlanExecutor> exec(
             InternalPlanner::collectionScan(txn,
                                             localSources,
                                             ctx.db()->getCollection(localSources)));
@@ -738,7 +736,7 @@ namespace repl {
             }
         }
 
-        scoped_ptr<Lock::GlobalWrite> lk(alreadyLocked ? 0 : new Lock::GlobalWrite(txn->lockState()));
+        unique_ptr<Lock::GlobalWrite> lk(alreadyLocked ? 0 : new Lock::GlobalWrite(txn->lockState()));
 
         if ( replAllDead ) {
             // hmmm why is this check here and not at top of this function? does it get set between top and here?
@@ -1051,7 +1049,7 @@ namespace repl {
 
                 int b = replApplyBatchSize.get();
                 bool justOne = b == 1;
-                scoped_ptr<Lock::GlobalWrite> lk(justOne ? 0 : new Lock::GlobalWrite(txn->lockState()));
+                unique_ptr<Lock::GlobalWrite> lk(justOne ? 0 : new Lock::GlobalWrite(txn->lockState()));
                 while( 1 ) {
 
                     BSONElement ts = op.getField("ts");

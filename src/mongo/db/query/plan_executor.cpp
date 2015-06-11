@@ -28,7 +28,6 @@
 
 #include "mongo/db/query/plan_executor.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
@@ -49,7 +48,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::string;
     using std::vector;
 
@@ -130,7 +129,7 @@ namespace mongo {
                               const std::string& ns,
                               YieldPolicy yieldPolicy,
                               PlanExecutor** out) {
-        std::auto_ptr<PlanExecutor> exec(new PlanExecutor(opCtx, ws, rt, qs, cq, collection, ns));
+        std::unique_ptr<PlanExecutor> exec(new PlanExecutor(opCtx, ws, rt, qs, cq, collection, ns));
 
         // Perform plan selection, if necessary.
         Status status = exec->pickBestPlan(yieldPolicy);
@@ -333,7 +332,7 @@ namespace mongo {
         // to use to pull the record into memory. We take ownership of the RecordFetcher here,
         // deleting it after we've had a chance to do the fetch. For timing-based yields, we
         // just pass a NULL fetcher.
-        boost::scoped_ptr<RecordFetcher> fetcher;
+        std::unique_ptr<RecordFetcher> fetcher;
 
         // Incremented on every writeConflict, reset to 0 on any successful call to _root->work.
         size_t writeConflictsInARow = 0;

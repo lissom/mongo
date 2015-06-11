@@ -32,7 +32,6 @@
 
 #include "mongo/db/storage/mmap_v1/mmap_v1_database_catalog_entry.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <utility>
 
 #include "mongo/db/catalog/index_catalog_entry.h"
@@ -56,8 +55,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
 
 namespace {
 
@@ -735,7 +734,7 @@ namespace {
                                                        _getIndexRecordStore(),
                                                        this));
 
-        auto_ptr<NamespaceDetailsRSV1MetaData> md(new NamespaceDetailsRSV1MetaData(ns, details));
+        unique_ptr<NamespaceDetailsRSV1MetaData> md(new NamespaceDetailsRSV1MetaData(ns, details));
         const NamespaceString nss(ns);
 
         if (details->isCapped) {
@@ -779,7 +778,7 @@ namespace {
         RecordStoreV1Base* rs = _getRecordStore(entry->descriptor()->indexNamespace());
         invariant(rs);
 
-        std::auto_ptr<SortedDataInterface> btree(
+        std::unique_ptr<SortedDataInterface> btree(
             getMMAPV1Interface(entry->headManager(),
                                rs,
                                &rs->savedCursors,

@@ -29,7 +29,6 @@
 #pragma once
 
 #include <boost/noncopyable.hpp>
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/string_data.h"
 #include "mongo/client/connection_string.h"
@@ -373,7 +372,7 @@ namespace mongo {
      */
     class DBClientInterface : boost::noncopyable {
     public:
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
+        virtual std::unique_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
                                                const BSONObj *fieldsToReturn = 0, int queryOptions = 0 , int batchSize = 0 ) = 0;
 
         virtual void insert( const std::string &ns, BSONObj obj , int flags=0) = 0;
@@ -407,7 +406,7 @@ namespace mongo {
         virtual std::string getServerAddress() const = 0;
 
         /** don't use this - called automatically by DBClientCursor for you */
-        virtual std::auto_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 ) = 0;
+        virtual std::unique_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 ) = 0;
     };
 
     /**
@@ -900,7 +899,7 @@ namespace mongo {
          @return    cursor.   0 if error (connection failure)
          @throws AssertionException
         */
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
+        virtual std::unique_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
                                                const BSONObj *fieldsToReturn = 0, int queryOptions = 0 , int batchSize = 0 );
 
 
@@ -930,7 +929,7 @@ namespace mongo {
             @return an handle to a previously allocated cursor
             @throws AssertionException
          */
-        virtual std::auto_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 );
+        virtual std::unique_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 );
 
         /**
            insert an object into the database
@@ -1041,7 +1040,7 @@ namespace mongo {
          */
         virtual void logout(const std::string& dbname, BSONObj& info);
 
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query=Query(), int nToReturn = 0, int nToSkip = 0,
+        virtual std::unique_ptr<DBClientCursor> query(const std::string &ns, Query query=Query(), int nToReturn = 0, int nToSkip = 0,
                                                const BSONObj *fieldsToReturn = 0, int queryOptions = 0 , int batchSize = 0 ) {
             checkConnection();
             return DBClientBase::query( ns, query, nToReturn, nToSkip, fieldsToReturn, queryOptions , batchSize );
@@ -1111,8 +1110,8 @@ namespace mongo {
         virtual void _auth(const BSONObj& params);
         virtual void sayPiggyBack( Message &toSend );
 
-        boost::scoped_ptr<MessagingPort> p;
-        boost::scoped_ptr<SockAddr> server;
+        std::unique_ptr<MessagingPort> p;
+        std::unique_ptr<SockAddr> server;
         bool _failed;
         const bool autoReconnect;
         Backoff autoReconnectBackoff;

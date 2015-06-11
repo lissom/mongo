@@ -34,8 +34,6 @@
 
 #include "mongo/util/net/listen.h"
 
-#include <boost/scoped_array.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/config.h"
 #include "mongo/db/server_options.h"
@@ -76,7 +74,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::string;
     using std::vector;
@@ -340,7 +338,7 @@ namespace mongo {
                     log() << "connection accepted from " << from.toString() << " #" << myConnectionNumber << " (" << conns << word << " now open)" << endl;
                 }
                 
-                boost::shared_ptr<Socket> pnewSock( new Socket(s, from) );
+                std::shared_ptr<Socket> pnewSock( new Socket(s, from) );
 #ifdef MONGO_CONFIG_SSL
                 if (_ssl) {
                     pnewSock->secureAccepted(_ssl);
@@ -430,7 +428,7 @@ namespace mongo {
         }
 
         OwnedPointerVector<EventHolder> eventHolders;
-        boost::scoped_array<WSAEVENT> events(new WSAEVENT[_socks.size()]);
+        std::unique_ptr<WSAEVENT[]> events(new WSAEVENT[_socks.size()]);
         
         
         // Populate events array with an event for each socket we are watching
@@ -557,7 +555,7 @@ namespace mongo {
                 log() << "connection accepted from " << from.toString() << " #" << myConnectionNumber << " (" << conns << word << " now open)" << endl;
             }
             
-            boost::shared_ptr<Socket> pnewSock( new Socket(s, from) );
+            std::shared_ptr<Socket> pnewSock( new Socket(s, from) );
 #ifdef MONGO_CONFIG_SSL
             if (_ssl) {
                 pnewSock->secureAccepted(_ssl);
@@ -579,7 +577,7 @@ namespace mongo {
         }
     }
 
-    void Listener::accepted(boost::shared_ptr<Socket> psocket, long long connectionId ) {
+    void Listener::accepted(std::shared_ptr<Socket> psocket, long long connectionId ) {
         MessagingPort* port = new MessagingPort(psocket);
         port->setConnectionId( connectionId );
         acceptedMP( port );

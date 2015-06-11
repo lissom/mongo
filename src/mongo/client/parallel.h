@@ -31,8 +31,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/db/namespace_string.h"
 #include "mongo/s/client/shard.h"
@@ -63,7 +61,7 @@ namespace mongo {
     };
 
     class DBClientCursor;
-    typedef boost::shared_ptr<DBClientCursor> DBClientCursorPtr;
+    typedef std::shared_ptr<DBClientCursor> DBClientCursorPtr;
 
     class ParallelConnectionState {
     public:
@@ -78,7 +76,7 @@ namespace mongo {
 
         // Version information
         ChunkManagerPtr manager;
-        boost::shared_ptr<Shard> primary;
+        std::shared_ptr<Shard> primary;
 
         // Cursor status information
         long long count;
@@ -92,7 +90,7 @@ namespace mongo {
     };
 
     typedef ParallelConnectionState PCState;
-    typedef boost::shared_ptr<PCState> PCStatePtr;
+    typedef std::shared_ptr<PCState> PCStatePtr;
 
     class ParallelConnectionMetadata {
     public:
@@ -124,7 +122,7 @@ namespace mongo {
     };
 
     typedef ParallelConnectionMetadata PCMData;
-    typedef boost::shared_ptr<PCMData> PCMDataPtr;
+    typedef std::shared_ptr<PCMData> PCMDataPtr;
 
     /**
      * Runs a query in parallel across N servers, enforcing compatible chunk versions for queries
@@ -189,13 +187,13 @@ namespace mongo {
          * Returns the single shard with an open cursor.
          * It is an error to call this if getNumQueryShards() > 1
          */
-        boost::shared_ptr<Shard> getQueryShard();
+        std::shared_ptr<Shard> getQueryShard();
 
         /**
          * Returns primary shard with an open cursor.
          * It is an error to call this if the collection is sharded.
          */
-        boost::shared_ptr<Shard> getPrimary();
+        std::shared_ptr<Shard> getPrimary();
 
         DBClientCursorPtr getShardCursor(const ShardId& shardId);
 
@@ -240,7 +238,7 @@ namespace mongo {
          */
         void setupVersionAndHandleSlaveOk(PCStatePtr state /* in & out */,
                                           const ShardId& shardId,
-                                          boost::shared_ptr<Shard> primary /* in */,
+                                          std::shared_ptr<Shard> primary /* in */,
                                           const NamespaceString& ns,
                                           const std::string& vinfo,
                                           ChunkManagerPtr manager /* in */ );
@@ -284,8 +282,8 @@ namespace mongo {
 
     private:
 
-        std::auto_ptr<DBClientCursor> _cursor;
-        std::auto_ptr<ParallelConnectionMetadata> _pcmData;
+        std::unique_ptr<DBClientCursor> _cursor;
+        std::unique_ptr<ParallelConnectionMetadata> _pcmData;
     };
 
     /**
@@ -336,10 +334,10 @@ namespace mongo {
             int _options;
             BSONObj _cmd;
             DBClientBase * _conn;
-            boost::scoped_ptr<AScopedConnection> _connHolder; // used if not provided a connection
+            std::unique_ptr<AScopedConnection> _connHolder; // used if not provided a connection
             bool _useShardConn;
 
-            boost::scoped_ptr<DBClientCursor> _cursor;
+            std::unique_ptr<DBClientCursor> _cursor;
 
             BSONObj _res;
             bool _ok;
@@ -356,7 +354,7 @@ namespace mongo {
          * @param conn optional connection to use.  will use standard pooled if non-specified
          * @param useShardConn use ShardConnection
          */
-        static boost::shared_ptr<CommandResult> spawnCommand( const std::string& server,
+        static std::shared_ptr<CommandResult> spawnCommand( const std::string& server,
                                                        const std::string& db,
                                                        const BSONObj& cmd,
                                                        int options,
