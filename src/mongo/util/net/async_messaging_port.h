@@ -59,6 +59,7 @@ struct ConnStats {
 MONGO_ALIGN_TO_CACHE class AsyncClientConnection : public AbstractMessagingPort {
     MONGO_DISALLOW_COPYING(AsyncClientConnection);
 public:
+    using PersistantState = ServiceContext::UniqueClient;
     AsyncClientConnection(Connections* const owner,
             asio::ip::tcp::socket socket,
             ConnectionId connectionId) :
@@ -75,14 +76,18 @@ public:
 
     void closeOnComplete() { _closeOnComplete = true; }
     void asyncReceiveMessage();
-    LastError& getLastError() { return _clientInfo; }
-    void setClientInfo(std::unique_ptr<ServiceContext::UniqueClient> clientInfo) {
-        _clientInfo = std::move(clientInfo);
+    LastError& getLastError() { return _persistantState; }
+    void setPersistantState(PersistantState* state) {
+        _persistantState.reset(state);
     }
     //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
-    std::unique_ptr<ServiceContext::UniqueClient> releaseClientInfo() {
-        return _clientInfo.release();
+    PersistantState* releasePersistantState() {
+        return _persistantState.release();
     }
+    const std::string& threadName() const { return _threadName; }
+    std::string& setThreadName(const std::string& threadName) { verify(_threadName.empty() == true); _threadName = threadName; }
+
+    //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
     char* getBuffer() { return _buf.data(); }
     const ConnStats& getStats() const { return _stats; }
     ConnectionId getConnectionId() { return _connectionId; }
@@ -148,6 +153,7 @@ public:
 
     // Begin AbstractMessagingPort
 
+    //TODO: Tie reply, async send and callbacks
     void reply(Message& received, Message& response, MSGID responseTo) final {
         asyncSend(received, responseTo);
     }
@@ -194,7 +200,8 @@ private:
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector _buf;
     BufferSet _buffers;
-    std::unique_ptr<ServiceContext::UniqueClient> _clientInfo;
+    std::unique_ptr<PersistantState> _persistantState;
+    std::string _threadName;
     //TODO: Turn this into state and verify it's correct at all stages
     std::atomic<bool> _closeOnComplete{};
 };

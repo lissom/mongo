@@ -66,7 +66,7 @@ private:
     OpStats opStats;
     //TODO: Get a better concurrency structure
     std::mutex _mutex;
-    std::condition_variable _wait;
+    std::condition_variable _notifyNewMessages;
     std::queue<AsyncClientConnection*> _newMessages;
     std::atomic<bool> _terminate{};
     std::vector<std::thread> _threads;

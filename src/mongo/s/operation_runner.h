@@ -9,6 +9,7 @@
 
 #include "mongo/platform/basic.h"
 
+#include "mongo/db/client.h"
 #include "mongo/db/client_basic.h"
 #include "mongo/db/service_context.h"
 #include "mongo/platform/platform_specific.h"
@@ -20,11 +21,13 @@ namespace mongo {
 
 MONGO_ALIGN_TO_CACHE class OperationRunner {
 public:
+    enum class State { init, running, completed, errored };
     OperationRunner(network::AsyncClientConnection* const connInfo);
     ~OperationRunner() {
-        port.setClientInfo(std::move(_client));
+        //Ensure no dangling operations
+        fassert(-1, operationsActive() == false);
+        port->setPersistantState(currentClient.release());
     }
-
     void run();
     void callback();
 
@@ -35,11 +38,33 @@ private:
     //Save the context information
     void onContextEnd();
 
-    network::AsyncMessagingPort port;
+    //All functions below this line are async, so they must be able to be ran concurrently
+    void setState(State state) {
+        State currentState = _state.load(std::memory_order_relaxed);
+        while (currentState != State::errored)
+            currentState = _state.compare_exchange_weak(currentState, state, std::memory_order_relaxed);
+    }
+
+    void setErrored() {
+        _state = State::errored;
+        cleanup();
+    }
+
+    /*
+     * Must be able to ran multiple times
+     */
+    void cleanup() {
+
+    }
+
+    //TODO: Test to see if we are waiting on return values
+    bool operationsActive() { return false; }
+
+    network::AsyncClientConnection* const port;
     Message message;
     //TODO: decompose request
     Request request;
-    std::unique_ptr<ServiceContext::UniqueClient> _client;
+    std::atomic<State> _state{State::init};
 };
 
 } // namespace mongo

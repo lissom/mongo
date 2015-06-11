@@ -23,11 +23,12 @@ void MessagePipeline::enqueueMessage(AsyncClientConnection* conn) {
     std::unique_lock<std::mutex> lock(_mutex);
     _newMessages.push(conn);
     lock.release();
+    _notifyNewMessages.notify_one();
 }
 
 AsyncClientConnection* MessagePipeline::getNextMessage() {
     std::unique_lock<std::mutex> lock(_mutex);
-    _wait.wait(lock, [this]{
+    _notifyNewMessages.wait(lock, [this]{
         return _newMessages.size() || _terminate;
     });
     if (_terminate)

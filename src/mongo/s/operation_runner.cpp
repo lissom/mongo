@@ -7,6 +7,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
 
+#include "mongo/db/client.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/s/operation_runner.h"
 #include "mongo/util/log.h"
@@ -32,12 +33,20 @@ BSONObj buildErrReply( const DBException& ex ) {
 }
 
 void OperationRunner::run() {
-    std::string fullDesc = str::stream() << "Conn" << port.connectionId();
-    setThreadName(fullDesc.c_str());
-
-    // Create the client obj, attach to thread
-    currentClient.getMake()->get() = service->makeClient(fullDesc, mp);
-
+    verify(_state == State::init);
+    try {
+        Client::initThread("conn", port);
+        port->setThreadName(getThreadName());
+    }
+    catch (std::exception &e) {
+        log() << "Failed to initialize operation runner: " << e.what();
+        markErrored();
+    }
+    catch (...) {
+        log() << "Failed to initialize operation runner: unknown exception";
+        markErrored();
+    }
+    setState(State::running);
     processRequest();
     onContextEnd();
 }
@@ -54,7 +63,7 @@ void OperationRunner::processRequest() {
 
         if ( request.expectResponse() ) {
             message.header().setId(request.id());
-            replyToQuery( ResultFlag_ErrSet, &port , message , buildErrReply( ex ) );
+            replyToQuery( ResultFlag_ErrSet, port , message , buildErrReply( ex ) );
         }
 
         // We *always* populate the last error for now
@@ -68,7 +77,7 @@ void OperationRunner::processRequest() {
 
         if ( request.expectResponse() ) {
             message.header().setId(request.id());
-            replyToQuery( ResultFlag_ErrSet, &port , message , buildErrReply( ex ) );
+            replyToQuery( ResultFlag_ErrSet, port , message , buildErrReply( ex ) );
         }
 
         // We *always* populate the last error for now
@@ -77,13 +86,12 @@ void OperationRunner::processRequest() {
 }
 
 void OperationRunner::onContextStart() {
-    currentClient.reset(_client.release());
-    std::string fullDesc = str::stream() << "Conn" << port.connectionId();
-    setThreadName(fullDesc.c_str());
+    currentClient.reset(port->releasePersistantState());
+    setThreadName(port->threadName());
 }
 
 void OperationRunner::onContextEnd() {
-    _client.reset(currentClient.release());
+    port->setPersistantState(currentClient.release());
 }
 
 } // namespace mongo

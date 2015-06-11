@@ -115,7 +115,7 @@ void AsyncClientConnection::asyncSend(Message& toSend, int responseTo) {
 }
 
 void AsyncClientConnection::asyncSendSingle(const Message& toSend)  {
-    //_connInfo->asyncSendMessage(toSend.singleData(), toSend.size());
+    _socket.async_send(asio::const_buffer(toSend.singleData()));
 }
 
 void AsyncClientConnection::asyncSendMulti(const Message& toSend) {
