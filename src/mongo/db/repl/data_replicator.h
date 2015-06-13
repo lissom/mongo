@@ -41,7 +41,6 @@
 #include "mongo/db/repl/applier.h"
 #include "mongo/db/repl/collection_cloner.h"
 #include "mongo/db/repl/database_cloner.h"
-#include "mongo/db/repl/fetcher.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/db/repl/reporter.h"
@@ -49,13 +48,16 @@
 #include "mongo/util/queue.h"
 
 namespace mongo {
+
+class QueryFetcher;
+
 namespace repl {
 
 using Operations = Applier::Operations;
 using BatchDataStatus = StatusWith<Fetcher::BatchData>;
-using CallbackData = ReplicationExecutor::CallbackData;
+using CallbackArgs = ReplicationExecutor::CallbackArgs;
 using CBHStatus = StatusWith<ReplicationExecutor::CallbackHandle>;
-using CommandCallbackData = ReplicationExecutor::RemoteCommandCallbackData;
+using CommandCallbackArgs = ReplicationExecutor::RemoteCommandCallbackArgs;
 using Event = ReplicationExecutor::EventHandle;
 using Handle = ReplicationExecutor::CallbackHandle;
 using LockGuard = stdx::lock_guard<stdx::mutex>;
@@ -65,10 +67,8 @@ using Response = RemoteCommandResponse;
 using TimestampStatus = StatusWith<Timestamp>;
 using UniqueLock = stdx::unique_lock<stdx::mutex>;
 
-class QueryFetcher;
 class OplogFetcher;
 struct InitialSyncState;
-
 
 /** State for decision tree */
 enum class DataReplicatorState {
@@ -86,6 +86,13 @@ enum class DataReplicatorScope {
 };
 
 struct DataReplicatorOptions {
+    // Error and retry values
+    Milliseconds syncSourceRetryWait{1000};
+    Milliseconds initialSyncRetryWait{1000};
+    Seconds blacklistSyncSourcePenaltyForNetworkConnectionError{10};
+    Minutes blacklistSyncSourcePenaltyForOplogStartMissing{10};
+
+    // Replication settings
     Timestamp startOptime;
     NamespaceString localOplogNS = NamespaceString("local.oplog.rs");
     NamespaceString remoteOplogNS = NamespaceString("local.oplog.rs");
@@ -163,14 +170,13 @@ public:
 
 private:
 
-    // Run a member function in the executor, waiting for it to finish.
-//    Status _run(void*());
+    // Returns OK when there is a good syncSource at _syncSource.
+    Status _ensureGoodSyncSource_inlock();
 
     // Only executed via executor
-    void _resumeFinish(CallbackData cbData);
+    void _resumeFinish(CallbackArgs cbData);
     void _onOplogFetchFinish(const BatchDataStatus& fetchResult,
                              Fetcher::NextAction* nextAction);
-    void _doNextActionsCB(CallbackData cbData);
     void _doNextActions();
     void _doNextActions_InitialSync_inlock();
     void _doNextActions_Rollback_inlock();
@@ -182,7 +188,7 @@ private:
     void _pauseApplier();
 
     Operations _getNextApplierBatch_inlock();
-    void _onApplyBatchFinish(const CallbackData&,
+    void _onApplyBatchFinish(const CallbackArgs&,
                              const TimestampStatus&,
                              const Operations&,
                              const size_t numApplied);
