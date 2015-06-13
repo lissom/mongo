@@ -114,25 +114,47 @@ namespace logger {
 
         std::ostream& stream() { if (!_os) makeStream(); return *_os; }
 
-        LogstreamBuilder& operator<<(const char *x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(const std::string& x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(StringData x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(char *x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(char x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(int x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(ExitCode x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(long x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(unsigned long x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(unsigned x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(unsigned short x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(double x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(void *x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(const void *x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(long long x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(unsigned long long x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(bool x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(const std::error_code& ec) { stream() << ec; return *this; }
+        //TODO: move else where
+        struct SfinaeTypes {
+            using one = char;
+            using two = struct { char arr[2]; };
+        };
 
+        template<typename T>
+        class HasToString : public SfinaeTypes{
+            template<typename U> static one check(decltype(&U::toString));
+            template<typename U> static two check(...);
+
+        public:
+            static constexpr bool value = sizeof(one) == sizeof(check<T>(0));
+        };
+
+        //Have to change bool to int if there is more than just operator<< and toString
+        template<typename T, bool hasStreamOperator>
+        struct StreamVariable { };
+
+        template<typename T>
+        struct StreamVariable<T, false> {
+            static LogstreamBuilder& print(LogstreamBuilder& stream, const T& t) {
+                stream << t;
+                return stream;
+            }
+        };
+
+        template<typename T>
+        struct StreamVariable<T, true> {
+            static LogstreamBuilder& print(LogstreamBuilder& stream, const T& t) {
+                stream << t.toString();
+                return stream;
+            }
+        };
+
+        template <typename T>
+        LogstreamBuilder& operator<<(const T& x) {
+            StreamVariable<T, HasToString<T>::value>::print(*this, x);
+            return *this;
+        }
+/*
         template <typename Rep, typename Period>
         LogstreamBuilder& operator<<(stdx::chrono::duration<Rep, Period> d) {
             stream() << d;
@@ -144,7 +166,7 @@ namespace logger {
             stream() << x.toString();
             return *this;
         }
-
+*/
         LogstreamBuilder& operator<< (std::ostream& ( *manip )(std::ostream&)) {
             stream() << manip;
             return *this;
