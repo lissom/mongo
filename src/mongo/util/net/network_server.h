@@ -56,8 +56,6 @@ public:
     ~NetworkServer() final;
     void run() final;
 
-    void newMessageHandler(AsyncClientConnection* conn);
-
 private:
     struct Initiator {
         Initiator(asio::io_service& service, const asio::ip::tcp::endpoint& endPoint);
@@ -77,6 +75,8 @@ private:
     void serviceRun();
     void startAllWaits();
     void startWait(Initiator* const initiator);
+    void newMessageHandler(AsyncClientConnection* conn);
+
     /*
      * New conn handler
      * Only used to hand off the data

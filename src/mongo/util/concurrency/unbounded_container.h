@@ -15,6 +15,7 @@
  * Retains ownership over an unbounded number of objects
  * The name is the objective, to efficient store a potentially unbounded # of elements concurrently
  * Should be specialized for raw pointers
+ * Assuming heavy writes, few readers (so mutex is used)j
  */
 //TODO: better concurrency model
 //TODO: better name

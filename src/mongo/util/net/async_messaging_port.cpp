@@ -16,10 +16,10 @@ namespace mongo {
 namespace network {
 
 void Connections::newConnHandler(asio::ip::tcp::socket&& socket) {
-    std::unique_ptr<AsyncClientConnection> ci(std::move(socket), ++_connectionCount);
-    AsyncClientConnection* conn = ci.get();
+    std::unique_ptr<AsyncClientConnection> upConn(std::move(socket), ++_connectionCount);
+    AsyncClientConnection* conn = upConn.get();
     std::unique_lock lock(_mutex);
-    auto pos = _conns.emplace(ci.get(), ci);
+    auto pos = _conns.emplace(upConn.get(), std::move(upConn));
     //Ensure the insert happened
     verify(pos.second == true);
     (void)pos;
@@ -43,15 +43,12 @@ void AsyncClientConnection::asyncGetHeader() {
     _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
             [this](std::error_code ec, size_t len) {
         bytesIn(len);
-        if (ec) {
-            asyncSocketError(ec);
-            return;
-        }
+        if (ec)
+            return asyncSocketError(ec);
         if (len != HEADERSIZE) {
             log() << "Error, invalid header size received: " <<
-                    static_cast<int>(len) << std::endl;
-            asyncSocketShutdownRemove();
-            return;
+                    static_cast<unsigned long long>(len) << std::endl;
+            return asyncSocketShutdownRemove();
         }
         asyncGetMessage(conn);
     });
@@ -70,7 +67,7 @@ void AsyncClientConnection::asyncGetMessage() {
         //TODO: can we return an error on the socket to the client?
         asyncSocketShutdownRemove(conn);
     }
-    _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
+    _socket.async_receive(asio::const_buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
             [this](std::error_code ec, size_t len) {
         bytesIn(len);
         if (ec) {

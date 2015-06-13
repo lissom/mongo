@@ -80,14 +80,15 @@ void NetworkServer::startWait(Initiator* const initiator) {
             //TOOO: Ensure that move is enabled: ASIO_HAS_MOVE
             _connections->newConnHandler(std::move(initiator->_socket));
         else {
-            //Clear the socket just in case
+            //Clear the socket
             asio::ip::tcp::socket sock(std::move(initiator->_socket));
             sock.shutdown(asio::socket_base::shutdown_type::shutdown_both);
             sock.close();
-            std::stringstream ss;
-            ss << "Network error. Code: " << ec << " on port " <<
-                    initiator->_acceptor.local_endpoint();
-            log() << ss.str() << std::endl;
+            log() << "Error listening for new connection. Code: " << ec
+                    //TODO: add template to logstream_builder.h to take operator<< if it exists...
+                    //" on port " <<
+                    //initiator->_acceptor.local_endpoint()
+                    << std::endl;
         }
         //requeue
         startWait(initiator);
