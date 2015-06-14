@@ -256,6 +256,8 @@ env.Library(
         'balance.cpp',
         'cluster_last_error_info.cpp',
         'cursors.cpp',
+        "message_pipeline.cpp",
+        "operation_runner.cpp",
         'request.cpp',
         's_only.cpp',
         'strategy.cpp',

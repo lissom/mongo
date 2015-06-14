@@ -20,6 +20,10 @@ MessagePipeline::MessagePipeline(size_t threadNum) :
     }));
 }
 
+MessagePipeline::~MessagePipeline() {
+    _terminate = true;
+}
+
 void MessagePipeline::enqueueMessage(network::AsyncClientConnection* conn) {
     std::unique_lock<std::mutex> lock(_mutex);
     _newMessages.push(conn);
@@ -49,9 +53,10 @@ void MessagePipeline::MessageProcessor::run() {
         network::AsyncClientConnection* newMessageConn = _owner->getNextMessage();
         if (newMessageConn == nullptr)
             return;
-        _runner = new OperationRunner(newMessageConn);
-
-        //TODO: Queue up the runner
+        std::unique_ptr<OperationRunner> upRunner(new OperationRunner(newMessageConn));
+        //Take a raw pointer for general use before ownership transfer
+        _runner = upRunner.get();
+        newMessageConn->setOpRuner(std::move(upRunner));
 
         _runner->run();
         //Original code releases sharded connections

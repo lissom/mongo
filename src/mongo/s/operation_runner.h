@@ -13,6 +13,7 @@
 #include "mongo/db/client_basic.h"
 #include "mongo/db/service_context.h"
 #include "mongo/platform/platform_specific.h"
+#include "mongo/s/abstract_operation_runner.h"
 #include "mongo/s/request.h"
 #include "mongo/util/net/async_messaging_port.h"
 
@@ -20,15 +21,12 @@
 namespace mongo {
 
 //TODO: Add owner and have the runner pop itself on finish
-MONGO_ALIGN_TO_CACHE class OperationRunner {
+MONGO_ALIGN_TO_CACHE class OperationRunner : public AbstractOperationRunner {
 public:
     enum class State { init, running, completed, errored, finished };
     OperationRunner(network::AsyncClientConnection* const connInfo);
-    ~OperationRunner() {
-        //Ensure no dangling operations
-        fassert(-1, operationsActive() == false);
-        port->persistClientState();
-    }
+    ~OperationRunner();
+
     void run();
     void callback();
     //TODO: Test to see if we are waiting on return values

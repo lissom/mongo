@@ -465,6 +465,8 @@ namespace mongo {
         }
         void setData(int operation, const char *msgdata, size_t len) {
             verify( empty() );
+            //mongoMalloc will cause any other holders to dangle
+            verify( _freeIt );
             size_t dataLen = len + sizeof(MsgData::Value) - 4;
             MsgData::View d = reinterpret_cast<char *>(mongoMalloc(dataLen));
             memcpy(d.data(), msgdata, len);

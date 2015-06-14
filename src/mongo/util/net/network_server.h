@@ -17,8 +17,9 @@
 #include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/platform/platform_specific.h"
+#include "mongo/s/abstract_message_pipeline.h"
 #include "mongo/util/net/async_messaging_port.h"
-#include "mongo/s/message_pipeline.h"
+
 
 namespace mongo {
 namespace network {
@@ -53,9 +54,15 @@ public:
 class NetworkServer : public Server {
     MONGO_DISALLOW_COPYING(NetworkServer);
 public:
-    NetworkServer(const NetworkOptions options, MessagePipeline* const pipeline);
+    NetworkServer(const NetworkOptions options, AbstractMessagePipeline* const pipeline);
     ~NetworkServer() final;
     void run() final;
+
+    /*
+     * Connections call this to initiate listening on their client connection
+     * and capture of a message
+     */
+    void handlerOperationReady(AsyncClientConnection* conn);
 
 private:
     struct Initiator {
@@ -68,7 +75,7 @@ private:
     asio::io_service _service;
     //Holds the end points and currently waiting socket
     std::vector<boost::thread> _threads;
-    MessagePipeline* const _pipeline;
+    AbstractMessagePipeline* const _pipeline;
     std::vector<Initiator> _endPoints;
     //Options should be last, they are very cold
     const NetworkOptions _options;
@@ -76,7 +83,6 @@ private:
     void serviceRun();
     void startAllWaits();
     void startWait(Initiator* const initiator);
-    void newMessageHandler(AsyncClientConnection* conn);
 
 };
 

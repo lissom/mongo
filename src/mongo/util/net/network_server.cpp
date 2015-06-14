@@ -27,14 +27,13 @@
 #include "mongo/util/log.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/network_server.h"
-#include "mongo/s/message_pipeline.h"
 
 namespace mongo {
 namespace network {
 
 const std::string NETWORK_PREFIX = "conn";
 
-NetworkServer::NetworkServer(NetworkOptions options, MessagePipeline* const pipeline) :
+NetworkServer::NetworkServer(NetworkOptions options, AbstractMessagePipeline* const pipeline) :
         _connections(new Connections(this)),
         _pipeline(pipeline),
         _options(std::move(options)) {
@@ -66,7 +65,7 @@ NetworkServer::~NetworkServer() {
         t.join();
 }
 
-void NetworkServer::newMessageHandler(AsyncClientConnection* conn) {
+void NetworkServer::handlerOperationReady(AsyncClientConnection* conn) {
     _pipeline->enqueueMessage(conn);
 }
 

@@ -15,11 +15,9 @@
 #include <unordered_set>
 
 #include "mongo/s/operation_runner.h"
-#include "mongo/util/net/async_messaging_port.h"
+#include "mongo/s/abstract_message_pipeline.h"
 
 namespace mongo {
-
-class MessagePipeline;
 
 struct OpStats {
     std::atomic<uint64_t> _queries{};
@@ -36,19 +34,17 @@ struct CurrentOp {
 /*
  * Splitting by # of threads so we scale linearly with it
  */
-class MessagePipeline {
+class MessagePipeline final : public AbstractMessagePipeline {
 public:
     MessagePipeline(size_t threadNum);
-    ~MessagePipeline() {
-        _terminate = true;
-    };
+    ~MessagePipeline();
 
     //TODO: get all the current operations
     /*
      * Iterate over the message runners for running currentOps and then the queues for "waiting" currentOps
      */
     std::unique_ptr<CurrentOp> currentOp();
-    void enqueueMessage(network::AsyncClientConnection* conn);
+    void enqueueMessage(network::AsyncClientConnection* conn) final;
     network::AsyncClientConnection* getNextMessage();
 
 private:
@@ -64,7 +60,6 @@ private:
         private:
         OperationRunner* _runner{};
         MessagePipeline* const _owner;
-
     };
 
     void workLoop();

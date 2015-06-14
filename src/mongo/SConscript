@@ -223,8 +223,6 @@ env.Install(
         "mongos",
         [
             "s/server.cpp",
-            's/operation_runner.cpp',
-            's/message_pipeline.cpp',
             "s/mongos_options.cpp",
             "s/mongos_options_init.cpp",
         ],

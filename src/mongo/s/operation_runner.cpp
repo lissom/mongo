@@ -17,8 +17,18 @@ namespace mongo {
 
 OperationRunner::OperationRunner(network::AsyncClientConnection* const connInfo) :
     port(connInfo),
-    message(static_cast<void *>(connInfo->getBuffer()), false),
+    message(),
     request(message, port) {
+    size_t size = connInfo->getBufferSize();
+    void* buf = mongoMalloc(size);
+    memcpy(connInfo->getBuffer(), buf, size);
+    message.setData(static_cast<char*>(buf), true);
+}
+
+OperationRunner::~OperationRunner() {
+    //Ensure no dangling operations
+    fassert(-1, operationsActive() == false);
+    port->persistClientState();
 }
 
 namespace {

@@ -45,7 +45,7 @@ public:
 
     void erase(Value key) {
         UniqueLock lock(_mutex);
-        auto v = _container.erase(key);
+        _container.erase(key);
         //Delete may be expensive, drop the lock
         lock.release();
         delete key;
