@@ -153,9 +153,7 @@ namespace mongo {
 
     namespace persist {
         ServiceContext::UniqueClient* releaseClient() {
-            //TODO: the compiler thinks .release() struct TSP... has no member release()
-            //return currentClient.release();
-            verify(false);
+            //TODO: return currentClient.release();
             return nullptr;
         }
 

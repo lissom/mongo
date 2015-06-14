@@ -11,13 +11,14 @@
 #include "mongo/db/dbmessage.h"
 #include "mongo/s/operation_runner.h"
 #include "mongo/util/log.h"
+#include "mongo/db/lasterror.h"
 
 namespace mongo {
 
 OperationRunner::OperationRunner(network::AsyncClientConnection* const connInfo) :
     port(connInfo),
     message(static_cast<void *>(connInfo->getBuffer()), false),
-    request(message, &port) {
+    request(message, port) {
 }
 
 namespace {

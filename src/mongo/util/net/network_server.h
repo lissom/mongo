@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "asio.hpp"
+#include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/util/net/async_messaging_port.h"
@@ -77,11 +78,6 @@ private:
     void startWait(Initiator* const initiator);
     void newMessageHandler(AsyncClientConnection* conn);
 
-    /*
-     * New conn handler
-     * Only used to hand off the data
-     */
-    void newConnHandler(asio::ip::tcp::socket&& socket);
 };
 
 } /* namespace network */

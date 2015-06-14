@@ -16,14 +16,9 @@ namespace mongo {
 namespace network {
 
 void Connections::newConnHandler(asio::ip::tcp::socket&& socket) {
-    std::unique_ptr<AsyncClientConnection> upConn(std::move(socket), ++_connectionCount);
-    AsyncClientConnection* conn = upConn.get();
-    std::unique_lock lock(_mutex);
-    auto pos = _conns.emplace(upConn.get(), std::move(upConn));
+    AsyncClientConnection* conn = new AsyncClientConnection(std::move(socket), _connectionCount);
+    _conns.emplace(conn);
     //Ensure the insert happened
-    verify(pos.second == true);
-    (void)pos;
-    lock.release();
     conn->asyncReceiveMessage();
 }
 
@@ -46,8 +41,7 @@ void AsyncClientConnection::asyncGetHeader() {
         if (ec)
             return asyncSocketError(ec);
         if (len != HEADERSIZE) {
-            log() << "Error, invalid header size received: " <<
-                    static_cast<unsigned long long>(len) << std::endl;
+            log() << "Error, invalid header size received: " << len << std::endl;
             return asyncSocketShutdownRemove();
         }
         asyncGetMessage(conn);
@@ -92,7 +86,6 @@ void AsyncClientConnection::asyncSizeError(const char* desc, size_t size) {
     asyncSocketShutdownRemove();
 }
 
-
 void AsyncClientConnection::asyncSocketError(std::error_code ec) {
     log() << "Socket error.  Code: " << ec << ".  Remote: " << _socket.remote_endpoint()
             << std::endl;
@@ -105,7 +98,7 @@ void AsyncClientConnection::asyncSocketShutdownRemove() {
     //Now that the socket's work is done, post to the async work queue to remove it
     _socket.get_io_service().post([this]{
         std::unique_lock lock(_owner->_mutex);
-        fassert(-1, _owner->_conns.erase(this) > 0);
+        _owner->_conns.erase(this);
         lock.release();
     });
 }

@@ -27,6 +27,7 @@
 #include "mongo/util/log.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/network_server.h"
+#include "mongo/s/message_pipeline.h"
 
 namespace mongo {
 namespace network {

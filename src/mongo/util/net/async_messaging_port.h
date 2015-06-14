@@ -16,6 +16,7 @@
 
 #include "mongo/platform/platform_specific.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/message_port.h"
@@ -26,7 +27,7 @@ namespace network {
 /*
  * We really need a _simple_ buffer type (that other buffers can then derive from)
  *
- * afaict asio leaves state info behind, so it has problems scaling
+ * afaict asio leaves state info behind, so it has problems scaling naturally
  * to move socket's io_servce have to get the native socket handle,
  * duplicate the native socket handle, assign the handle to a new socket and io_servicet
  * unistd.h int dup(int old fd); WSADuplicateSocket();
@@ -234,14 +235,14 @@ public:
 
 private:
     friend class AsyncClientConnection;
+    using ConnectionHolder = UnboundedContainer<network::AsyncClientConnection*>;
+
+    NetworkServer* const _server;
+    ConnectionHolder _conns;
     ConnStats _stats;
     //TODO: more concurrent
-    std::unordered_map<AsyncClientConnection*, std::unique_ptr<AsyncClientConnection>> _conns;
     uint64_t _connectionCount{};
-    std::mutex _mutex; //Protects access to _conns and _connectionCount
-    NetworkServer* const _server;
 };
 
 } //namespace mongo
 } //namespace network
-

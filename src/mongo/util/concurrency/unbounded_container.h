@@ -20,52 +20,42 @@
 //TODO: better concurrency model
 //TODO: better name
 //TODO: Specialize for pointers, and unique_ptr
-template <typename Key, typename Value>
+//Right only pointers, and we own it
+template <typename Value>
 class UnboundedContainer {
+    static_assert(std::is_pointer<Value>::value,
+            "This container is only setup to use pointers");
+    using Mutex = std::mutex;
+    using UniqueLock = std::unique_lock<Mutex>;
 public:
-    //Container must be cleaned up, should fix this, but will require specializing
-    ~UnboundedContainer() {
-        fassert(-1, _container.empty() == true);
+    UnboundedContainer() { }
+    //TODO: Implement a delete policy, needed for other uses
+    ~UnboundedContainer() { }
+
+    //Cannot be moved or copied
+    UnboundedContainer(const UnboundedContainer&) = delete;
+    UnboundedContainer(UnboundedContainer&&) = delete;
+    UnboundedContainer& operator=(const UnboundedContainer&) = delete;
+    UnboundedContainer& operator=(UnboundedContainer&&) = delete;
+
+    void emplace(Value value) {
+        UniqueLock lock(_mutex);
+        verify(_container.emplace(value).second == true);
     }
 
-    //No checking about decaying into the key b/c the ctor could use it
-    template <typename V>
-    void set(V&& key, Value&& value) {
-        std::unique_lock(_mutex);
-        verify(_container.emplace(std::forward<V>(key), std::move(value)).second == true);
+    void erase(Value key) {
+        UniqueLock lock(_mutex);
+        auto v = _container.erase(key);
+        //Delete may be expensive, drop the lock
+        lock.release();
+        delete key;
     }
 
-    template <typename V>
-    void insert(V&& key, std::unique_ptr<Value>&& value) {
-        std::unique_lock(_mutex);
-        //Use std::move, who knows what get returns exactly
-        verify(_container.emplace(std::forward<V>(key), std::move(value.get())).second == true);
-    }
-
-    template <typename V>
-    void remove(const V& key) {
-        std::unique_lock(_mutex);
+    void release(const Value key) {
         _container.erase(key);
-    }
-
-    template <typename V>
-    Value& at(const V& key) {
-        std::unique_lock(_mutex);
-        return _container.at(key);
-    }
-
-    template <typename V>
-    Value& release(const V& key) {
-        std::unique_lock(_mutex);
-        auto lookup = _container.find(key);
-        if(lookup == _container.end())
-            throw std::out_of_range("Unable to find key in range");
-        Value ret(std::move(*lookup));
-        _container.erase(lookup);
-        return ret;
     }
 
 private:
     std::mutex _mutex;
-    std::unordered_set<Key, Value> _container;
+    std::unordered_set<Value> _container;
 };
