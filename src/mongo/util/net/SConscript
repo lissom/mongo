@@ -27,6 +27,7 @@ env.Library(
     target='network',
     source=[
 	"async_messaging_port.cpp",
+	"clock.cpp",
         "httpclient.cpp",
         "listen.cpp",
         "message.cpp",

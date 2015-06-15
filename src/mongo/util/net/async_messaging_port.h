@@ -56,13 +56,11 @@ struct ConnStats {
     uint64_t _bytesOut{};
 };
 
-
-
 /*
  * Functions starting with async return immediately after queueing work
  * _socket is *not* cleaned up properly for the OS, the holder does this
  *
- * Piggyback isn't supported, only appears to be used for mongoD
+ * Piggyback isn't supported, only appears to be used for mongoD (and isn't part of the abstract)
  *
  * AsyncClientConnection(ACC) and OperationRunner(OpRunner) are tightly bound
  * ACC starts a receive, then passes itself to a pipeline, which generates an OperationRunner
@@ -87,7 +85,7 @@ public:
 
     ~AsyncClientConnection();
 
-    void setOpRuner(std::unique_ptr<AbstractOperationRunner>&& newOpRunner) {
+    void setOpRuner(std::unique_ptr<AbstractOperationRunner> newOpRunner) {
         fassert(-1, _state != State::complete);
         _runner = std::move(newOpRunner);
     }
@@ -108,7 +106,6 @@ public:
     void persistClientState() {
         _persistantState.reset(persist::releaseClient());
     }
-
 
     void restoreClientState() {
         persist::setClient(_persistantState.release());

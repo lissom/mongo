@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <boost/thread/thread.hpp>
+#include <condition_variable>
 #include <errno.h>
 #include <utility>
 
@@ -36,7 +37,8 @@ const std::string NETWORK_PREFIX = "conn";
 NetworkServer::NetworkServer(NetworkOptions options, AbstractMessagePipeline* const pipeline) :
         _connections(new Connections(this)),
         _pipeline(pipeline),
-        _options(std::move(options)) {
+        _options(std::move(options)),
+        _timerThread([this]{ updateTime(); }) {
     //If ipList is specified bind on those ips, otherwise bind to all ips for that port
     if (_options.ipList.size()) {
         const char* start = _options.ipList.c_str();
@@ -51,18 +53,19 @@ NetworkServer::NetworkServer(NetworkOptions options, AbstractMessagePipeline* co
                 addr = asio::ip::address::from_string(start);
                 start = nullptr;
             }
-            _endPoints.emplace_back(_service, asio::ip::tcp::endpoint(addr, _options.port));
+            _endPoints.emplace_back(_ioService, asio::ip::tcp::endpoint(addr, _options.port));
         }
     }
     else
-        _endPoints.emplace_back(_service, asio::ip::tcp::endpoint(asio::ip::tcp::v4(),
+        _endPoints.emplace_back(_ioService, asio::ip::tcp::endpoint(asio::ip::tcp::v4(),
                 _options.port));
 }
 
 NetworkServer::~NetworkServer() {
-    _service.stop();
+    _ioService.stop();
     for (auto& t: _threads)
         t.join();
+    _timerThread.join();
 }
 
 void NetworkServer::handlerOperationReady(AsyncClientConnection* conn) {
@@ -72,6 +75,7 @@ void NetworkServer::handlerOperationReady(AsyncClientConnection* conn) {
 void NetworkServer::startAllWaits() {
     for (auto& i : _endPoints)
         startWait(&i);
+    updateTime();
 }
 
 void NetworkServer::startWait(Initiator* const initiator) {
@@ -98,7 +102,7 @@ void NetworkServer::startWait(Initiator* const initiator) {
 void NetworkServer::serviceRun() {
     try {
         asio::error_code ec;
-        _service.run(ec);
+        _ioService.run(ec);
         if (ec) {
             log() << "Error running service: " << ec << std::endl;
             fassert(-1, !ec);
@@ -111,7 +115,29 @@ void NetworkServer::serviceRun() {
         dbexit( EXIT_UNCAUGHT );
     }
 }
+} //namespace network
+namespace ready {
 
+static std::condition_variable& getReadyCond() {
+    static std::condition_variable wait_ready;
+    return wait_ready;
+}
+
+static std::mutex& getReadyMutex() {
+    static std::mutex _mutex;
+    return _mutex;
+}
+
+static bool _ready{};
+static void signalReady() {
+    std::lock_guard<std::mutex> lock(getReadyMutex());
+    _ready = true;
+    getReadyCond().notify_all();
+}
+
+} //namespace ready
+
+namespace network {
 void NetworkServer::run() {
     //Init waiting on the port
     startAllWaits();
@@ -125,6 +151,7 @@ void NetworkServer::run() {
     try {
         for(; threads > 0; --threads)
             _threads.emplace_back(attrs, [this]{ serviceRun(); });
+        mongo::ready::signalReady();
     }
     catch (boost::thread_resource_error&) {
         log() << "can't create new thread for listening, shutting down" << std::endl;
@@ -136,6 +163,14 @@ void NetworkServer::run() {
     }
 }
 
+void NetworkServer::updateTime() {
+    while(!inShutdown()) {
+        const size_t duration = 1;
+        boost::this_thread::sleep(boost::posix_time::milliseconds(duration));
+        clock::incElapsedTimeMillis2(duration);
+    }
+}
+
 NetworkServer::Initiator::Initiator(
         asio::io_service& service,
         const asio::ip::tcp::endpoint& endPoint)
@@ -143,4 +178,12 @@ NetworkServer::Initiator::Initiator(
 }
 
 } /* namespace network */
+
+bool ifListenerWaitReady2()
+{
+   std::unique_lock<std::mutex> lock(ready::getReadyMutex());
+   ready::getReadyCond().wait(lock, []{ return ready::_ready; });
+   return true;
+}
+
 } /* namespace mongo */

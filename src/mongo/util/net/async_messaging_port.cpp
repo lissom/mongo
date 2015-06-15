@@ -44,7 +44,7 @@ void AsyncClientConnection::asyncReceiveHeader() {
     _buf.clear();
     _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
     _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
-            [this](std::error_code ec, size_t len) {
+            [this](const std::error_code& ec, const size_t len) {
         bytesIn(len);
         if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen()))
             return;
@@ -68,7 +68,7 @@ void AsyncClientConnection::asyncReceiveMessage() {
         asyncSocketShutdownRemove();
     }
     _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
-            [this](std::error_code ec, size_t len) {
+            [this](const std::error_code& ec, const size_t len) {
         bytesIn(len);
         if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen()))
             return;
@@ -128,7 +128,7 @@ void AsyncClientConnection::SendStart(Message& toSend, MSGID responseTo) {
 void AsyncClientConnection::asyncSendMessage()  {
     size_t size = getMsgData().getLen();
     _socket.async_send(asio::buffer(_buf.data(), size),
-            [this, size] (std::error_code ec, size_t len) {
+            [this, size] (const std::error_code& ec, const size_t len) {
         if (!asyncStatusCheck("send", "message body", ec, len, size))
             return;
         asyncSendComplete();

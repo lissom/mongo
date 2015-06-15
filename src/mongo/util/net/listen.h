@@ -167,12 +167,12 @@ namespace mongo {
     };
 
     /*
-     * Probably should assert instead of return, but keeping with legacy behvaior
+     * Probably should assert instead of return, but keeping with legacy behavior
      * Only current used in repl::isSelf
      */
     bool ifListenerWaitReady();
 
-    namespace clock {
+namespace clock {
     long long getElapsedTimeMillis();
-    } //namespace clock
+} //namespace clock
 }

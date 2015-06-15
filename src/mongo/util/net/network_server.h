@@ -8,16 +8,17 @@
 #pragma once
 
 #include <array>
+#include <asio.hpp>
 #include <atomic>
 #include <tuple>
 #include <vector>
 #include <unordered_map>
 
-#include "asio.hpp"
 #include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/s/abstract_message_pipeline.h"
+#include "mongo/util/net/clock.h"
 #include "mongo/util/net/async_messaging_port.h"
 
 
@@ -70,22 +71,26 @@ private:
         asio::ip::tcp::acceptor _acceptor;
         asio::ip::tcp::socket _socket;
     };
+
+    void serviceRun();
+    void startAllWaits();
+    void startWait(Initiator* const initiator);
+    void updateTime();
+
     //Connections can outlive the server, no point presently
     std::unique_ptr<Connections> _connections;
-    asio::io_service _service;
+    asio::io_service _ioService;
     //Holds the end points and currently waiting socket
     std::vector<boost::thread> _threads;
     AbstractMessagePipeline* const _pipeline;
     std::vector<Initiator> _endPoints;
     //Options should be last, they are very cold
     const NetworkOptions _options;
-
-    void serviceRun();
-    void startAllWaits();
-    void startWait(Initiator* const initiator);
-
+    boost::thread _timerThread;
 };
 
 } /* namespace network */
+
+bool ifListenerWaitReady2();
 } /* namespace mongo */
 

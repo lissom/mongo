@@ -673,7 +673,7 @@ namespace mongo {
         return true;
     }
 
-    namespace clock {
+namespace clock {
     long long getElapsedTimeMillis() {
         const Listener* timeTracker = Listener::getTimeTracker();
         if ( timeTracker )
@@ -682,5 +682,5 @@ namespace mongo {
         // should this assert or throw?  seems like callers may not expect to get zero back, certainly not forever.
         return 0;
     }
-    } //namespace clock
+} //namespace clock
 }
