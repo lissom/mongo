@@ -45,7 +45,7 @@ namespace network {
 using BufferSet = std::vector< std::pair<char*, int>>;
 const auto HEADERSIZE = size_t(sizeof(MSGHEADER::Value));
 class Connections;
-class NetworkServer;
+class AsioAsyncServer;
 
 //TODO: Test array& vs individual
 //TODO: Move ConnStats into a vector
@@ -223,7 +223,7 @@ private:
 MONGO_ALIGN_TO_CACHE class Connections {
     MONGO_DISALLOW_COPYING(Connections);
 public:
-    Connections(NetworkServer* const server) : _server (server) { }
+    Connections(AsioAsyncServer* const server) : _server (server) { }
     void newConnHandler(asio::ip::tcp::socket&& socket);
     //Passing message, which shouldn't allocate any buffers
     void handlerOperationReady(AsyncClientConnection* conn);
@@ -233,7 +233,7 @@ private:
     friend class AsyncClientConnection;
     using ConnectionHolder = UnboundedContainer<network::AsyncClientConnection*>;
 
-    NetworkServer* const _server;
+    AsioAsyncServer* const _server;
     ConnectionHolder _conns;
     ConnStats _stats;
     //TODO: more concurrent

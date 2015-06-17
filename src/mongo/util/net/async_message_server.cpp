@@ -27,14 +27,14 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/message.h"
-#include "mongo/util/net/network_server.h"
+#include "async_message_server.h"
 
 namespace mongo {
 namespace network {
 
 const std::string NETWORK_PREFIX = "conn";
 
-NetworkServer::NetworkServer(NetworkOptions options, AbstractMessagePipeline* const pipeline) :
+AsioAsyncServer::AsioAsyncServer(Options options, AbstractMessagePipeline* const pipeline) :
         _connections(new Connections(this)),
         _pipeline(pipeline),
         _options(std::move(options)),
@@ -61,24 +61,24 @@ NetworkServer::NetworkServer(NetworkOptions options, AbstractMessagePipeline* co
                 _options.port));
 }
 
-NetworkServer::~NetworkServer() {
+AsioAsyncServer::~AsioAsyncServer() {
     _ioService.stop();
     for (auto& t: _threads)
         t.join();
     _timerThread.join();
 }
 
-void NetworkServer::handlerOperationReady(AsyncClientConnection* conn) {
+void AsioAsyncServer::handlerOperationReady(AsyncClientConnection* conn) {
     _pipeline->enqueueMessage(conn);
 }
 
-void NetworkServer::startAllWaits() {
+void AsioAsyncServer::startAllWaits() {
     for (auto& i : _endPoints)
         startWait(&i);
     updateTime();
 }
 
-void NetworkServer::startWait(Initiator* const initiator) {
+void AsioAsyncServer::startWait(Initiator* const initiator) {
     initiator->_acceptor.async_accept(initiator->_socket, [this, initiator] (std::error_code ec) {
         if (!ec)
             //TOOO: Ensure that move is enabled: ASIO_HAS_MOVE
@@ -99,7 +99,7 @@ void NetworkServer::startWait(Initiator* const initiator) {
     });
 }
 
-void NetworkServer::serviceRun() {
+void AsioAsyncServer::serviceRun() {
     try {
         asio::error_code ec;
         _ioService.run(ec);
@@ -138,12 +138,12 @@ static void signalReady() {
 } //namespace ready
 
 namespace network {
-void NetworkServer::run() {
+void AsioAsyncServer::run() {
     //Init waiting on the port
     startAllWaits();
 
     //Init processing of new connections
-    int threads = _options.threads ? _options.threads : boost::thread::hardware_concurrency() / 4;
+    int threads = boost::thread::hardware_concurrency() / 4;
 
     //Using boost thread as it allows for cross platform stack size reduction
     boost::thread::attributes attrs;
@@ -163,7 +163,7 @@ void NetworkServer::run() {
     }
 }
 
-void NetworkServer::updateTime() {
+void AsioAsyncServer::updateTime() {
     while(!inShutdown()) {
         const size_t duration = 1;
         boost::this_thread::sleep(boost::posix_time::milliseconds(duration));
@@ -171,7 +171,7 @@ void NetworkServer::updateTime() {
     }
 }
 
-NetworkServer::Initiator::Initiator(
+AsioAsyncServer::Initiator::Initiator(
         asio::io_service& service,
         const asio::ip::tcp::endpoint& endPoint)
         : _acceptor(service, endPoint), _socket(service) {

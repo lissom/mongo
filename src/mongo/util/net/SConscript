@@ -26,13 +26,13 @@ env.CppUnitTest(
 env.Library(
     target='network',
     source=[
-	"async_messaging_port.cpp",
-	"clock.cpp",
+    	"async_message_server.cpp",
+		"async_message_port.cpp",
+		"clock.cpp",
         "httpclient.cpp",
         "listen.cpp",
         "message.cpp",
         "message_port.cpp",
-        "network_server.cpp",
         "sock.cpp",
         "socket_poll.cpp",
         "ssl_expiration.cpp",

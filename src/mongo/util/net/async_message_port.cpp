@@ -10,8 +10,8 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/util/log.h"
-#include "mongo/util/net/async_messaging_port.h"
-#include "mongo/util/net/network_server.h"
+#include "async_message_port.h"
+#include "async_message_server.h"
 
 namespace mongo {
 namespace network {

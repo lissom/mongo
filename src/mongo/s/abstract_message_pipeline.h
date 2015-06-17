@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "mongo/util/net/async_messaging_port.h"
+#include "../util/net/async_message_port.h"
 
 namespace mongo {
 class AbstractMessagePipeline {

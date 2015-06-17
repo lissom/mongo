@@ -14,12 +14,14 @@
 #include <vector>
 #include <unordered_map>
 
+#include "async_message_port.h"
 #include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/s/abstract_message_pipeline.h"
+#include "mongo/util/net/message_server.h"
 #include "mongo/util/net/clock.h"
-#include "mongo/util/net/async_messaging_port.h"
+
 
 
 namespace mongo {
@@ -34,29 +36,14 @@ const size_t NETWORK_MIN_MESSAGE_SIZE = 1024;
 const size_t NETWORK_DEFAULT_STACK_SIZE = 1024 * 1024;
 
 /*
- * Options for a network server
+ *  Network MessageServer using ASIO
  */
-struct NetworkOptions {
-    std::string ipList;
-    int port;
-    int threads{};
-};
-
-class Server {
+class AsioAsyncServer : public MessageServer {
+    MONGO_DISALLOW_COPYING(AsioAsyncServer);
 public:
-    Server() {}
-    virtual ~Server() {}
-    virtual void run() = 0;
-};
-
-/*
- *  Network Server using ASIO
- */
-class NetworkServer : public Server {
-    MONGO_DISALLOW_COPYING(NetworkServer);
-public:
-    NetworkServer(const NetworkOptions options, AbstractMessagePipeline* const pipeline);
-    ~NetworkServer() final;
+    //using Options = MessageServer::Options;
+    AsioAsyncServer(const Options options, AbstractMessagePipeline* const pipeline);
+    ~AsioAsyncServer() final;
     void run() final;
 
     /*
@@ -85,7 +72,7 @@ private:
     AbstractMessagePipeline* const _pipeline;
     std::vector<Initiator> _endPoints;
     //Options should be last, they are very cold
-    const NetworkOptions _options;
+    const Options _options;
     boost::thread _timerThread;
 };
 
