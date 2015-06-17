@@ -59,10 +59,10 @@ public:
      * @return to ensure that static bools can be used with this function to setup the factory
      */
     static bool registerCreator(Key&& key, Factory&& factory) {
-        assert(!key.empty());
+        verify(!key.empty());
         bool result = getMap().insert(std::make_pair(key, std::forward<Factory>(factory))).second;
         //ensure it doesn't already exist to avoid double inserts
-        assert(result);
+        verify(result);
         return result;
 
     }
