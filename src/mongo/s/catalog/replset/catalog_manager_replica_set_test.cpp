@@ -35,9 +35,11 @@
 
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/client/remote_command_targeter_mock.h"
+#include "mongo/db/commands.h"
 #include "mongo/db/query/lite_parsed_query.h"
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/executor/task_executor.h"
+#include "mongo/s/catalog/dist_lock_manager_mock.h"
 #include "mongo/s/catalog/replset/catalog_manager_replica_set.h"
 #include "mongo/s/catalog/replset/catalog_manager_replica_set_test_fixture.h"
 #include "mongo/s/catalog/type_chunk.h"
@@ -58,13 +60,14 @@ namespace {
     using std::async;
     using std::string;
     using std::vector;
+    using stdx::chrono::milliseconds;
     using unittest::assertGet;
 
     static const std::chrono::seconds kFutureTimeout{5};
 
     TEST_F(CatalogManagerReplSetTestFixture, GetCollectionExisting) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         CollectionType expectedColl;
@@ -97,7 +100,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, GetCollectionNotExisting) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         auto future = async(std::launch::async, [this] {
@@ -115,7 +118,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, GetDatabaseExisting) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         DatabaseType expectedDb;
@@ -145,7 +148,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, GetDatabaseNotExisting) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         auto future = async(std::launch::async, [this] {
@@ -162,7 +165,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, UpdateCollection) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         CollectionType collection;
@@ -208,7 +211,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, UpdateCollectionNotMaster) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         CollectionType collection;
@@ -241,7 +244,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, UpdateCollectionNotMasterRetrySuccess) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         HostAndPort host1("TestHost1");
         HostAndPort host2("TestHost2");
         targeter->setFindHostReturnValue(host1);
@@ -303,7 +306,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, GetAllShardsValid) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         ShardType s1;
@@ -352,7 +355,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, GetAllShardsWithInvalidShard) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         auto future = async(std::launch::async, [this] {
@@ -388,7 +391,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNS) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         OID oid = OID::gen();
@@ -444,7 +447,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNSNoChunks) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         ChunkVersion queryChunkVersion({ 1, 2, OID::gen() });
@@ -478,7 +481,7 @@ namespace {
 
     TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNSInvalidChunk) {
         RemoteCommandTargeterMock* targeter =
-            RemoteCommandTargeterMock::get(shardRegistry()->findIfExists("config")->getTargeter());
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
         targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
         ChunkVersion queryChunkVersion({ 1, 2, OID::gen() });
@@ -525,6 +528,208 @@ namespace {
         });
 
         future.get();
+    }
+
+    TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementReadCommand) {
+        RemoteCommandTargeterMock* targeter =
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+        targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+        auto future = async(std::launch::async, [this] {
+            BSONObjBuilder responseBuilder;
+            bool ok = catalogManager()->runUserManagementReadCommand("test",
+                                                                     BSON("usersInfo" << 1),
+                                                                     &responseBuilder);
+            ASSERT_TRUE(ok);
+
+            BSONObj response = responseBuilder.obj();
+            ASSERT_TRUE(response["ok"].trueValue());
+            auto users = response["users"].Array();
+            ASSERT_EQUALS(0U, users.size());
+        });
+
+        onCommand([](const RemoteCommandRequest& request) {
+            ASSERT_EQUALS("test", request.dbname);
+            ASSERT_EQUALS(BSON("usersInfo" << 1), request.cmdObj);
+
+            return BSON("ok" << 1 << "users" << BSONArrayBuilder().arr());
+        });
+
+        // Now wait for the runUserManagementReadCommand call to return
+        future.wait_for(kFutureTimeout);
+    }
+
+    TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementReadCommandUnsatisfiedReadPref) {
+        RemoteCommandTargeterMock* targeter =
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+        targeter->setFindHostReturnValue(Status(ErrorCodes::FailedToSatisfyReadPreference,
+                                                "no nodes up"));
+
+        BSONObjBuilder responseBuilder;
+        bool ok = catalogManager()->runUserManagementReadCommand("test",
+                                                                 BSON("usersInfo" << 1),
+                                                                 &responseBuilder);
+        ASSERT_FALSE(ok);
+
+        Status commandStatus = Command::getStatusFromCommandResult(responseBuilder.obj());
+        ASSERT_EQUALS(ErrorCodes::FailedToSatisfyReadPreference, commandStatus);
+    }
+
+    TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementWriteCommandDistLockHeld) {
+        RemoteCommandTargeterMock* targeter =
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+        targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+        distLock()->expectLock(
+                [](StringData name,
+                   StringData whyMessage,
+                   milliseconds waitFor,
+                   milliseconds lockTryInterval) {
+            ASSERT_EQUALS("authorizationData", name);
+            ASSERT_EQUALS("dropUser", whyMessage);
+        }, Status(ErrorCodes::LockBusy, "lock already held"));
+
+        BSONObjBuilder responseBuilder;
+        bool ok = catalogManager()->runUserManagementWriteCommand("dropUser",
+                                                                  "test",
+                                                                  BSON("dropUser" << "test"),
+                                                                  &responseBuilder);
+        ASSERT_FALSE(ok);
+        BSONObj response = responseBuilder.obj();
+        ASSERT_EQUALS(ErrorCodes::LockBusy, Command::getStatusFromCommandResult(response));
+    }
+
+    TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementWriteCommandSuccess) {
+        RemoteCommandTargeterMock* targeter =
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+        targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+        distLock()->expectLock(
+                [](StringData name,
+                   StringData whyMessage,
+                   milliseconds waitFor,
+                   milliseconds lockTryInterval) {
+            ASSERT_EQUALS("authorizationData", name);
+            ASSERT_EQUALS("dropUser", whyMessage);
+        }, Status::OK());
+
+        auto future = async(std::launch::async, [this] {
+            BSONObjBuilder responseBuilder;
+            bool ok = catalogManager()->runUserManagementWriteCommand("dropUser",
+                                                                      "test",
+                                                                      BSON("dropUser" << "test"),
+                                                                      &responseBuilder);
+            ASSERT_FALSE(ok);
+
+            Status commandStatus = Command::getStatusFromCommandResult(responseBuilder.obj());
+            ASSERT_EQUALS(ErrorCodes::UserNotFound, commandStatus);
+        });
+
+        onCommand([](const RemoteCommandRequest& request) {
+            ASSERT_EQUALS("test", request.dbname);
+            ASSERT_EQUALS(BSON("dropUser" << "test"), request.cmdObj);
+
+            BSONObjBuilder responseBuilder;
+            Command::appendCommandStatus(responseBuilder,
+                                         Status(ErrorCodes::UserNotFound,
+                                                "User test@test not found"));
+            return responseBuilder.obj();
+        });
+
+        // Now wait for the runUserManagementWriteCommand call to return
+        future.wait_for(kFutureTimeout);
+    }
+
+    TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementWriteCommandNotMaster) {
+        RemoteCommandTargeterMock* targeter =
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+        targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+        distLock()->expectLock(
+                [](StringData name,
+                   StringData whyMessage,
+                   milliseconds waitFor,
+                   milliseconds lockTryInterval) {
+            ASSERT_EQUALS("authorizationData", name);
+            ASSERT_EQUALS("dropUser", whyMessage);
+        }, Status::OK());
+
+        auto future = async(std::launch::async, [this] {
+            BSONObjBuilder responseBuilder;
+            bool ok = catalogManager()->runUserManagementWriteCommand("dropUser",
+                                                                      "test",
+                                                                      BSON("dropUser" << "test"),
+                                                                      &responseBuilder);
+            ASSERT_FALSE(ok);
+
+            Status commandStatus = Command::getStatusFromCommandResult(responseBuilder.obj());
+            ASSERT_EQUALS(ErrorCodes::NotMaster, commandStatus);
+        });
+
+        for (int i = 0; i < 3; ++i) {
+            onCommand([](const RemoteCommandRequest& request) {
+                BSONObjBuilder responseBuilder;
+                Command::appendCommandStatus(responseBuilder,
+                                             Status(ErrorCodes::NotMaster, "not master"));
+                return responseBuilder.obj();
+            });
+        }
+
+        // Now wait for the runUserManagementWriteCommand call to return
+        future.wait_for(kFutureTimeout);
+    }
+
+    TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementWriteCommandNotMasterRetrySuccess) {
+        HostAndPort host1("TestHost1");
+        HostAndPort host2("TestHost2");
+        RemoteCommandTargeterMock* targeter =
+            RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+        targeter->setFindHostReturnValue(host1);
+
+        distLock()->expectLock(
+                [](StringData name,
+                   StringData whyMessage,
+                   milliseconds waitFor,
+                   milliseconds lockTryInterval) {
+            ASSERT_EQUALS("authorizationData", name);
+            ASSERT_EQUALS("dropUser", whyMessage);
+        }, Status::OK());
+
+        auto future = async(std::launch::async, [this] {
+            BSONObjBuilder responseBuilder;
+            bool ok = catalogManager()->runUserManagementWriteCommand("dropUser",
+                                                                      "test",
+                                                                      BSON("dropUser" << "test"),
+                                                                      &responseBuilder);
+            ASSERT_TRUE(ok);
+
+            Status commandStatus = Command::getStatusFromCommandResult(responseBuilder.obj());
+            ASSERT_OK(commandStatus);
+        });
+
+        onCommand([targeter, host1, host2](const RemoteCommandRequest& request) {
+            ASSERT_EQUALS(host1, request.target);
+
+            BSONObjBuilder responseBuilder;
+            Command::appendCommandStatus(responseBuilder,
+                                         Status(ErrorCodes::NotMaster, "not master"));
+
+            // Ensure that when the catalog manager tries to retarget after getting the
+            // NotMaster response, it will get back a new target.
+            targeter->setFindHostReturnValue(host2);
+            return responseBuilder.obj();
+        });
+
+        onCommand([host2](const RemoteCommandRequest& request) {
+            ASSERT_EQUALS(host2, request.target);
+            ASSERT_EQUALS("test", request.dbname);
+            ASSERT_EQUALS(BSON("dropUser" << "test"), request.cmdObj);
+
+            return BSON("ok" << 1);
+        });
+
+        // Now wait for the runUserManagementWriteCommand call to return
+        future.wait_for(kFutureTimeout);
     }
 
 } // namespace

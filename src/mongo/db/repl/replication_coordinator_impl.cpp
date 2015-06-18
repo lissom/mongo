@@ -121,7 +121,7 @@ namespace {
                    unsigned int _opID,
                    const OpTime* _opTime,
                    const WriteConcernOptions* _writeConcern,
-                   boost::condition_variable* _condVar) : list(_list),
+                   stdx::condition_variable* _condVar) : list(_list),
                                                           master(true),
                                                           opID(_opID),
                                                           opTime(_opTime),
@@ -139,7 +139,7 @@ namespace {
         const unsigned int opID;
         const OpTime* opTime;
         const WriteConcernOptions* writeConcern;
-        boost::condition_variable* condVar;
+        stdx::condition_variable* condVar;
     };
 
 namespace {
@@ -820,7 +820,7 @@ namespace {
                         duration_cast<Milliseconds>(elapsedTime));
             }
 
-            boost::condition_variable condVar;
+            stdx::condition_variable condVar;
             WaiterInfo waitInfo(&_opTimeWaiterList,
                                 txn->getOpID(),
                                 &ts,
@@ -1102,7 +1102,7 @@ namespace {
         }
 
         // Must hold _mutex before constructing waitInfo as it will modify _replicationWaiterList
-        boost::condition_variable condVar;
+        stdx::condition_variable condVar;
         WaiterInfo waitInfo(
                 &_replicationWaiterList, txn->getOpID(), &opTime, &writeConcern, &condVar);
         while (!_doneWaitingForReplication_inlock(opTime, writeConcern)) {
@@ -1144,14 +1144,12 @@ namespace {
                                                   waitTime);
             }
 
-            try {
-                if (waitTime == Microseconds::max()) {
-                    condVar.wait(*lock);
-                }
-                else {
-                    condVar.wait_for(*lock, waitTime);
-                }
-            } catch (const boost::thread_interrupted&) {}
+            if (waitTime == Microseconds::max()) {
+                condVar.wait(*lock);
+            }
+            else {
+                condVar.wait_for(*lock, waitTime);
+            }
         }
 
         Status status = _checkIfWriteConcernCanBeSatisfied_inlock(writeConcern);
