@@ -176,7 +176,7 @@ namespace mongo {
     };
 
     void start( const MessageServer::Options& opts ) {
-        balancer.go();
+        //balancer.go();
         cursorCache.startTimeoutThread();
         UserCacheInvalidator cacheInvalidatorThread(getGlobalAuthorizationManager());
         cacheInvalidatorThread.go();
