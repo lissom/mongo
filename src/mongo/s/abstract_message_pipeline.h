@@ -12,6 +12,7 @@
 namespace mongo {
 class AbstractMessagePipeline {
 public:
+    MONGO_DISALLOW_COPYING(AbstractMessagePipeline);
     virtual ~AbstractMessagePipeline() {}
     virtual void enqueueMessage(network::AsyncClientConnection* conn) = 0;
     virtual network::AsyncClientConnection* getNextMessage() = 0;

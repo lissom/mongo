@@ -74,8 +74,8 @@ struct ConnStats {
 //TODO: Abstract class to glue AsyncClientConnection and OperationRunner together
 //TODO: MONGO_ALIGN_TO_CACHE, mars release date 6.24
 class AsyncClientConnection final : public AbstractMessagingPort {
-MONGO_DISALLOW_COPYING(AsyncClientConnection);
 public:
+    MONGO_DISALLOW_COPYING(AsyncClientConnection);
     //State is what is being waiting on (unless errored or completed)
     enum class State {
         init, receieve, send, operation, error, complete
@@ -249,8 +249,8 @@ private:
  */
 //TODO: MONGO_ALIGN_TO_CACHE
 class Connections {
-MONGO_DISALLOW_COPYING(Connections);
 public:
+MONGO_DISALLOW_COPYING(Connections);
     Connections(AsioAsyncServer* const server) :
             _server(server) {
     }
