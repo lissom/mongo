@@ -12,7 +12,7 @@
 namespace mongo {
 namespace clock {
 
-static std::atomic<long long> elapsedMillis{};
+static std::atomic<long long> elapsedMillis { };
 
 const long long getElapsedTimeMillis2() {
     return elapsedMillis;

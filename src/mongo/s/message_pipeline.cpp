@@ -12,12 +12,12 @@
 namespace mongo {
 
 MessagePipeline::MessagePipeline(size_t threadNum) :
-    _threads(threadNum) {
-    for (;threadNum > 0; --threadNum)
-        _threads.emplace_back(std::thread([this]{
+        _threads(threadNum) {
+    for (; threadNum > 0; --threadNum)
+        _threads.emplace_back(std::thread([this] {
             MessageProcessor processor(this);
             processor.run();
-    }));
+        }));
 }
 
 MessagePipeline::~MessagePipeline() {
@@ -33,7 +33,7 @@ void MessagePipeline::enqueueMessage(network::AsyncClientConnection* conn) {
 
 network::AsyncClientConnection* MessagePipeline::getNextMessage() {
     std::unique_lock<std::mutex> lock(_mutex);
-    _notifyNewMessages.wait(lock, [this]{
+    _notifyNewMessages.wait(lock, [this] {
         return _newMessages.size() || _terminate;
     });
     if (_terminate)
@@ -45,7 +45,7 @@ network::AsyncClientConnection* MessagePipeline::getNextMessage() {
 }
 
 MessagePipeline::MessageProcessor::MessageProcessor(MessagePipeline* const owner) :
-    _owner(owner) {
+        _owner(owner) {
 }
 
 void MessagePipeline::MessageProcessor::run() {

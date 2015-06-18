@@ -22,8 +22,6 @@
 #include "mongo/util/net/message_server.h"
 #include "mongo/util/net/clock.h"
 
-
-
 namespace mongo {
 namespace network {
 
@@ -38,8 +36,8 @@ const size_t NETWORK_DEFAULT_STACK_SIZE = 1024 * 1024;
 /*
  *  Network MessageServer using ASIO
  */
-class AsioAsyncServer : public MessageServer {
-    MONGO_DISALLOW_COPYING(AsioAsyncServer);
+class AsioAsyncServer: public MessageServer {
+MONGO_DISALLOW_COPYING(AsioAsyncServer);
 public:
     //using Options = MessageServer::Options;
     AsioAsyncServer(const Options options, AbstractMessagePipeline* const pipeline);

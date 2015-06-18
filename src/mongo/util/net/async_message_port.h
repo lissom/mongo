@@ -52,8 +52,8 @@ class AsioAsyncServer;
 //TODO: Message passing upwards
 struct ConnStats {
 //A cache line is 64 bytes, or 8x8 byte numbers
-    uint64_t _bytesIn{};
-    uint64_t _bytesOut{};
+    uint64_t _bytesIn { };
+    uint64_t _bytesOut { };
 };
 
 /*
@@ -74,13 +74,14 @@ struct ConnStats {
 //This class isn't marked final, probably going to derive from it later on
 //TODO: Abstract class to glue AsyncClientConnection and OperationRunner together
 MONGO_ALIGN_TO_CACHE class AsyncClientConnection final : public AbstractMessagingPort {
-    MONGO_DISALLOW_COPYING(AsyncClientConnection);
+MONGO_DISALLOW_COPYING(AsyncClientConnection);
 public:
     //State is what is being waiting on (unless errored or completed)
-    enum class State { init, receieve, send, operation, error, complete };
+    enum class State {
+        init, receieve, send, operation, error, complete
+    };
     using PersistantState = ServiceContext::UniqueClient;
-    AsyncClientConnection(Connections* const owner,
-            asio::ip::tcp::socket socket,
+    AsyncClientConnection(Connections* const owner, asio::ip::tcp::socket socket,
             ConnectionId connectionId);
 
     ~AsyncClientConnection();
@@ -95,7 +96,9 @@ public:
         return reinterpret_cast<MsgData::View&>(*_buf.data());
     }
 
-    void closeOnComplete() { _closeOnComplete = true; }
+    void closeOnComplete() {
+        _closeOnComplete = true;
+    }
     PersistantState* const getPersistantState() {
         return _persistantState.get();
     }
@@ -113,15 +116,28 @@ public:
         mongo::setThreadName(_threadName);
     }
 
-    const std::string& threadName() const { return _threadName; }
-    void setThreadName(const std::string& threadName) { verify(_threadName.empty() == true); _threadName = threadName; }
+    const std::string& threadName() const {
+        return _threadName;
+    }
+    void setThreadName(const std::string& threadName) {
+        verify(_threadName.empty() == true);
+        _threadName = threadName;
+    }
 
     //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
-    char* getBuffer() { return _buf.data(); }
+    char* getBuffer() {
+        return _buf.data();
+    }
     //Not the message's size, the buffers
-    size_t getBufferSize() { return _buf.size(); }
-    const ConnStats& getStats() const { return _stats; }
-    ConnectionId getConnectionId() { return _connectionId; }
+    size_t getBufferSize() {
+        return _buf.size();
+    }
+    const ConnStats& getStats() const {
+        return _stats;
+    }
+    ConnectionId getConnectionId() {
+        return _connectionId;
+    }
 
     // Begin AbstractMessagingPort
 
@@ -134,14 +150,21 @@ public:
         SendStart(received, response.header().getId());
     }
 
-    bool stateGood() { return isValid(state()); }
-    bool safeToDelete() { return state() != State::operation; }
+    bool stateGood() {
+        return isValid(state());
+    }
+    bool safeToDelete() {
+        return state() != State::operation;
+    }
     /*
      * All of the below function expose implementation details and shouldn't exist
      * Consider returning std::string for error logging, etc.
      */
     //Only used for mongoD and MessagingPort, breaks abstraction so leaving it alone
-    HostAndPort remote() const final { fassert(-2, false); return HostAndPort(); }
+    HostAndPort remote() const final {
+        fassert(-2, false);
+        return HostAndPort();
+    }
     //Only used for an error string for sasl logging
     //TODO: fix sasl logging to use a string
     std::string localAddrString() const final {
@@ -168,7 +191,7 @@ private:
     void asyncReceiveHeader();
     void asyncReceiveMessage();
     void asyncQueueForOperation();
-    inline bool asyncStatusCheck( const char* state, const char* desc, const std::error_code ec,
+    inline bool asyncStatusCheck(const char* state, const char* desc, const std::error_code ec,
             const size_t lenGot, const size_t lenExpected) {
         if (ec) {
             asyncSocketError(state, ec);
@@ -183,8 +206,9 @@ private:
     void asyncSizeError(const char* state, const char* desc, const size_t lenGot,
             const size_t lenExpected);
     void asyncSocketError(const char* state, const std::error_code ec);
-    void asyncSocketShutdownRemove();
-    bool doClose() { return _closeOnComplete; }
+    void asyncSocketShutdownRemove();bool doClose() {
+        return _closeOnComplete;
+    }
 
     void bytesIn(uint64_t bytesIn) {
         _stats._bytesIn += bytesIn;
@@ -193,8 +217,12 @@ private:
         _stats._bytesOut += bytesOut;
     }
 
-    bool isValid(State state) { return state != State::error && state != State::complete; }
-    State state() { return _state; }
+    bool isValid(State state) {
+        return state != State::error && state != State::complete;
+    }
+    State state() {
+        return _state;
+    }
     void setState(State newState);
 
     Connections* const _owner;
@@ -209,11 +237,10 @@ private:
     std::unique_ptr<PersistantState> _persistantState;
     std::string _threadName;
     //TODO: Turn this into state and verify it's correct at all stages
-    std::atomic<bool> _closeOnComplete{};
-    std::atomic<State> _state{State::init};
-    std::unique_ptr<AbstractOperationRunner> _runner{};
+    std::atomic<bool> _closeOnComplete { };
+    std::atomic<State> _state { State::init };
+    std::unique_ptr<AbstractOperationRunner> _runner { };
 };
-
 
 /*
  * TODO: NUMA aware handling will be added one day, so NONE of this is static
@@ -221,13 +248,17 @@ private:
  * take locks if at all possible
  */
 MONGO_ALIGN_TO_CACHE class Connections {
-    MONGO_DISALLOW_COPYING(Connections);
+MONGO_DISALLOW_COPYING(Connections);
 public:
-    Connections(AsioAsyncServer* const server) : _server (server) { }
+    Connections(AsioAsyncServer* const server) :
+            _server(server) {
+    }
     void newConnHandler(asio::ip::tcp::socket&& socket);
     //Passing message, which shouldn't allocate any buffers
     void handlerOperationReady(AsyncClientConnection* conn);
-    const ConnStats& getStats() const { return _stats; }
+    const ConnStats& getStats() const {
+        return _stats;
+    }
 
 private:
     friend class AsyncClientConnection;
@@ -237,7 +268,7 @@ private:
     ConnectionHolder _conns;
     ConnStats _stats;
     //TODO: more concurrent
-    uint64_t _connectionCount{};
+    uint64_t _connectionCount { };
 };
 
 } //namespace mongo

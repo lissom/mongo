@@ -30,19 +30,19 @@ namespace tools {
  *
  * Example Usage:
 
-//Factory return type
-using FooPtr = std::unique_ptr<Foo>;
+ //Factory return type
+ using FooPtr = std::unique_ptr<Foo>;
 
-//Factory function signature
-using FooCreator =
-std::function<FooPtr(type1 arg1, type2 arg2)>;
+ //Factory function signature
+ using FooCreator =
+ std::function<FooPtr(type1 arg1, type2 arg2)>;
 
-//Factory
-using FooFactory = tools::RegisterFactory<FooPtr, FooCreator>;
+ //Factory
+ using FooFactory = tools::RegisterFactory<FooPtr, FooCreator>;
 
-//register the type creation function
-static const bool Foo_X::_registerFactory = FooFactory::registerCreator(CONST_KEY_Foo_X,
-    &Foo_X::create);
+ //register the type creation function
+ static const bool Foo_X::_registerFactory = FooFactory::registerCreator(CONST_KEY_Foo_X,
+ &Foo_X::create);
  */
 template<typename ObjectPtr, typename Factory, typename Key, typename Map>
 class RegisterFactoryImpl {
@@ -72,7 +72,7 @@ public:
      * Throws if the key cannot be found
      */
     template<typename ...Args>
-    static ObjectPtr createObject(const Key& key, Args... args) {
+    static ObjectPtr createObject(const Key& key, Args ... args) {
         return getMap().at(key)(args...);
     }
 

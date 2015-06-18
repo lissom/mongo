@@ -16,14 +16,9 @@
 namespace mongo {
 namespace network {
 
-
-AsyncClientConnection::AsyncClientConnection(Connections* const owner,
-        asio::ip::tcp::socket socket,
+AsyncClientConnection::AsyncClientConnection(Connections* const owner, asio::ip::tcp::socket socket,
         ConnectionId connectionId) :
-    _owner(owner),
-    _socket(std::move(socket)),
-    _connectionId(std::move(connectionId)),
-    _buf(0) {
+        _owner(owner), _socket(std::move(socket)), _connectionId(std::move(connectionId)), _buf(0) {
     void asyncReceiveStart();
 }
 
@@ -45,11 +40,11 @@ void AsyncClientConnection::asyncReceiveHeader() {
     _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
     _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
             [this](const std::error_code& ec, const size_t len) {
-        bytesIn(len);
-        if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen()))
-            return;
-        asyncReceiveMessage();
-    });
+                bytesIn(len);
+                if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen()))
+                return;
+                asyncReceiveMessage();
+            });
 }
 
 void AsyncClientConnection::asyncReceiveMessage() {
@@ -58,22 +53,20 @@ void AsyncClientConnection::asyncReceiveMessage() {
     _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
     //Message size may be -1 to check endian?  Not sure if that is current spec
     fassert(-1, msgSize >= 0);
-    if ( static_cast<size_t>(msgSize) < HEADERSIZE ||
-         static_cast<size_t>(msgSize) > MaxMessageSizeBytes ) {
-        log() << "Error during receive: Got an invalid message length in the header( "
-                << msgSize << ")"
-                << ". From: " << remoteAddrString()
-                << std::endl;
+    if (static_cast<size_t>(msgSize) < HEADERSIZE
+            || static_cast<size_t>(msgSize) > MaxMessageSizeBytes) {
+        log() << "Error during receive: Got an invalid message length in the header( " << msgSize
+                << ")" << ". From: " << remoteAddrString() << std::endl;
         //TODO: Should we return an error on the socket to the client?
         asyncSocketShutdownRemove();
     }
     _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
             [this](const std::error_code& ec, const size_t len) {
-        bytesIn(len);
-        if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen()))
-            return;
-        asyncQueueForOperation();
-    });
+                bytesIn(len);
+                if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen()))
+                return;
+                asyncQueueForOperation();
+            });
 }
 
 void AsyncClientConnection::asyncQueueForOperation() {
@@ -88,19 +81,16 @@ void AsyncClientConnection::asyncSendComplete() {
 
 void AsyncClientConnection::asyncSizeError(const char* state, const char* desc, const size_t lenGot,
         const size_t lenExpected) {
-    log() << "Error during " << state << ": "
-            << desc << " size expected( " << lenExpected << ") was not received"
-            << ". Length: " << lenGot
-            << ". Remote: " << remoteAddrString()
+    log() << "Error during " << state << ": " << desc << " size expected( " << lenExpected
+            << ") was not received" << ". Length: " << lenGot << ". Remote: " << remoteAddrString()
             << std::endl;
     setState(State::error);
     asyncSocketShutdownRemove();
 }
 
 void AsyncClientConnection::asyncSocketError(const char* state, const std::error_code ec) {
-    log() << "Socket error during" << state << ".  Code: " << ec
-            << ".  Remote: " << remoteAddrString()
-            << std::endl;
+    log() << "Socket error during" << state << ".  Code: " << ec << ".  Remote: "
+            << remoteAddrString() << std::endl;
     setState(State::error);
     asyncSocketShutdownRemove();
 }
@@ -125,28 +115,29 @@ void AsyncClientConnection::SendStart(Message& toSend, MSGID responseTo) {
     _runner.reset();
 }
 
-void AsyncClientConnection::asyncSendMessage()  {
+void AsyncClientConnection::asyncSendMessage() {
     size_t size = getMsgData().getLen();
     _socket.async_send(asio::buffer(_buf.data(), size),
             [this, size] (const std::error_code& ec, const size_t len) {
-        if (!asyncStatusCheck("send", "message body", ec, len, size))
-            return;
-        asyncSendComplete();
-    });
+                if (!asyncStatusCheck("send", "message body", ec, len, size))
+                return;
+                asyncSendComplete();
+            });
 }
 
 void AsyncClientConnection::setState(State newState) {
     State currentState = _state;
     do {
-        if (currentState == State::complete || (currentState == State::error && newState != State::complete))
+        if (currentState == State::complete
+                || (currentState == State::error && newState != State::complete))
             return;
-    //If the state moves to error or complete stop attempting the change
+        //If the state moves to error or complete stop attempting the change
     } while (!_state.compare_exchange_weak(currentState, newState));
 }
 
 void Connections::newConnHandler(asio::ip::tcp::socket&& socket) {
-    AsyncClientConnection* conn = new AsyncClientConnection (
-            this, std::move(socket), _connectionCount);
+    AsyncClientConnection* conn = new AsyncClientConnection(this, std::move(socket),
+            _connectionCount);
     _conns.emplace(conn);
     //Ensure the insert happened
 }

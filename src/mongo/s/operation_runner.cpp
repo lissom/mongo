@@ -16,9 +16,7 @@
 namespace mongo {
 
 OperationRunner::OperationRunner(network::AsyncClientConnection* const connInfo) :
-    port(connInfo),
-    message(),
-    request(message, port) {
+        port(connInfo), message(), request(message, port) {
     size_t size = connInfo->getBufferSize();
     void* buf = mongoMalloc(size);
     memcpy(connInfo->getBuffer(), buf, size);
@@ -32,12 +30,12 @@ OperationRunner::~OperationRunner() {
 }
 
 namespace {
-BSONObj buildErrReply( const DBException& ex ) {
+BSONObj buildErrReply(const DBException& ex) {
     BSONObjBuilder errB;
-    errB.append( "$err", ex.what() );
-    errB.append( "code", ex.getCode() );
-    if ( !ex._shard.empty() ) {
-        errB.append( "shard", ex._shard );
+    errB.append("$err", ex.what());
+    errB.append("code", ex.getCode());
+    if (!ex._shard.empty()) {
+        errB.append("shard", ex._shard);
     }
     return errB.obj();
 }
@@ -47,13 +45,12 @@ void OperationRunner::run() {
     verify(_state == State::init);
     try {
         Client::initThread("conn", port);
-    }
-    catch (std::exception &e) {
+    } catch (std::exception &e) {
         log() << "Failed to initialize operation runner thread specific variables: " << e.what();
         setErrored();
-    }
-    catch (...) {
-        log() << "Failed to initialize operation runner thread specific variables: unknown exception";
+    } catch (...) {
+        log()
+                << "Failed to initialize operation runner thread specific variables: unknown exception";
         setErrored();
     }
     port->setThreadName(getThreadName());
@@ -65,30 +62,27 @@ void OperationRunner::run() {
 void OperationRunner::processRequest() {
     try {
         request.process();
-    }
-    catch ( const AssertionException& ex ) {
+    } catch (const AssertionException& ex) {
 
-        LOG( ex.isUserAssertion() ? 1 : 0 ) << "Assertion failed"
-            << " while processing " << opToString( message.operation() ) << " op"
-            << " for " << request.getns() << causedBy( ex );
+        LOG( ex.isUserAssertion() ? 1 : 0 ) << "Assertion failed" << " while processing "
+                << opToString(message.operation()) << " op" << " for " << request.getns()
+                << causedBy(ex);
 
-        if ( request.expectResponse() ) {
+        if (request.expectResponse()) {
             message.header().setId(request.id());
-            replyToQuery( ResultFlag_ErrSet, port , message , buildErrReply( ex ) );
+            replyToQuery(ResultFlag_ErrSet, port, message, buildErrReply(ex));
         }
 
         // We *always* populate the last error for now
         LastError::get(cc()).setLastError(ex.getCode(), ex.what());
-    }
-    catch ( const DBException& ex ) {
+    } catch (const DBException& ex) {
 
-        log() << "Exception thrown"
-              << " while processing " << opToString( message.operation() ) << " op"
-              << " for " << request.getns() << causedBy( ex );
+        log() << "Exception thrown" << " while processing " << opToString(message.operation())
+                << " op" << " for " << request.getns() << causedBy(ex);
 
-        if ( request.expectResponse() ) {
+        if (request.expectResponse()) {
             message.header().setId(request.id());
-            replyToQuery( ResultFlag_ErrSet, port , message , buildErrReply( ex ) );
+            replyToQuery(ResultFlag_ErrSet, port, message, buildErrReply(ex));
         }
 
         // We *always* populate the last error for now

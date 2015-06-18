@@ -20,11 +20,11 @@
 namespace mongo {
 
 struct OpStats {
-    std::atomic<uint64_t> _queries{};
-    std::atomic<uint64_t> _inserts{};
-    std::atomic<uint64_t> _updates{};
-    std::atomic<uint64_t> _deletes{};
-    std::atomic<uint64_t> _commands{};
+    std::atomic<uint64_t> _queries { };
+    std::atomic<uint64_t> _inserts { };
+    std::atomic<uint64_t> _updates { };
+    std::atomic<uint64_t> _deletes { };
+    std::atomic<uint64_t> _commands { };
     //6-8 are empty
 };
 
@@ -57,8 +57,8 @@ private:
         MessageProcessor(MessagePipeline* const owner);
         void run();
 
-        private:
-        OperationRunner* _runner{};
+    private:
+        OperationRunner* _runner { };
         MessagePipeline* const _owner;
     };
 
@@ -69,7 +69,7 @@ private:
     std::mutex _mutex;
     std::condition_variable _notifyNewMessages;
     std::queue<network::AsyncClientConnection*> _newMessages;
-    std::atomic<bool> _terminate{};
+    std::atomic<bool> _terminate { };
     std::vector<std::thread> _threads;
 };
 

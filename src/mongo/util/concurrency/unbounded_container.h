@@ -21,16 +21,18 @@
 //TODO: better name
 //TODO: Specialize for pointers, and unique_ptr
 //Right only pointers, and we own it
-template <typename Value>
+template<typename Value>
 class UnboundedContainer {
     static_assert(std::is_pointer<Value>::value,
             "This container is only setup to use pointers");
     using Mutex = std::mutex;
     using UniqueLock = std::unique_lock<Mutex>;
 public:
-    UnboundedContainer() { }
+    UnboundedContainer() {
+    }
     //TODO: Implement a delete policy, needed for other uses
-    ~UnboundedContainer() { }
+    ~UnboundedContainer() {
+    }
 
     //Cannot be moved or copied
     UnboundedContainer(const UnboundedContainer&) = delete;

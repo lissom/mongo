@@ -17,20 +17,23 @@
 #include "mongo/s/abstract_operation_runner.h"
 #include "mongo/s/request.h"
 
-
 namespace mongo {
 
 //TODO: Add owner and have the runner pop itself on finish
-MONGO_ALIGN_TO_CACHE class OperationRunner : public AbstractOperationRunner {
+MONGO_ALIGN_TO_CACHE class OperationRunner: public AbstractOperationRunner {
 public:
-    enum class State { init, running, completed, errored, finished };
+    enum class State {
+        init, running, completed, errored, finished
+    };
     OperationRunner(network::AsyncClientConnection* const connInfo);
     ~OperationRunner();
 
     void run();
     void callback();
     //TODO: Test to see if we are waiting on return values
-    bool operationsActive() { return _state != State::finished; }
+    bool operationsActive() {
+        return _state != State::finished;
+    }
 
 private:
     void processRequest();
@@ -73,7 +76,7 @@ private:
     Message message;
     //TODO: decompose request
     Request request;
-    std::atomic<State> _state{State::init};
+    std::atomic<State> _state { State::init };
 };
 
 //TODO: replace with template
