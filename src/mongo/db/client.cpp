@@ -153,12 +153,15 @@ namespace mongo {
 
     namespace persist {
         ServiceContext::UniqueClient releaseClient() {
-            return std::move(currentClient.get()->release());
+            return std::move(*currentClient.get());
         }
 
         void setClient(ServiceContext::UniqueClient client) {
-            ServiceContext::UniqueClient* uc = new ServiceContext::UniqueClient(client);
-            currentClient.reset(uc);
+            std::unique_ptr<ServiceContext::UniqueClient> uc;
+            uc.reset(new ServiceContext::UniqueClient);
+            *uc = std::move(client);
+            currentClient.reset(uc.get());
+            uc.release();
         }
     }
 

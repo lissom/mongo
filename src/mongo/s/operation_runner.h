@@ -23,6 +23,7 @@ namespace mongo {
 //TODO: MONGO_ALIGN_TO_CACHE
 class OperationRunner: public AbstractOperationRunner {
 public:
+    MONGO_DISALLOW_COPYING(OperationRunner);
     enum class State {
         init, running, completed, errored, finished
     };

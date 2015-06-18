@@ -36,6 +36,7 @@ struct CurrentOp {
  */
 class MessagePipeline final : public AbstractMessagePipeline {
 public:
+    MONGO_DISALLOW_COPYING(MessagePipeline);
     MessagePipeline(size_t threadNum);
     ~MessagePipeline();
 

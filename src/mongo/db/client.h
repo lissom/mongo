@@ -154,8 +154,8 @@ namespace mongo {
 
     //Don't use these functions
     namespace persist {
-        ServiceContext::UniqueClient* releaseClient();
-        void setClient(ServiceContext::UniqueClient* client);
+        ServiceContext::UniqueClient releaseClient();
+        void setClient(ServiceContext::UniqueClient client);
     }
 
 };

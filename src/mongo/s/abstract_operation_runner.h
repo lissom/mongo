@@ -11,7 +11,6 @@ namespace mongo {
 
 class AbstractOperationRunner {
 public:
-    MONGO_DISALLOW_COPYING(AbstractOperationRunner);
     virtual ~AbstractOperationRunner() { }
 };
 

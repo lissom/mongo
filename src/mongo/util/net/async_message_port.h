@@ -99,19 +99,16 @@ public:
     void closeOnComplete() {
         _closeOnComplete = true;
     }
-    PersistantState* const getPersistantState() {
-        return _persistantState.get();
-    }
 
     //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
     //May need to rexamine this choice later, not sure if async will allow the release
     //Does not store the thread name as this is a const
     void persistClientState() {
-        _persistantState.reset(persist::releaseClient());
+        _persistantState = std::move(persist::releaseClient());
     }
 
     void restoreClientState() {
-        persist::setClient(_persistantState.release());
+        persist::setClient(std::move(_persistantState));
         //Set the mongo thread name, not the setThreadName function here
         mongo::setThreadName(_threadName);
     }
@@ -234,7 +231,7 @@ private:
     std::vector<asio::const_buffer> _ioBuf;
     BufferSet _buffers;
     //Not sure this value is safe to non-barrier
-    std::unique_ptr<PersistantState> _persistantState;
+    PersistantState _persistantState;
     std::string _threadName;
     //TODO: Turn this into state and verify it's correct at all stages
     std::atomic<bool> _closeOnComplete { };
