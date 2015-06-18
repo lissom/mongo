@@ -151,6 +151,7 @@ void AsioAsyncServer::run() {
         log() << "unknown error accepting new socket" << std::endl;
         dbexit(EXIT_UNCAUGHT);
     }
+    serviceRun(); //ensure we don't return until the listening is complete
 }
 
 void AsioAsyncServer::updateTime() {
