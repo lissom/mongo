@@ -612,7 +612,7 @@ env_vars.Add('LINKFLAGS',
 env_vars.Add('MONGO_DIST_SRC_PREFIX',
     help='Sets the prefix for files in the source distribution archive',
     converter=variable_distsrc_converter,
-    default="mongodb-${MONGO_VERSION}")
+    default="mongodb-r${MONGO_VERSION}")
 
 env_vars.Add('MONGO_VERSION',
     help='Sets the version string for MongoDB',
@@ -1817,6 +1817,7 @@ def doConfigure(myenv):
         else:
             llvm_symbolizer = myenv.WhereIs(llvm_symbolizer)
 
+        tsan_options = ""
         if llvm_symbolizer:
             myenv['ENV']['ASAN_SYMBOLIZER_PATH'] = llvm_symbolizer
             myenv['ENV']['LSAN_SYMBOLIZER_PATH'] = llvm_symbolizer

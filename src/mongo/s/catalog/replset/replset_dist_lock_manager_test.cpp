@@ -40,6 +40,7 @@
 #include "mongo/bson/json.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/db/service_context_noop.h"
 #include "mongo/s/catalog/dist_lock_catalog_mock.h"
 #include "mongo/s/type_lockpings.h"
 #include "mongo/s/type_locks.h"
@@ -47,6 +48,8 @@
 #include "mongo/stdx/memory.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/unittest/unittest.h"
+#include "mongo/util/system_tick_source.h"
+#include "mongo/util/tick_source_mock.h"
 #include "mongo/util/time_support.h"
 
 /**
@@ -76,7 +79,11 @@ namespace {
             _dummyDoNotUse(stdx::make_unique<DistLockCatalogMock>()),
             _mockCatalog(_dummyDoNotUse.get()),
             _processID("test"),
-            _mgr(_processID, std::move(_dummyDoNotUse), kPingInterval, kLockExpiration) {
+            _mgr(&_context,
+                 _processID,
+                 std::move(_dummyDoNotUse),
+                 kPingInterval,
+                 kLockExpiration) {
         }
 
         /**
@@ -100,8 +107,23 @@ namespace {
             return _processID;
         }
 
+        /**
+         * Make the mock catalog use the mock tick source. Not thread-safe.
+         */
+        void useMockTickSource() {
+            _context.setTickSource(stdx::make_unique<TickSourceMock>());
+        }
+
+        /**
+         * Returns the mock tick source. Valid only if useMockTickSource was called.
+         */
+        TickSourceMock* getMockTickSource() {
+            return dynamic_cast<TickSourceMock*>(_context.getTickSource());
+        }
+
     protected:
         void setUp() override {
+            _context.setTickSource(stdx::make_unique<SystemTickSource>());
             _mgr.startUp();
         }
 
@@ -112,9 +134,11 @@ namespace {
         }
 
     private:
+        TickSourceMock _tickSource;
         std::unique_ptr<DistLockCatalogMock> _dummyDoNotUse; // dummy placeholder
         DistLockCatalogMock* _mockCatalog;
         string _processID;
+        ServiceContextNoop _context;
         ReplSetDistLockManager _mgr;
     };
 
@@ -217,6 +241,8 @@ namespace {
         int retryAttempt = 0;
         const int kMaxRetryAttempt = 3;
 
+        useMockTickSource();
+
         LocksType goodLockDoc;
         goodLockDoc.setName(lockName);
         goodLockDoc.setState(LocksType::LOCKED);
@@ -250,6 +276,8 @@ namespace {
 
             lastTS = lockSessionID;
             lastTime = time;
+
+            getMockTickSource()->advance(Milliseconds(1));
 
             if (++retryAttempt >= kMaxRetryAttempt) {
                 getMockCatalog()->expectGrabLock([this,
@@ -350,6 +378,8 @@ namespace {
         int retryAttempt = 0;
         const int kMaxRetryAttempt = 3;
 
+        useMockTickSource();
+
         getMockCatalog()->expectGrabLock(
                 [this,
                  &lockName,
@@ -374,6 +404,8 @@ namespace {
 
             lastTS = lockSessionID;
             lastTime = time;
+
+            getMockTickSource()->advance(Milliseconds(1));
 
             if (++retryAttempt >= kMaxRetryAttempt) {
                 getMockCatalog()->expectGrabLock([this,
@@ -425,9 +457,12 @@ namespace {
             ASSERT_NOT_OK(lockStatus.getStatus());
         }
 
-        stdx::unique_lock<stdx::mutex> lk(unlockMutex);
-        if (unlockCallCount == 0) {
-            ASSERT(unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::no_timeout);
+        bool didTimeout = false;
+        {
+            stdx::unique_lock<stdx::mutex> lk(unlockMutex);
+            if (unlockCallCount == 0) {
+                didTimeout = unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::timeout;
+            }
         }
 
         // Join the background thread before trying to call asserts. Shutdown calls
@@ -435,6 +470,12 @@ namespace {
         getMockCatalog()->expectStopPing([](StringData){}, Status::OK());
         getMgr()->shutDown();
 
+        // No assert until shutDown has been called to make sure that the background thread
+        // won't be trying to access the local variables that were captured by lamdas that
+        // may have gone out of scope when the assert unwinds the stack.
+        // No need to grab unlockMutex since there is only one thread running at this point.
+
+        ASSERT_FALSE(didTimeout);
         ASSERT_EQUALS(1, unlockCallCount);
         ASSERT_EQUALS(lastTS, unlockSessionIDPassed);
     }
@@ -471,6 +512,8 @@ namespace {
 
         int retryAttempt = 0;
 
+        useMockTickSource();
+
         getMockCatalog()->expectGrabLock(
                 [this,
                  &lockName,
@@ -495,6 +538,8 @@ namespace {
             lastTS = lockSessionID;
             lastTime = time;
             retryAttempt++;
+
+            getMockTickSource()->advance(Milliseconds(1));
         }, {ErrorCodes::LockStateChangeFailed, "nMod 0"});
 
         // Make mock return lock not found to skip lock overtaking.
@@ -567,9 +612,12 @@ namespace {
         ASSERT_NOT_OK(lockStatus);
         ASSERT_EQUALS(ErrorCodes::NetworkTimeout, lockStatus.code());
 
-        stdx::unique_lock<stdx::mutex> lk(unlockMutex);
-        if (unlockCallCount == 0) {
-            ASSERT(unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::no_timeout);
+        bool didTimeout = false;
+        {
+            stdx::unique_lock<stdx::mutex> lk(unlockMutex);
+            if (unlockCallCount == 0) {
+                didTimeout = unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::timeout;
+            }
         }
 
         // Join the background thread before trying to call asserts. Shutdown calls
@@ -577,6 +625,12 @@ namespace {
         getMockCatalog()->expectStopPing([](StringData){}, Status::OK());
         getMgr()->shutDown();
 
+        // No assert until shutDown has been called to make sure that the background thread
+        // won't be trying to access the local variables that were captured by lamdas that
+        // may have gone out of scope when the assert unwinds the stack.
+        // No need to grab unlockMutex since there is only one thread running at this point.
+
+        ASSERT_FALSE(didTimeout);
         ASSERT_EQUALS(1, unlockCallCount);
         ASSERT_EQUALS(lastTS, unlockSessionIDPassed);
     }
@@ -607,13 +661,26 @@ namespace {
             }
         }, Status::OK());
 
+        bool didTimeout = false;
         {
             stdx::unique_lock<stdx::mutex> lk(testMutex);
             if (processIDList.size() < 3) {
-                ASSERT_TRUE(ping3TimesCV.wait_for(lk, Milliseconds(50)) ==
-                            stdx::cv_status::no_timeout);
+                didTimeout = ping3TimesCV.wait_for(lk, Milliseconds(50)) ==
+                            stdx::cv_status::timeout;
             }
         }
+
+        // Join the background thread before trying to call asserts. Shutdown calls
+        // stopPing and we don't care in this test.
+        getMockCatalog()->expectStopPing([](StringData){}, Status::OK());
+        getMgr()->shutDown();
+
+        // No assert until shutDown has been called to make sure that the background thread
+        // won't be trying to access the local variables that were captured by lamdas that
+        // may have gone out of scope when the assert unwinds the stack.
+        // No need to grab testMutex since there is only one thread running at this point.
+
+        ASSERT_FALSE(didTimeout);
 
         Date_t lastPing;
         for (const auto& ping : pingValues) {
@@ -680,15 +747,25 @@ namespace {
             auto lockStatus = getMgr()->lock("test", "why", Milliseconds(0), Milliseconds(0));
         }
 
-        stdx::unique_lock<stdx::mutex> lk(unlockMutex);
-        if (lockSessionIDPassed.size() < kUnlockErrorCount) {
-            ASSERT(unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::no_timeout);
+        bool didTimeout = false;
+        {
+            stdx::unique_lock<stdx::mutex> lk(unlockMutex);
+            if (lockSessionIDPassed.size() < kUnlockErrorCount) {
+                didTimeout = unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::timeout;
+            }
         }
 
         // Join the background thread before trying to call asserts. Shutdown calls
         // stopPing and we don't care in this test.
         getMockCatalog()->expectStopPing([](StringData){}, Status::OK());
         getMgr()->shutDown();
+
+        // No assert until shutDown has been called to make sure that the background thread
+        // won't be trying to access the local variables that were captured by lamdas that
+        // may have gone out of scope when the assert unwinds the stack.
+        // No need to grab testMutex since there is only one thread running at this point.
+
+        ASSERT_FALSE(didTimeout);
 
         for (const auto& id : lockSessionIDPassed) {
             ASSERT_EQUALS(lockSessionID, id);
@@ -765,10 +842,13 @@ namespace {
             auto otherStatus = getMgr()->lock("lock", "why", Milliseconds(0), Milliseconds(0));
         }
 
-        stdx::unique_lock<stdx::mutex> lk(testMutex);
+        bool didTimeout = false;
+        {
+            stdx::unique_lock<stdx::mutex> lk(testMutex);
 
-        if (unlockIDMap.size() < 2 || !mapEntriesGreaterThanTwo(unlockIDMap)) {
-            ASSERT(unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::no_timeout);
+            if (unlockIDMap.size() < 2 || !mapEntriesGreaterThanTwo(unlockIDMap)) {
+                didTimeout = unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::timeout;
+            }
         }
 
         // Join the background thread before trying to call asserts. Shutdown calls
@@ -776,6 +856,12 @@ namespace {
         getMockCatalog()->expectStopPing([](StringData){}, Status::OK());
         getMgr()->shutDown();
 
+        // No assert until shutDown has been called to make sure that the background thread
+        // won't be trying to access the local variables that were captured by lamdas that
+        // may have gone out of scope when the assert unwinds the stack.
+        // No need to grab testMutex since there is only one thread running at this point.
+
+        ASSERT_FALSE(didTimeout);
         ASSERT_EQUALS(2u, lockSessionIDPassed.size());
 
         for (const auto& id : lockSessionIDPassed) {
@@ -1559,9 +1645,12 @@ namespace {
 
         ASSERT_NOT_OK(lockStatus.getStatus());
 
-        stdx::unique_lock<stdx::mutex> lk(unlockMutex);
-        if (!unlockSessionIDPassed.isSet()) {
-            ASSERT(unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::no_timeout);
+        bool didTimeout = false;
+        {
+            stdx::unique_lock<stdx::mutex> lk(unlockMutex);
+            if (!unlockSessionIDPassed.isSet()) {
+                didTimeout = unlockCV.wait_for(lk, kUnlockTimeout) == stdx::cv_status::timeout;
+            }
         }
 
         // Join the background thread before trying to call asserts. Shutdown calls
@@ -1569,6 +1658,12 @@ namespace {
         getMockCatalog()->expectStopPing([](StringData){}, Status::OK());
         getMgr()->shutDown();
 
+        // No assert until shutDown has been called to make sure that the background thread
+        // won't be trying to access the local variables that were captured by lamdas that
+        // may have gone out of scope when the assert unwinds the stack.
+        // No need to grab testMutex since there is only one thread running at this point.
+
+        ASSERT_FALSE(didTimeout);
         ASSERT_EQUALS(lastTS, unlockSessionIDPassed);
     }
 

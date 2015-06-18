@@ -32,9 +32,6 @@
 #include "mongo/scripting/v8-3.25_utils.h"
 
 #include <boost/thread/condition_variable.hpp>
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/thread.hpp>
-#include <boost/thread/xtime.hpp>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -43,6 +40,8 @@
 #include "mongo/platform/cstdint.h"
 #include "mongo/scripting/engine_v8-3.25.h"
 #include "mongo/scripting/v8-3.25_db.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 
@@ -122,7 +121,7 @@ namespace mongo {
         void start() {
             jsassert(!_started, "Thread already started");
             JSThread jt(*this);
-            _thread.reset(new boost::thread(jt));
+            _thread.reset(new stdx::thread(jt));
             _started = true;
         }
         void join() {
@@ -159,15 +158,15 @@ namespace mongo {
             BSONObj _args;
             BSONObj _returnData;
             void setErrored(bool value) {
-                boost::lock_guard<boost::mutex> lck(_erroredMutex);
+                stdx::lock_guard<stdx::mutex> lck(_erroredMutex);
                 _errored = value;
             }
             bool getErrored() {
-                boost::lock_guard<boost::mutex> lck(_erroredMutex);
+                stdx::lock_guard<stdx::mutex> lck(_erroredMutex);
                 return _errored;
             }
         private:
-            boost::mutex _erroredMutex;
+            stdx::mutex _erroredMutex;
             bool _errored;
         };
 
@@ -238,7 +237,7 @@ namespace mongo {
 
         bool _started;
         bool _done;
-        unique_ptr<boost::thread> _thread;
+        unique_ptr<stdx::thread> _thread;
         std::shared_ptr<SharedData> _sharedData;
     };
 
@@ -247,12 +246,12 @@ namespace mongo {
         struct Latch {
             Latch(int32_t count) : count(count) {}
             boost::condition_variable cv;
-            boost::mutex mutex;
+            stdx::mutex mutex;
             int32_t count;
         };
 
         std::shared_ptr<Latch> get(int32_t desc) {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             Map::iterator iter = _latches.find(desc);
             jsassert(iter != _latches.end(), "not a valid CountDownLatch descriptor");
             return iter->second;
@@ -260,27 +259,27 @@ namespace mongo {
 
         typedef std::map< int32_t, std::shared_ptr<Latch> > Map;
         Map _latches;
-        boost::mutex _mutex;
+        stdx::mutex _mutex;
         int32_t _counter;
     public:
         CountDownLatchHolder() : _counter(0) {}
         int32_t make(int32_t count) {
             jsassert(count >= 0, "argument must be >= 0");
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             int32_t desc = ++_counter;
             _latches.insert(std::make_pair(desc, std::make_shared<Latch>(count)));
             return desc;
         }
         void await(int32_t desc) {
             std::shared_ptr<Latch> latch = get(desc);
-            boost::unique_lock<boost::mutex> lock(latch->mutex);
+            stdx::unique_lock<stdx::mutex> lock(latch->mutex);
             while (latch->count != 0) {
                 latch->cv.wait(lock);
             }
         }
         void countDown(int32_t desc) {
             std::shared_ptr<Latch> latch = get(desc);
-            boost::unique_lock<boost::mutex> lock(latch->mutex);
+            stdx::unique_lock<stdx::mutex> lock(latch->mutex);
             if (latch->count > 0) {
                 latch->count--;
             }
@@ -290,7 +289,7 @@ namespace mongo {
         }
         int32_t getCount(int32_t desc) {
             std::shared_ptr<Latch> latch = get(desc);
-            boost::unique_lock<boost::mutex> lock(latch->mutex);
+            stdx::unique_lock<stdx::mutex> lock(latch->mutex);
             return latch->count;
         }
     };

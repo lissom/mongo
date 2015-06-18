@@ -32,7 +32,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/thread/thread.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/optional.hpp>
 #include <fstream>
@@ -61,8 +60,6 @@
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/dbwebserver.h"
-#include "mongo/db/service_context_d.h"
-#include "mongo/db/service_context.h"
 #include "mongo/db/index_names.h"
 #include "mongo/db/index_rebuilder.h"
 #include "mongo/db/initialize_server_global_state.h"
@@ -85,6 +82,8 @@
 #include "mongo/db/repl/topology_coordinator_impl.h"
 #include "mongo/db/restapi.h"
 #include "mongo/db/server_parameters.h"
+#include "mongo/db/service_context.h"
+#include "mongo/db/service_context_d.h"
 #include "mongo/db/startup_warnings_mongod.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/stats/snapshots.h"
@@ -96,6 +95,7 @@
 #include "mongo/platform/process_id.h"
 #include "mongo/scripting/engine.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/cmdline_utils/censor_cmdline.h"
 #include "mongo/util/concurrency/task.h"
@@ -489,7 +489,7 @@ namespace mongo {
         {
             stringstream ss;
             ss << "repairpath (" << storageGlobalParams.repairpath << ") does not exist";
-            uassert(12590, 
+            uassert(12590,
                     ss.str().c_str(),
                     boost::filesystem::exists(storageGlobalParams.repairpath));
         }
@@ -522,7 +522,7 @@ namespace mongo {
         }
 
         /* this is for security on certain platforms (nonce generation) */
-        srand((unsigned) (curTimeMicros() ^ startupSrandTimer.micros()));
+        srand((unsigned) (curTimeMicros64() ^ startupSrandTimer.micros()));
 
         // The snapshot thread provides historical collection level and lock statistics for use
         // by the web interface. Only needed when HTTP is enabled.
@@ -530,7 +530,7 @@ namespace mongo {
             snapshotThread.go();
 
             invariant(dbWebServer);
-            boost::thread web(stdx::bind(&webServerListenThread, dbWebServer));
+            stdx::thread web(stdx::bind(&webServerListenThread, dbWebServer));
             web.detach();
         }
 
@@ -582,7 +582,7 @@ namespace mongo {
                       << " documents are present in local.system.replset" << startupWarningsLog;
                 log() << "**          Restart with --replSet unless you are doing maintenance and "
                       << " no other clients are connected." << startupWarningsLog;
-                log() << "**          The TTL collection monitor will not start because of this." 
+                log() << "**          The TTL collection monitor will not start because of this."
                       << startupWarningsLog;
                 log() << "**         ";
                 log() << " For more info see http://dochub.mongodb.org/core/ttlcollections";
@@ -769,8 +769,8 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager, ("SetGlobalEnviro
 }
 
 #ifdef MONGO_CONFIG_SSL
-MONGO_INITIALIZER_GENERAL(setSSLManagerType, 
-                          MONGO_NO_PREREQUISITES, 
+MONGO_INITIALIZER_GENERAL(setSSLManagerType,
+                          MONGO_NO_PREREQUISITES,
                           ("SSLManager"))(InitializerContext* context) {
     isSSLServer = true;
     return Status::OK();
@@ -810,7 +810,7 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
 
     dbExecCommand = argv[0];
 
-    srand(curTimeMicros());
+    srand(static_cast<unsigned>(curTimeMicros64()));
 
     {
         unsigned x = 0x12345678;

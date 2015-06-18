@@ -376,7 +376,7 @@ namespace {
         _distLockManager->startUp();
 
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             _inShutdown = false;
             _consistentFromLastCheck = true;
         }
@@ -419,7 +419,7 @@ namespace {
                           "Data inconsistency detected amongst config servers");
         }
 
-        boost::thread t(stdx::bind(&CatalogManagerLegacy::_consistencyChecker, this));
+        stdx::thread t(stdx::bind(&CatalogManagerLegacy::_consistencyChecker, this));
         _consistencyCheckerThread.swap(t);
 
         return Status::OK();
@@ -432,7 +432,7 @@ namespace {
     void CatalogManagerLegacy::shutDown() {
         LOG(1) << "CatalogManagerLegacy::shutDown() called.";
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             _inShutdown = true;
             _consistencyCheckerCV.notify_one();
         }
@@ -721,7 +721,7 @@ namespace {
         b.append(ShardType::host(),
                  rsMonitor ? rsMonitor->getServerAddress() : shardConnectionString.toString());
         if (maxSize > 0) {
-            b.append(ShardType::maxSize(), maxSize);
+            b.append(ShardType::maxSizeMB(), maxSize);
         }
         BSONObj shardDoc = b.obj();
 
@@ -839,7 +839,7 @@ namespace {
                 return status;
             }
 
-            Shard::removeShard(name);
+            grid.shardRegistry()->remove(name);
 
             shardConnectionPool.removeHost(name);
             ReplicaSetMonitor::remove(name);
@@ -1233,9 +1233,11 @@ namespace {
                 StatusWith<ChunkType> chunkRes = ChunkType::fromBSON(chunkObj);
                 if (!chunkRes.isOK()) {
                     conn.done();
-                    return Status(ErrorCodes::FailedToParse,
-                                  str::stream() << "Failed to parse chunk BSONObj: "
-                                                << chunkRes.getStatus().reason());
+                    chunks->clear();
+                    return {ErrorCodes::FailedToParse,
+                            stream() << "Failed to parse chunk with id ("
+                                     << chunkObj[ChunkType::name()].toString() << "): "
+                                     << chunkRes.getStatus().reason()};
                 }
 
                 chunks->push_back(chunkRes.getValue());
@@ -1327,14 +1329,15 @@ namespace {
 
             StatusWith<ShardType> shardRes = ShardType::fromBSON(shardObj);
             if (!shardRes.isOK()) {
+                shards->clear();
                 conn.done();
                 return Status(ErrorCodes::FailedToParse,
-                              str::stream() << "Failed to parse chunk BSONObj: "
+                              str::stream() << "Failed to parse shard with id ("
+                                            <<  shardObj[ShardType::name()].toString() << "): "
                                             << shardRes.getStatus().reason());
             }
 
-            ShardType shard = shardRes.getValue();
-            shards->push_back(shard);
+            shards->push_back(shardRes.getValue());
         }
         conn.done();
 
@@ -1343,10 +1346,6 @@ namespace {
 
     bool CatalogManagerLegacy::isShardHost(const ConnectionString& connectionString) {
         return _getShardCount(BSON(ShardType::host(connectionString.toString())));
-    }
-
-    bool CatalogManagerLegacy::doShardsExist() {
-        return _getShardCount() > 0;
     }
 
     bool CatalogManagerLegacy::runUserManagementWriteCommand(const string& commandName,
@@ -1521,7 +1520,7 @@ namespace {
             }
         }
 
-        ConfigCoordinator exec(&dispatcher, _configServers);
+        ConfigCoordinator exec(&dispatcher, _configServerConnectionString);
         exec.executeBatch(request, response);
     }
 
@@ -1708,7 +1707,7 @@ namespace {
     }
 
     void CatalogManagerLegacy::_consistencyChecker() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         while (!_inShutdown) {
             lk.unlock();
             const bool isConsistent = _checkConfigServersConsistent();
@@ -1722,7 +1721,7 @@ namespace {
     }
 
     bool CatalogManagerLegacy::_isConsistentFromLastCheck() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         return _consistentFromLastCheck;
     }
 

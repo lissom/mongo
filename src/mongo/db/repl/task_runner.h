@@ -29,22 +29,17 @@
 #pragma once
 
 #include <boost/thread/condition.hpp>
-#include <boost/thread/mutex.hpp>
 #include <list>
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 
     class OperationContext;
     class Status;
-
-namespace threadpool {
-
-    class ThreadPool;
-
-} // namespace threadpool
+    class OldThreadPool;
 
 namespace repl {
 
@@ -74,7 +69,7 @@ namespace repl {
          */
         static Task makeCancelTask();
 
-        TaskRunner(threadpool::ThreadPool* threadPool,
+        TaskRunner(OldThreadPool* threadPool,
                    const CreateOperationContextFn& createOperationContext);
 
         virtual ~TaskRunner();
@@ -148,11 +143,11 @@ namespace repl {
          */
         Task _waitForNextTask();
 
-        threadpool::ThreadPool* _threadPool;
+        OldThreadPool* _threadPool;
         CreateOperationContextFn _createOperationContext;
 
         // Protects member data of this TaskRunner.
-        mutable boost::mutex _mutex;
+        mutable stdx::mutex _mutex;
 
         boost::condition _condition;
 

@@ -53,6 +53,9 @@ namespace mongo {
         _specificStats.keyPattern = _params.descriptor->keyPattern();
         _specificStats.indexName = _params.descriptor->indexName();
         _specificStats.isMultiKey = _params.descriptor->isMultikey(txn);
+        _specificStats.isUnique = _params.descriptor->unique();
+        _specificStats.isSparse = _params.descriptor->isSparse();
+        _specificStats.isPartial = _params.descriptor->isPartial();
         _specificStats.indexVersion = _params.descriptor->version();
 
         // endKey must be after startKey in index order since we only do forward scans.

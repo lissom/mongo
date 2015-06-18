@@ -28,7 +28,8 @@
 
 #pragma once
 
-#include <boost/thread/mutex.hpp>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -39,20 +40,30 @@ namespace mongo {
     class BSONObjBuilder;
     class CatalogManager;
     class RemoteCommandRunner;
-    class RemoteCommandTargeter;
     class RemoteCommandTargeterFactory;
     class Shard;
     class ShardType;
 
 namespace executor {
+
     class TaskExecutor;
+
 } // namespace executor
 
     /**
-     * Maintains the set of all shards known to the MongoS instance.
+     * Maintains the set of all shards known to the instance and their connections. Manages polling
+     * the respective replica sets for membership changes.
      */
     class ShardRegistry {
     public:
+        /**
+         * Instantiates a new shard registry.
+         *
+         * @param targeterFactory Produces targeters for each shard's individual connection string
+         * @param commandRunner Command runner for executing commands against hosts
+         * @param executor Asynchronous task executor to use for making calls to shards.
+         * @param catalogManager Used to retrieve the list of registered shard. TODO: remove.
+         */
         ShardRegistry(std::unique_ptr<RemoteCommandTargeterFactory> targeterFactory,
                       std::unique_ptr<RemoteCommandRunner> commandRunner,
                       std::unique_ptr<executor::TaskExecutor> executor,
@@ -60,43 +71,41 @@ namespace executor {
 
         ~ShardRegistry();
 
-        std::shared_ptr<RemoteCommandTargeter> getTargeterForShard(const std::string& shardId);
-
         RemoteCommandRunner* getCommandRunner() const { return _commandRunner.get(); }
 
         executor::TaskExecutor* getExecutor() const { return _executor.get(); }
 
         void reload();
 
-        std::shared_ptr<Shard> findIfExists(const ShardId& id);
+        std::shared_ptr<Shard> findIfExists(const ShardId& shardId);
 
         /**
          * Lookup shard by replica set name. Returns nullptr if the name can't be found.
          * Note: this doesn't refresh the table if the name isn't found, so it's possible that a
          * newly added shard/Replica Set may not be found.
          */
-        ShardPtr lookupRSName(const std::string& name);
-
-        void set(const ShardId& id, const Shard& s);
+        std::shared_ptr<Shard> lookupRSName(const std::string& name) const;
 
         void remove(const ShardId& id);
 
         void getAllShardIds(std::vector<ShardId>* all) const;
 
-        void toBSON(BSONObjBuilder* result) const;
+        void toBSON(BSONObjBuilder* result);
 
     private:
         typedef std::map<ShardId, std::shared_ptr<Shard>> ShardMap;
-        typedef std::map<ShardId, std::shared_ptr<RemoteCommandTargeter>> TargeterMap;
 
         /**
          * Creates a shard based on the specified information and puts it into the lookup maps.
          */
         void _addShard_inlock(const ShardType& shardType);
 
-        std::shared_ptr<Shard> _findUsingLookUp(const ShardId& shardId);
+        /**
+         * Adds the "config" shard (representing the config server) to the shard registry.
+         */
+        void _addConfigShard_inlock();
 
-        std::shared_ptr<RemoteCommandTargeter> _findTargeter(const std::string& shardId);
+        std::shared_ptr<Shard> _findUsingLookUp(const ShardId& shardId);
 
         // Factory to obtain remote command targeters for shards
         const std::unique_ptr<RemoteCommandTargeterFactory> _targeterFactory;
@@ -113,15 +122,12 @@ namespace executor {
         CatalogManager* const _catalogManager;
 
         // Protects the maps below
-        mutable boost::mutex _mutex;
+        mutable std::mutex _mutex;
 
         // Map of both shardName -> Shard and hostName -> Shard
         ShardMap _lookup;
 
         // TODO: These should eventually disappear and become parts of Shard
-
-        // Map of shard name to targeter for this shard
-        TargeterMap _targeters;
 
         // Map from all hosts within a replica set to the shard representing this replica set
         ShardMap _rsLookup;

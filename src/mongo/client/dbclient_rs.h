@@ -156,6 +156,14 @@ namespace mongo {
         virtual ConnectionString::ConnectionType type() const { return ConnectionString::SET; }
         virtual bool lazySupported() const { return true; }
 
+        rpc::UniqueReply runCommandWithMetadata(StringData database,
+                                                StringData command,
+                                                const BSONObj& metadata,
+                                                const BSONObj& commandArgs) final;
+
+        void setRequestMetadataWriter(rpc::RequestMetadataWriter writer) final;
+
+        void setReplyMetadataReader(rpc::ReplyMetadataReader reader) final;
         // ---- low level ------
 
         virtual bool call( Message &toSend, Message &response, bool assertOk=true , std::string * actualServer = 0 );
@@ -174,9 +182,6 @@ namespace mongo {
         static bool isSecondaryQuery( const std::string& ns,
                                       const BSONObj& queryObj,
                                       int queryOptions );
-
-        virtual void setRunCommandHook(DBClientWithCommands::RunCommandHookFunc func);
-        virtual void setPostRunCommandHook(DBClientWithCommands::PostRunCommandHookFunc func);
 
         /**
          * Performs a "soft reset" by clearing all states relating to secondary nodes and

@@ -30,7 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/thread/thread.hpp>
 #include <boost/thread/condition.hpp>
 
 #include "mongo/db/catalog/collection.h"
@@ -44,6 +43,7 @@
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/dbtests/dbtests.h"
+#include "mongo/stdx/thread.h"
 
 namespace DocumentSourceTests {
 
@@ -287,12 +287,12 @@ namespace DocumentSourceTests {
         public:
             PendingValue( int initialValue ) : _value( initialValue ) {}
             void set( int newValue ) {
-                boost::lock_guard<boost::mutex> lk( _mutex );
+                stdx::lock_guard<stdx::mutex> lk( _mutex );
                 _value = newValue;
                 _condition.notify_all();
             }
             void await( int expectedValue ) const {
-                boost::unique_lock<boost::mutex> lk( _mutex );
+                stdx::unique_lock<stdx::mutex> lk( _mutex );
                 while( _value != expectedValue ) {
                     _condition.wait( lk );
                 }

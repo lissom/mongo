@@ -289,6 +289,9 @@ namespace mongo {
             bob->append("keyPattern", spec->keyPattern);
             bob->append("indexName", spec->indexName);
             bob->appendBool("isMultiKey", spec->isMultiKey);
+            bob->appendBool("isUnique", spec->isUnique);
+            bob->appendBool("isSparse", spec->isSparse);
+            bob->appendBool("isPartial", spec->isPartial);
             bob->append("indexVersion", spec->indexVersion);
         }
         else if (STAGE_DELETE == stats.stageType) {
@@ -344,6 +347,9 @@ namespace mongo {
             bob->append("keyPattern", spec->keyPattern);
             bob->append("indexName", spec->indexName);
             bob->appendBool("isMultiKey", spec->isMultiKey);
+            bob->appendBool("isUnique", spec->isUnique);
+            bob->appendBool("isSparse", spec->isSparse);
+            bob->appendBool("isPartial", spec->isPartial);
             bob->append("indexVersion", spec->indexVersion);
             bob->append("direction", spec->direction > 0 ? "forward" : "backward");
 

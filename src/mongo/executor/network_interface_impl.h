@@ -29,14 +29,14 @@
 
 #pragma once
 
-#include <boost/thread.hpp>
 #include <boost/thread/condition_variable.hpp>
-#include <boost/thread/mutex.hpp>
 #include <vector>
 
 #include "mongo/client/remote_command_runner_impl.h"
 #include "mongo/executor/network_interface.h"
 #include "mongo/stdx/list.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/stdx/thread.h"
 
 namespace mongo {
 namespace executor {
@@ -95,7 +95,7 @@ namespace executor {
             RemoteCommandCompletionFn onFinish;
         };
         typedef stdx::list<CommandData> CommandDataList;
-        typedef std::vector<std::shared_ptr<boost::thread> > ThreadList;
+        typedef std::vector<std::shared_ptr<stdx::thread> > ThreadList;
 
         /**
          * Thread body for threads that synchronously perform network requests from
@@ -121,7 +121,7 @@ namespace executor {
 
         // Mutex guarding the state of this network interface, except for the remote command
         // executor, which has its own concurrency control.
-        boost::mutex _mutex;
+        stdx::mutex _mutex;
 
         // Condition signaled to indicate that there is work in the _pending queue.
         boost::condition_variable _hasPending;

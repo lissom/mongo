@@ -30,9 +30,8 @@
 
 #include "mongo/util/fail_point.h"
 
-#include <boost/thread.hpp>
-
 #include "mongo/platform/random.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/threadlocal.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
@@ -95,7 +94,7 @@ namespace {
          * 3. Sets the new mode.
          */
 
-        boost::lock_guard<boost::mutex> scoped(_modMutex);
+        stdx::lock_guard<stdx::mutex> scoped(_modMutex);
 
         // Step 1
         disableFailPoint();
@@ -188,7 +187,7 @@ namespace {
     BSONObj FailPoint::toBSON() const {
         BSONObjBuilder builder;
 
-        boost::lock_guard<boost::mutex> scoped(_modMutex);
+        stdx::lock_guard<stdx::mutex> scoped(_modMutex);
         builder.append("mode", _mode);
         builder.append("data", _data);
 

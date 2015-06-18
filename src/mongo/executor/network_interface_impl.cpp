@@ -67,7 +67,7 @@ namespace {
     NetworkInterfaceImpl::~NetworkInterfaceImpl() { }
 
     std::string NetworkInterfaceImpl::getDiagnosticString() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         str::stream output;
         output << "NetworkImpl";
         output << " threads:" << _threads.size();
@@ -94,7 +94,7 @@ namespace {
         const std::string threadName(str::stream() << "ReplExecNetThread-" << _nextThreadId++);
         try {
             _threads.push_back(
-                    std::make_shared<boost::thread>(
+                    std::make_shared<stdx::thread>(
                             stdx::bind(&NetworkInterfaceImpl::_requestProcessorThreadBody,
                                        this,
                                        threadName)));
@@ -107,7 +107,7 @@ namespace {
     }
 
     void NetworkInterfaceImpl::startup() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(!_inShutdown);
         if (!_threads.empty()) {
             return;
@@ -119,7 +119,7 @@ namespace {
 
     void NetworkInterfaceImpl::shutdown() {
         using std::swap;
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         _inShutdown = true;
         _hasPending.notify_all();
         ThreadList threadsToJoin;
@@ -128,11 +128,11 @@ namespace {
         _commandRunner.shutdown();
         std::for_each(threadsToJoin.begin(),
                       threadsToJoin.end(),
-                      stdx::bind(&boost::thread::join, stdx::placeholders::_1));
+                      stdx::bind(&stdx::thread::join, stdx::placeholders::_1));
     }
 
     void NetworkInterfaceImpl::signalWorkAvailable() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _signalWorkAvailable_inlock();
     }
 
@@ -144,7 +144,7 @@ namespace {
     }
 
     void NetworkInterfaceImpl::waitForWork() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         while (!_isExecutorRunnable) {
             _isExecutorRunnableCondition.wait(lk);
         }
@@ -152,7 +152,7 @@ namespace {
     }
 
     void NetworkInterfaceImpl::waitForWorkUntil(Date_t when) {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         while (!_isExecutorRunnable) {
             const Milliseconds waitTime(when - now());
             if (waitTime <= Milliseconds(0)) {
@@ -177,7 +177,7 @@ namespace {
     }
 
     void NetworkInterfaceImpl::_consumeNetworkRequests() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         while (!_inShutdown) {
             if (_pending.empty()) {
                 if (_threads.size() > kMinThreads) {
@@ -232,7 +232,7 @@ namespace {
             const RemoteCommandCompletionFn& onFinish) {
         LOG(2) << "Scheduling " << request.cmdObj.firstElementFieldName() << " to " <<
             request.target;
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _pending.push_back(CommandData());
         CommandData& cd = _pending.back();
         cd.cbHandle = cbHandle;
@@ -249,7 +249,7 @@ namespace {
 
     void NetworkInterfaceImpl::cancelCommand(
             const TaskExecutor::CallbackHandle& cbHandle) {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         CommandDataList::iterator iter;
         for (iter = _pending.begin(); iter != _pending.end(); ++iter) {
             if (iter->cbHandle == cbHandle) {

@@ -29,7 +29,6 @@
 
 #pragma once
 
-#include <boost/thread.hpp>
 #include <vector>
 
 #include "mongo/platform/basic.h"
@@ -44,6 +43,7 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/db/repl/reporter.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/queue.h"
 
@@ -77,6 +77,8 @@ enum class DataReplicatorState {
     Rollback,
     Uninitialized,
 };
+
+std::string toString(DataReplicatorState s);
 
 // TBD -- ignore for now
 enum class DataReplicatorScope {
@@ -138,6 +140,14 @@ public:
     DataReplicator(DataReplicatorOptions opts,
                    ReplicationExecutor* exec);
 
+    /**
+     * Used for testing.
+     */
+    DataReplicator(DataReplicatorOptions opts,
+                   ReplicationExecutor* exec,
+                   ReplicationCoordinator* replCoord,
+                   OnBatchCompleteFn batchCompletedFn);
+
     virtual ~DataReplicator();
 
     Status start();
@@ -161,9 +171,12 @@ public:
     // Don't use above methods before these
     TimestampStatus initialSync();
 
+    DataReplicatorState getState() const;
+    Timestamp getLastTimestampFetched() const;
     std::string getDiagnosticString() const;
 
     // For testing only
+
     void _resetState_inlock(Timestamp lastAppliedOptime);
     void __setSourceForTesting(HostAndPort src) { _syncSource = src; }
     void _setInitialSyncStorageInterface(CollectionCloner::StorageInterface* si);

@@ -39,7 +39,7 @@ namespace mongo {
     using std::string;
     using std::vector;
 
-    typedef boost::unique_lock<boost::mutex> boost_unique_lock;
+    typedef stdx::unique_lock<stdx::mutex> boost_unique_lock;
 
     HostThreadPool::HostThreadPool(int poolSize, bool scopeAllWork) :
         _scopeAllWork(scopeAllWork), _context(new PoolContext) {
@@ -55,7 +55,7 @@ namespace mongo {
             // dispatching pool has already been disposed.
             //
 
-            _threads.push_back(new boost::thread(stdx::bind(&HostThreadPool::doWork, _context)));
+            _threads.push_back(new stdx::thread(stdx::bind(&HostThreadPool::doWork, _context)));
         }
     }
 
@@ -120,7 +120,7 @@ namespace mongo {
 
         DESTRUCTOR_GUARD( _context->workScheduledCV.notify_all(); )
 
-        for (vector<boost::thread*>::iterator it = _threads.begin(); it != _threads.end(); ++it) {
+        for (vector<stdx::thread*>::iterator it = _threads.begin(); it != _threads.end(); ++it) {
 
             if (_scopeAllWork) {
                 DESTRUCTOR_GUARD( ( *it )->join(); )

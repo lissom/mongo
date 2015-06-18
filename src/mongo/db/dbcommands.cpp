@@ -44,6 +44,7 @@
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/authorization_manager.h"
 #include "mongo/db/auth/authorization_session.h"
+#include "mongo/db/auth/impersonation_session.h"
 #include "mongo/db/auth/privilege.h"
 #include "mongo/db/auth/user_management_commands_parser.h"
 #include "mongo/db/auth/user_name.h"
@@ -97,6 +98,7 @@
 #include "mongo/rpc/reply_builder_interface.h"
 #include "mongo/rpc/metadata.h"
 #include "mongo/rpc/metadata/server_selection_metadata.h"
+#include "mongo/rpc/metadata/sharding_metadata.h"
 #include "mongo/s/d_state.h"
 #include "mongo/s/stale_exception.h"  // for SendStaleConfigException
 #include "mongo/scripting/engine.h"
@@ -1123,46 +1125,6 @@ namespace mongo {
         bool maintenanceModeSet;
     };
 
-
-    /**
-     * RAII class to optionally set an impersonated username list into the authorization session
-     * for the duration of the life of this object
-     */
-    class ImpersonationSessionGuard {
-        MONGO_DISALLOW_COPYING(ImpersonationSessionGuard);
-    public:
-        ImpersonationSessionGuard(AuthorizationSession* authSession,
-                                  bool fieldIsPresent,
-                                  const std::vector<UserName> &parsedUserNames,
-                                  const std::vector<RoleName> &parsedRoleNames):
-            _authSession(authSession), _impersonation(false) {
-            if (fieldIsPresent) {
-                massert(17317, "impersonation unexpectedly active",
-                        !authSession->isImpersonating());
-                authSession->setImpersonatedUserData(parsedUserNames, parsedRoleNames);
-                _impersonation = true;
-            }
-        }
-        ~ImpersonationSessionGuard() {
-            if (_impersonation) {
-                _authSession->clearImpersonatedUserData();
-            }
-        }
-    private:
-        AuthorizationSession* _authSession;
-        bool _impersonation;
-    };
-
-namespace {
-    // TODO remove as part of SERVER-18236
-    void appendGLEHelperData(BSONObjBuilder& bob, const Timestamp& opTime, const OID& oid) {
-        BSONObjBuilder subobj(bob.subobjStart(kGLEStatsFieldName));
-        subobj.append(kGLEStatsLastOpTimeFieldName, opTime);
-        subobj.appendOID(kGLEStatsElectionIdFieldName, const_cast<OID*>(&oid));
-        subobj.done();
-    }
-}  // namespace
-
     /**
      * this handles
      - auth
@@ -1189,10 +1151,6 @@ namespace {
 
             dassert(replyBuilder->getState() == rpc::ReplyBuilderInterface::State::kMetadata);
 
-            // Right now our metadata handling relies on mutating the command object.
-            // This will go away when SERVER-18236 is implemented
-            BSONObj interposedCmd = request.getCommandArgs();
-
             std::string dbname = request.getDatabase().toString();
             unique_ptr<MaintenanceModeSetter> mmSetter;
 
@@ -1202,40 +1160,14 @@ namespace {
                 return;
             }
 
-            // Handle command option impersonatedUsers and impersonatedRoles.
-            // This must come before _checkAuthorization(), as there is some command parsing logic
-            // in that code path that must not see the impersonated user and roles array elements.
-            std::vector<UserName> parsedUserNames;
-            std::vector<RoleName> parsedRoleNames;
-            AuthorizationSession* authSession = AuthorizationSession::get(txn->getClient());
-            bool rolesFieldIsPresent = false;
-            bool usersFieldIsPresent = false;
+            ImpersonationSessionGuard guard(txn);
 
-            // TODO: Remove these once the metadata refactor (SERVER-18236) is complete.
-            // Then we can construct the ImpersonationSessionGuard directly from the contents of the
-            // metadata object rather than slicing elements off of the command object.
-            audit::parseAndRemoveImpersonatedRolesField(interposedCmd,
-                                                        authSession,
-                                                        &parsedRoleNames,
-                                                        &rolesFieldIsPresent);
-            audit::parseAndRemoveImpersonatedUsersField(interposedCmd,
-                                                        authSession,
-                                                        &parsedUserNames,
-                                                        &usersFieldIsPresent);
-
-            uassert(ErrorCodes::IncompatibleAuditMetadata,
-                    "Audit metadata does not include both user and role information.",
-                    rolesFieldIsPresent == usersFieldIsPresent);
-
-            ImpersonationSessionGuard impersonationSession(authSession,
-                                                           usersFieldIsPresent,
-                                                           parsedUserNames,
-                                                           parsedRoleNames);
-
-            uassertStatusOK(_checkAuthorization(command,
-                                                txn->getClient(),
-                                                dbname,
-                                                interposedCmd));
+            uassertStatusOK(
+                _checkAuthorization(command,
+                                    txn->getClient(),
+                                    dbname,
+                                    request.getCommandArgs())
+            );
 
             {
                 repl::ReplicationCoordinator* replCoord = repl::getGlobalReplicationCoordinator();
@@ -1292,12 +1224,12 @@ namespace {
 
             // Handle command option maxTimeMS.
             int maxTimeMS = uassertStatusOK(
-                LiteParsedQuery::parseMaxTimeMSCommand(interposedCmd)
+                LiteParsedQuery::parseMaxTimeMSCommand(request.getCommandArgs())
             );
 
             uassert(ErrorCodes::InvalidOptions,
                     "no such command option $maxTimeMs; use maxTimeMS instead",
-                    !interposedCmd.hasField("$maxTimeMS"));
+                    !request.getCommandArgs().hasField("$maxTimeMS"));
 
             CurOp::get(txn)->setMaxTimeMicros(static_cast<unsigned long long>(maxTimeMS)
                                               * 1000);
@@ -1311,7 +1243,7 @@ namespace {
 
             command->_commandsExecuted.increment();
 
-            retval = command->run(txn, interposedCmd, request, replyBuilder);
+            retval = command->run(txn, request, replyBuilder);
 
             dassert(replyBuilder->getState() == rpc::ReplyBuilderInterface::State::kOutputDocs);
 
@@ -1329,32 +1261,16 @@ namespace {
     // structure.
     // It will be moved back as part of SERVER-18236.
     bool Command::run(OperationContext* txn,
-                      const BSONObj& prevInterposedCmd,
                       const rpc::RequestInterface& request,
                       rpc::ReplyBuilderInterface* replyBuilder) {
 
-        // Implementation just forwards to the old method signature for now.
-        std::string errmsg;
         BSONObjBuilder replyBuilderBob;
 
-        // run expects non-const bsonobj
-        BSONObj interposedCmd = prevInterposedCmd;
-
-        // run expects const db std::string (can't bind to temporary)
-        const std::string db = request.getDatabase().toString();
-
-        int queryFlags = 0;
-        std::tie(std::ignore, queryFlags) = uassertStatusOK(
-            rpc::downconvertRequestMetadata(request.getCommandArgs(),
-                                            request.getMetadata())
-        );
-
         repl::ReplicationCoordinator* replCoord = repl::getGlobalReplicationCoordinator();
-
         {
             // Handle read after opTime.
             repl::ReadAfterOpTimeArgs readAfterOptimeSettings;
-            auto readAfterParseStatus = readAfterOptimeSettings.initialize(interposedCmd);
+            auto readAfterParseStatus = readAfterOptimeSettings.initialize(request.getCommandArgs());
             if (!readAfterParseStatus.isOK()) {
                 replyBuilder
                     ->setMetadata(rpc::makeEmptyMetadata())
@@ -1372,21 +1288,31 @@ namespace {
             }
         }
 
-        bool result = this->run(txn, db, interposedCmd, queryFlags, errmsg, replyBuilderBob);
+        // run expects non-const bsonobj
+        BSONObj cmd = request.getCommandArgs();
+        // Implementation just forwards to the old method signature for now.
+        std::string errmsg;
+
+        // run expects const db std::string (can't bind to temporary)
+        const std::string db = request.getDatabase().toString();
+
+        // TODO: remove queryOptions parameter from command's run method.
+        bool result = this->run(txn, db, cmd, 0, errmsg, replyBuilderBob);
+
+        BSONObjBuilder metadataBob;
 
         // For commands from mongos, append some info to help getLastError(w) work.
         // TODO: refactor out of here as part of SERVER-18326
         if (replCoord->getReplicationMode() == repl::ReplicationCoordinator::modeReplSet &&
             shardingState.enabled()) {
-            appendGLEHelperData(
-                    replyBuilderBob,
-                    repl::ReplClientInfo::forClient(txn->getClient()).getLastOp().getTimestamp(),
-                    replCoord->getElectionId());
+            rpc::ShardingMetadata(
+                repl::ReplClientInfo::forClient(txn->getClient()).getLastOp().getTimestamp(),
+                replCoord->getElectionId()
+            ).writeToMetadata(&metadataBob);
         }
 
-        replyBuilder->setMetadata(rpc::makeEmptyMetadata());
-
         auto cmdResponse = replyBuilderBob.done();
+        replyBuilder->setMetadata(metadataBob.done());
 
         if (result) {
             replyBuilder->setCommandReply(std::move(cmdResponse));

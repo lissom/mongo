@@ -28,15 +28,12 @@
 
 #pragma once
 
-#include <boost/thread.hpp>
-#include <boost/thread/mutex.hpp>
 #include <boost/thread/condition_variable.hpp>
 #include <vector>
 #include <memory>
 
 #include "mongo/base/status.h"
 #include "mongo/bson/timestamp.h"
-#include "mongo/db/service_context.h"
 #include "mongo/db/repl/data_replicator.h"
 #include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/optime.h"
@@ -46,9 +43,12 @@
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/update_position_args.h"
+#include "mongo/db/service_context.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/unordered_map.h"
 #include "mongo/platform/unordered_set.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/net/hostandport.h"
 
 namespace mongo {
@@ -499,7 +499,7 @@ namespace repl {
          */
         ReplicationCoordinator::StatusAndDuration _awaitReplication_inlock(
                 const Timer* timer,
-                boost::unique_lock<boost::mutex>* lock,
+                stdx::unique_lock<stdx::mutex>* lock,
                 OperationContext* txn,
                 const OpTime& opTime,
                 const WriteConcernOptions& writeConcern);
@@ -583,7 +583,7 @@ namespace repl {
          * This function has the same rules for "opTime" as setMyLastOptime(), unless
          * "isRollbackAllowed" is true.
          */
-        void _setMyLastOptime_inlock(boost::unique_lock<boost::mutex>* lock,
+        void _setMyLastOptime_inlock(stdx::unique_lock<stdx::mutex>* lock,
                                      const OpTime& opTime,
                                      bool isRollbackAllowed);
 
@@ -720,6 +720,7 @@ namespace repl {
          *      _onElectCmdRunnerComplete()
          * For V1 (raft) style elections the election path is:
          *      _startElectSelfV1()
+         *      _onDryRunComplete()
          *      _onVoteRequestComplete()
          *      _onElectionWinnerDeclarerComplete()
          */
@@ -739,10 +740,20 @@ namespace repl {
         void _onElectCmdRunnerComplete();
 
         /**
+         * Callback called when the dryRun VoteRequester has completed; checks the results and
+         * decides whether to conduct a proper election.
+         * "originalTerm" was the term during which the dry run began, if the term has since
+         * changed, do not run for election.
+         */
+        void _onDryRunComplete(long long originalTerm);
+
+        /**
          * Callback called when the VoteRequester has completed; checks the results and
          * decides whether to change state to primary and alert other nodes of our primary-ness.
+         * "originalTerm" was the term during which the election began, if the term has since
+         * changed, do not step up as primary.
          */
-        void _onVoteRequestComplete();
+        void _onVoteRequestComplete(long long originalTerm);
 
         /**
          * Callback called when the ElectWinnerDeclarer has completed; checks the results and
@@ -899,7 +910,7 @@ namespace repl {
         // (I)  Independently synchronized, see member variable comment.
 
         // Protects member data of this ReplicationCoordinator.
-        mutable boost::mutex _mutex;                                                      // (S)
+        mutable stdx::mutex _mutex;                                                      // (S)
 
         // Handles to actively queued heartbeats.
         HeartbeatHandles _heartbeatHandles;                                               // (X)
@@ -930,7 +941,7 @@ namespace repl {
 
         // Thread that drives actions in the topology coordinator
         // Set in startReplication() and thereafter accessed in shutdown.
-        std::unique_ptr<boost::thread> _topCoordDriverThread;                           // (I)
+        std::unique_ptr<stdx::thread> _topCoordDriverThread;                           // (I)
 
         // Our RID, used to identify us to our sync source when sending replication progress
         // updates upstream.  Set once in startReplication() and then never modified again.

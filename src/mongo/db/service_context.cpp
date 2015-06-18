@@ -110,7 +110,7 @@ namespace mongo {
     }
 
     ServiceContext::~ServiceContext() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(_clients.empty());
     }
 
@@ -136,16 +136,24 @@ namespace mongo {
             throw;
         }
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             invariant(_clients.insert(client.get()).second);
         }
         return UniqueClient(client.release());
     }
 
+    TickSource* ServiceContext::getTickSource() const {
+        return _tickSource.get();
+    }
+
+    void ServiceContext::setTickSource(std::unique_ptr<TickSource> newSource) {
+        _tickSource = std::move(newSource);
+    }
+
     void ServiceContext::ClientDeleter::operator()(Client* client) const {
         ServiceContext* const service = client->getServiceContext();
         {
-            boost::lock_guard<boost::mutex> lk(service->_mutex);
+            stdx::lock_guard<stdx::mutex> lk(service->_mutex);
             invariant(service->_clients.erase(client));
         }
         try {
