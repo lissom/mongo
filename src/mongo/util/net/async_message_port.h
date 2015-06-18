@@ -25,7 +25,6 @@
 #include "mongo/util/net/message_port.h"
 
 namespace mongo {
-
 namespace network {
 
 /*
@@ -73,7 +72,8 @@ struct ConnStats {
  */
 //This class isn't marked final, probably going to derive from it later on
 //TODO: Abstract class to glue AsyncClientConnection and OperationRunner together
-MONGO_ALIGN_TO_CACHE class AsyncClientConnection final : public AbstractMessagingPort {
+//TODO: MONGO_ALIGN_TO_CACHE, mars release date 6.24
+class AsyncClientConnection final : public AbstractMessagingPort {
 MONGO_DISALLOW_COPYING(AsyncClientConnection);
 public:
     //State is what is being waiting on (unless errored or completed)
@@ -247,7 +247,8 @@ private:
  * All funcions starting with async are calling from async functions, should not
  * take locks if at all possible
  */
-MONGO_ALIGN_TO_CACHE class Connections {
+//TODO: MONGO_ALIGN_TO_CACHE
+class Connections {
 MONGO_DISALLOW_COPYING(Connections);
 public:
     Connections(AsioAsyncServer* const server) :

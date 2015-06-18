@@ -20,7 +20,8 @@
 namespace mongo {
 
 //TODO: Add owner and have the runner pop itself on finish
-MONGO_ALIGN_TO_CACHE class OperationRunner: public AbstractOperationRunner {
+//TODO: MONGO_ALIGN_TO_CACHE
+class OperationRunner: public AbstractOperationRunner {
 public:
     enum class State {
         init, running, completed, errored, finished
@@ -80,15 +81,4 @@ private:
 };
 
 //TODO: replace with template
-MONGO_ALIGN_TO_CACHE class OperationsXXX {
-public:
-
-private:
-    //MessagePipeline* const _owner;
-    std::mutex _mutex;
-    //TODO: Storing messages in the current processor is going to going to lead to skewed spread,
-    //perhaps move to a fixed size randomly assigned hash queue to hold operations, we assign a global connId anyway (as of this writing)
-    std::unordered_set<std::unique_ptr<OperationRunner>> _runners;
-};
-
 } // namespace mongo
