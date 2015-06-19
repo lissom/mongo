@@ -12,7 +12,7 @@
  * "T::" MUST precede the function name, if a function takes void that must be declared
  * Only visible functions can be detected
  * For instance, to detect if an object has a toString function:
- * class MyObj { public: toString(); };
+ * class MyObj { public: void toString(); };
  * OBJECT_HAS_FUNCTION_SIGNATURE(HasToString, T::toString, void, void)
  */
 #define OBJECT_HAS_FUNCTION_SIGNATURE(traitName, funcName, funcRet, args...) \
