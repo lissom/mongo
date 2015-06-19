@@ -32,6 +32,7 @@
 #include <string>
 #include <system_error>
 
+#include "mongo/base/object_has_func.h"
 #include "mongo/logger/labeled_level.h"
 #include "mongo/logger/log_component.h"
 #include "mongo/logger/log_severity.h"
@@ -114,20 +115,7 @@ namespace logger {
 
         std::ostream& stream() { if (!_os) makeStream(); return *_os; }
 
-        //TODO: move else where
-        struct SfinaeTypes {
-            using one = char;
-            using two = struct { char arr[2]; };
-        };
-
-        template<typename T>
-        class HasToString : public SfinaeTypes{
-            template<typename U> static one check(decltype(&U::toString));
-            template<typename U> static two check(...);
-
-        public:
-            static constexpr bool value = sizeof(one) == sizeof(check<T>(0));
-        };
+        OBJECT_HAS_FUNCTION_SIGNATURE(HasToString, T::toString, void(*)(void))
 
         //Have to change bool to int if there is more than just operator<< and toString
         template<typename T, bool hasStreamOperator>
@@ -154,19 +142,7 @@ namespace logger {
             StreamVariable<T, HasToString<T>::value>::print(*this, x);
             return *this;
         }
-/*
-        template <typename Rep, typename Period>
-        LogstreamBuilder& operator<<(stdx::chrono::duration<Rep, Period> d) {
-            stream() << d;
-            return *this;
-        }
 
-        template <typename T>
-        LogstreamBuilder& operator<<(const T& x) {
-            stream() << x.toString();
-            return *this;
-        }
-*/
         LogstreamBuilder& operator<< (std::ostream& ( *manip )(std::ostream&)) {
             stream() << manip;
             return *this;
