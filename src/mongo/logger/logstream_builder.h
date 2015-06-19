@@ -115,7 +115,7 @@ namespace logger {
 
         std::ostream& stream() { if (!_os) makeStream(); return *_os; }
 
-        OBJECT_HAS_FUNCTION_SIGNATURE(HasToString, T::toString, void(*)(void))
+        OBJECT_HAS_FUNCTION_SIGNATURE(HasToString, T::toString, void, void)
 
         //Have to change bool to int if there is more than just operator<< and toString
         template<typename T, bool hasStreamOperator>
