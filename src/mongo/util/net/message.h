@@ -327,9 +327,8 @@ namespace mongo {
     } // namespace MsgData
 
     class Message {
-        //This isn't copied anywhere and copying is non-trivial
-        MONGO_DISALLOW_COPYING(Message);
     public:
+        MONGO_DISALLOW_COPYING(Message);
         typedef std::vector< std::pair< char*, int > > MsgVec;
 
         // we assume here that a vector with initial size 0 does no allocation (0 is the default, but wanted to make it explicit).

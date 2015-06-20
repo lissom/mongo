@@ -31,6 +31,7 @@
 #include <sstream>
 #include <string>
 
+#include "mongo/base/member_function_trait.h"
 #include "mongo/logger/labeled_level.h"
 #include "mongo/logger/log_component.h"
 #include "mongo/logger/log_severity.h"
@@ -113,33 +114,30 @@ namespace logger {
 
         std::ostream& stream() { if (!_os) makeStream(); return *_os; }
 
-        LogstreamBuilder& operator<<(const char *x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(const std::string& x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(StringData x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(char *x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(char x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(int x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(ExitCode x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(long x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(unsigned long x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(unsigned x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(unsigned short x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(double x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(void *x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(const void *x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(long long x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(unsigned long long x) { stream() << x; return *this; }
-        LogstreamBuilder& operator<<(bool x) { stream() << x; return *this; }
+        OBJECT_HAS_FUNCTION_SIGNATURE(HasToString, toString, void, void)
 
-        template <typename Rep, typename Period>
-        LogstreamBuilder& operator<<(stdx::chrono::duration<Rep, Period> d) {
-            stream() << d;
-            return *this;
-        }
+        template<typename T, bool hasStreamOperator>
+        struct StreamVariable { };
+
+        template<typename T>
+        struct StreamVariable<T, false> {
+            static LogstreamBuilder& print(LogstreamBuilder& stream, const T& t) {
+                stream << t;
+                return stream;
+            }
+        };
+
+        template<typename T>
+        struct StreamVariable<T, true> {
+            static LogstreamBuilder& print(LogstreamBuilder& stream, const T& t) {
+                stream << t.toString();
+                return stream;
+            }
+        };
 
         template <typename T>
         LogstreamBuilder& operator<<(const T& x) {
-            stream() << x.toString();
+            StreamVariable<T, HasToString<T>::value>::print(*this, x);
             return *this;
         }
 
