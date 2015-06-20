@@ -16,16 +16,16 @@
  * OBJECT_HAS_FUNCTION_SIGNATURE(HasToString, T::toString, void, void)
  */
 #define OBJECT_HAS_FUNCTION_SIGNATURE(traitName, funcName, funcRet, args...) \
-template<typename U> \
+template<typename T> \
 class traitName { \
-    template<typename T, T> struct helper; \
-    template<typename T> static std::true_type check(helper<funcRet(T::*)(args), &funcName>*); \
-    template<typename T> static std::false_type check(...); \
+    template<typename U, U> struct helper; \
+    template<typename U> static std::true_type check(helper<funcRet(U::*)(args), &U::funcName>*); \
+    template<typename U> static std::false_type check(...); \
 public: \
-    static constexpr bool value = decltype(check<U>(0))::value; \
+    static constexpr bool value = decltype(check<T>(0))::value; \
 };
 
-OBJECT_HAS_FUNCTION_SIGNATURE(HasFooFunc, T::foo, void, int, int)
+OBJECT_HAS_FUNCTION_SIGNATURE(HasFooFunc, foo, void, int, int)
 struct HasFoo { void foo(int, int) {}; };
 struct NoFoo { };
 
