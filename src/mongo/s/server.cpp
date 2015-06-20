@@ -32,14 +32,12 @@
 
 #include "mongo/s/server.h"
 
-#include <boost/shared_ptr.hpp>
-#include <boost/thread/thread.hpp>
-
 #include "mongo/base/init.h"
 #include "mongo/base/initializer.h"
 #include "mongo/base/status.h"
 #include "mongo/client/connpool.h"
 #include "mongo/client/dbclient_rs.h"
+#include "mongo/client/global_conn_pool.h"
 #include "mongo/client/remote_command_runner_impl.h"
 #include "mongo/client/remote_command_targeter_factory_impl.h"
 #include "mongo/client/replica_set_monitor.h"
@@ -62,8 +60,8 @@
 #include "mongo/platform/process_id.h"
 #include "mongo/s/balance.h"
 #include "mongo/s/catalog/legacy/catalog_manager_legacy.h"
-#include "mongo/s/client/sharding_connection_hook.h"
 #include "mongo/s/client/shard_registry.h"
+#include "mongo/s/client/sharding_connection_hook.h"
 #include "mongo/s/config.h"
 #include "mongo/s/cursors.h"
 #include "mongo/s/grid.h"
@@ -71,6 +69,7 @@
 #include "mongo/s/request.h"
 #include "mongo/s/version_mongos.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/admin_access.h"
 #include "mongo/util/cmdline_utils/censor_cmdline.h"
 #include "mongo/util/concurrency/thread_name.h"
@@ -204,11 +203,9 @@ static ExitCode runMongosServer( bool doUpgrade ) {
     setThreadName( "mongosMain" );
     printShardingVersionInfo( false );
 
-    // set some global state
-
     // Add sharding hooks to both connection pools - ShardingConnectionHook includes auth hooks
-    pool.addHook( new ShardingConnectionHook( false ) );
-    shardConnectionPool.addHook( new ShardingConnectionHook( true ) );
+    globalConnPool.addHook(new ShardingConnectionHook(false));
+    shardConnectionPool.addHook(new ShardingConnectionHook(true));
 
     // Mongos shouldn't lazily kill cursors, otherwise we can end up with extras from migration
     DBClientConnection::setLazyKillCursor( false );
@@ -233,25 +230,6 @@ static ExitCode runMongosServer( bool doUpgrade ) {
         }
     }
 
-    {
-        Status statusConfigChecker = catalogManager->startConfigServerChecker();
-        if (!statusConfigChecker.isOK()) {
-            error() << "unable to start config servers checker thread " << statusConfigChecker;
-            return EXIT_SHARDING_ERROR;
-        }
-    }
-
-    {
-        Status statusCatalogUpgrade = catalogManager->checkAndUpgradeConfigMetadata(doUpgrade);
-        if (!statusCatalogUpgrade.isOK()) {
-            error() << "stale config server metadata: " << statusCatalogUpgrade;
-            return EXIT_SHARDING_ERROR;
-        }
-        else if (doUpgrade) {
-            return EXIT_CLEAN;
-        }
-    }
-
     auto shardRegistry = stdx::make_unique<ShardRegistry>(
                             stdx::make_unique<RemoteCommandTargeterFactoryImpl>(),
                             stdx::make_unique<RemoteCommandRunnerImpl>(0),
@@ -260,6 +238,18 @@ static ExitCode runMongosServer( bool doUpgrade ) {
 
     grid.init(std::move(catalogManager), std::move(shardRegistry));
 
+    {
+        Status startupStatus = grid.catalogManager()->startup(doUpgrade);
+        if (!startupStatus.isOK()) {
+            error() << "Mongos catalog manager startup failed: " << startupStatus;
+            return EXIT_SHARDING_ERROR;
+        }
+
+        if (doUpgrade) {
+            return EXIT_CLEAN;
+        }
+    }
+
     ConfigServer::reloadSettings();
 
 #if !defined(_WIN32)
@@ -267,13 +257,13 @@ static ExitCode runMongosServer( bool doUpgrade ) {
 #endif
 
     if (serverGlobalParams.isHttpInterfaceEnabled) {
-        boost::shared_ptr<DbWebServer> dbWebServer(
+        std::shared_ptr<DbWebServer> dbWebServer(
                                 new DbWebServer(serverGlobalParams.bind_ip,
                                                 serverGlobalParams.port + 1000,
                                                 new NoAdminAccess()));
         dbWebServer->setupSockets();
 
-        boost::thread web(stdx::bind(&webServerListenThread, dbWebServer));
+        stdx::thread web(stdx::bind(&webServerListenThread, dbWebServer));
         web.detach();
     }
 

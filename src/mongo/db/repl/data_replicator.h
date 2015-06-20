@@ -29,7 +29,6 @@
 
 #pragma once
 
-#include <boost/thread.hpp>
 #include <vector>
 
 #include "mongo/platform/basic.h"
@@ -41,21 +40,24 @@
 #include "mongo/db/repl/applier.h"
 #include "mongo/db/repl/collection_cloner.h"
 #include "mongo/db/repl/database_cloner.h"
-#include "mongo/db/repl/fetcher.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/db/repl/reporter.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/queue.h"
 
 namespace mongo {
+
+class QueryFetcher;
+
 namespace repl {
 
 using Operations = Applier::Operations;
-using BatchDataStatus = StatusWith<Fetcher::BatchData>;
-using CallbackData = ReplicationExecutor::CallbackData;
+using QueryResponseStatus = StatusWith<Fetcher::QueryResponse>;
+using CallbackArgs = ReplicationExecutor::CallbackArgs;
 using CBHStatus = StatusWith<ReplicationExecutor::CallbackHandle>;
-using CommandCallbackData = ReplicationExecutor::RemoteCommandCallbackData;
+using CommandCallbackArgs = ReplicationExecutor::RemoteCommandCallbackArgs;
 using Event = ReplicationExecutor::EventHandle;
 using Handle = ReplicationExecutor::CallbackHandle;
 using LockGuard = stdx::lock_guard<stdx::mutex>;
@@ -65,10 +67,8 @@ using Response = RemoteCommandResponse;
 using TimestampStatus = StatusWith<Timestamp>;
 using UniqueLock = stdx::unique_lock<stdx::mutex>;
 
-class QueryFetcher;
 class OplogFetcher;
 struct InitialSyncState;
-
 
 /** State for decision tree */
 enum class DataReplicatorState {
@@ -78,6 +78,8 @@ enum class DataReplicatorState {
     Uninitialized,
 };
 
+std::string toString(DataReplicatorState s);
+
 // TBD -- ignore for now
 enum class DataReplicatorScope {
     ReplicateAll,
@@ -86,6 +88,13 @@ enum class DataReplicatorScope {
 };
 
 struct DataReplicatorOptions {
+    // Error and retry values
+    Milliseconds syncSourceRetryWait{1000};
+    Milliseconds initialSyncRetryWait{1000};
+    Seconds blacklistSyncSourcePenaltyForNetworkConnectionError{10};
+    Minutes blacklistSyncSourcePenaltyForOplogStartMissing{10};
+
+    // Replication settings
     Timestamp startOptime;
     NamespaceString localOplogNS = NamespaceString("local.oplog.rs");
     NamespaceString remoteOplogNS = NamespaceString("local.oplog.rs");
@@ -131,10 +140,29 @@ public:
     DataReplicator(DataReplicatorOptions opts,
                    ReplicationExecutor* exec);
 
+    /**
+     * Used for testing.
+     */
+    DataReplicator(DataReplicatorOptions opts,
+                   ReplicationExecutor* exec,
+                   ReplicationCoordinator* replCoord,
+                   OnBatchCompleteFn batchCompletedFn);
+
     virtual ~DataReplicator();
 
     Status start();
     Status shutdown();
+
+    /**
+     * Cancels outstanding work and begins shutting down.
+     */
+    Status scheduleShutdown();
+
+    /**
+     * Waits for data replicator to finish shutting down.
+     * Data replicator will go into uninitialized state.
+     */
+    void waitForShutdown();
 
     // Resumes apply replication events from the oplog
     Status resume(bool wait=false);
@@ -154,23 +182,25 @@ public:
     // Don't use above methods before these
     TimestampStatus initialSync();
 
+    DataReplicatorState getState() const;
+    Timestamp getLastTimestampFetched() const;
     std::string getDiagnosticString() const;
 
     // For testing only
+
     void _resetState_inlock(Timestamp lastAppliedOptime);
     void __setSourceForTesting(HostAndPort src) { _syncSource = src; }
     void _setInitialSyncStorageInterface(CollectionCloner::StorageInterface* si);
 
 private:
 
-    // Run a member function in the executor, waiting for it to finish.
-//    Status _run(void*());
+    // Returns OK when there is a good syncSource at _syncSource.
+    Status _ensureGoodSyncSource_inlock();
 
     // Only executed via executor
-    void _resumeFinish(CallbackData cbData);
-    void _onOplogFetchFinish(const BatchDataStatus& fetchResult,
+    void _resumeFinish(CallbackArgs cbData);
+    void _onOplogFetchFinish(const QueryResponseStatus& fetchResult,
                              Fetcher::NextAction* nextAction);
-    void _doNextActionsCB(CallbackData cbData);
     void _doNextActions();
     void _doNextActions_InitialSync_inlock();
     void _doNextActions_Rollback_inlock();
@@ -182,24 +212,21 @@ private:
     void _pauseApplier();
 
     Operations _getNextApplierBatch_inlock();
-    void _onApplyBatchFinish(const CallbackData&,
+    void _onApplyBatchFinish(const CallbackArgs&,
                              const TimestampStatus&,
                              const Operations&,
                              const size_t numApplied);
     void _handleFailedApplyBatch(const TimestampStatus&, const Operations&);
     // Fetches the last doc from the first operation, and reschedules the apply for the ops.
     void _scheduleApplyAfterFetch(const Operations&);
-    void _onMissingFetched(const BatchDataStatus& fetchResult,
+    void _onMissingFetched(const QueryResponseStatus& fetchResult,
                            Fetcher::NextAction* nextAction,
                            const Operations& ops,
                            const NamespaceString nss);
 
-    // returns true if a rollback is needed
-    bool _needToRollback(HostAndPort source, Timestamp lastApplied);
-
     void _onDataClonerFinish(const Status& status);
     // Called after _onDataClonerFinish when the new Timestamp is avail, to use for minvalid
-    void _onApplierReadyStart(const BatchDataStatus& fetchResult,
+    void _onApplierReadyStart(const QueryResponseStatus& fetchResult,
                               Fetcher::NextAction* nextAction);
 
     Status _scheduleApplyBatch();
@@ -264,7 +291,6 @@ private:
     BlockingQueue<BSONObj> _oplogBuffer;                                                // (M)
 
     // Shutdown
-    bool _doShutdown;                                                                   // (M)
     Event _onShutdown;                                                                  // (M)
 
     // Rollback stuff

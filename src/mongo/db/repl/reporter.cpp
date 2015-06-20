@@ -41,10 +41,10 @@ namespace repl {
     ReplicationProgressManager::~ReplicationProgressManager() {}
 
     Reporter::Reporter(ReplicationExecutor* executor,
-                       ReplicationProgressManager* ReplicationProgressManager,
+                       ReplicationProgressManager* replicationProgressManager,
                        const HostAndPort& target)
         : _executor(executor),
-          _updatePositionSource(ReplicationProgressManager),
+          _updatePositionSource(replicationProgressManager),
           _target(target),
           _status(Status::OK()),
           _willRunAgain(false),
@@ -53,37 +53,46 @@ namespace repl {
         uassert(ErrorCodes::BadValue, "null replication executor", executor);
         uassert(ErrorCodes::BadValue,
                 "null replication progress manager",
-                ReplicationProgressManager);
+                replicationProgressManager);
         uassert(ErrorCodes::BadValue, "target name cannot be empty", !target.empty());
     }
 
     Reporter::~Reporter() {
-        cancel();
+        DESTRUCTOR_GUARD(
+           cancel();
+        );
     }
 
     void Reporter::cancel() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
 
         if (!_active) {
             return;
         }
 
         _status = Status(ErrorCodes::CallbackCanceled, "Reporter no longer valid");
-        _active = false;
         _willRunAgain = false;
         invariant(_remoteCommandCallbackHandle.isValid());
         _executor->cancel(_remoteCommandCallbackHandle);
     }
 
     void Reporter::wait() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
-        if(_remoteCommandCallbackHandle.isValid()) {
-            _executor->wait(_remoteCommandCallbackHandle);
+        ReplicationExecutor::CallbackHandle handle;
+        {
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
+            if (!_active) {
+                return;
+            }
+            if (!_remoteCommandCallbackHandle.isValid()) {
+                return;
+            }
+            handle = _remoteCommandCallbackHandle;
         }
+        _executor->wait(handle);
     }
 
     Status Reporter::trigger() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _schedule_inlock();
     }
 
@@ -99,13 +108,17 @@ namespace repl {
 
         LOG(2) << "Reporter scheduling report to : " << _target;
 
-        _willRunAgain = false;
-
         BSONObjBuilder cmd;
-        _updatePositionSource->prepareReplSetUpdatePositionCommand(&cmd);
+        if (!_updatePositionSource->prepareReplSetUpdatePositionCommand(&cmd)) {
+            // Returning NodeNotFound because currently this is the only way
+            // prepareReplSetUpdatePositionCommand() can fail in production.
+            return Status(ErrorCodes::NodeNotFound,
+                          "Reporter failed to create replSetUpdatePositionCommand command.");
+        }
+        auto cmdObj = cmd.obj();
         StatusWith<ReplicationExecutor::CallbackHandle> scheduleResult =
             _executor->scheduleRemoteCommand(
-                RemoteCommandRequest(_target, "admin", cmd.obj()),
+                RemoteCommandRequest(_target, "admin", cmdObj),
                 stdx::bind(&Reporter::_callback, this, stdx::placeholders::_1));
 
         if (!scheduleResult.isOK()) {
@@ -116,12 +129,13 @@ namespace repl {
         }
 
         _active = true;
+        _willRunAgain = false;
         _remoteCommandCallbackHandle = scheduleResult.getValue();
         return Status::OK();
     }
 
-    void Reporter::_callback(const ReplicationExecutor::RemoteCommandCallbackData& rcbd) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+    void Reporter::_callback(const ReplicationExecutor::RemoteCommandCallbackArgs& rcbd) {
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
 
         _status = rcbd.response.getStatus();
         _active = false;
@@ -136,17 +150,17 @@ namespace repl {
     }
 
     Status Reporter::getStatus() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _status;
     }
 
     bool Reporter::isActive() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _active;
     }
 
     bool Reporter::willRunAgain() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _willRunAgain;
     }
 } // namespace repl

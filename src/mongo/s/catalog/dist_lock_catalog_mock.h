@@ -44,7 +44,7 @@ namespace mongo {
      *
      * DistLockCatalogMock mock;
      * LocksType badLock;
-     * mock.setSucceedingExpectedGrabLock([](StringData lockID,
+     * mock.expectGrabLock([](StringData lockID,
      *                                       const OID& lockSessionID,
      *                                       StringData who,
      *                                       StringData processId,
@@ -59,7 +59,7 @@ namespace mongo {
      * such that grabLock can only be called once, you can do this:
      *
      * DistLockCatalogMock mock;
-     * mock.setSucceedingExpectedGrabLock([&mock](...) {
+     * mock.expectGrabLock([&mock](...) {
      *   mock.expectNoGrabLock();
      * }, Status::OK());
      */
@@ -74,10 +74,20 @@ namespace mongo {
                                                   StringData processId,
                                                   Date_t time,
                                                   StringData why)>;
+        using OvertakeLockFunc = stdx::function<void (StringData lockID,
+                                                      const OID& lockSessionID,
+                                                      const OID& currentHolderTS,
+                                                      StringData who,
+                                                      StringData processId,
+                                                      Date_t time,
+                                                      StringData why)>;
         using UnlockFunc = stdx::function<void (const OID& lockSessionID)>;
         using PingFunc = stdx::function<void (StringData processID, Date_t ping)>;
         using StopPingFunc = stdx::function<void (StringData processID)>;
+        using GetPingFunc = StopPingFunc;
         using GetLockByTSFunc = stdx::function<void (const OID& ts)>;
+        using GetLockByNameFunc = stdx::function<void (StringData name)>;
+        using GetServerInfoFunc = stdx::function<void ()>;
 
         virtual StatusWith<LockpingsType> getPing(StringData processID) override;
 
@@ -92,7 +102,7 @@ namespace mongo {
 
         virtual StatusWith<LocksType> overtakeLock(StringData lockID,
                                                    const OID& lockSessionID,
-                                                   const OID& lockTS,
+                                                   const OID& currentHolderTS,
                                                    StringData who,
                                                    StringData processId,
                                                    Date_t time,
@@ -104,14 +114,15 @@ namespace mongo {
 
         virtual StatusWith<LocksType> getLockByTS(const OID& lockSessionID) override;
 
+        virtual StatusWith<LocksType> getLockByName(StringData name) override;
+
         virtual Status stopPing(StringData processId) override;
 
         /**
          * Sets the checker method to use and the return value for grabLock to return every
          * time it is called.
          */
-        void setSucceedingExpectedGrabLock(GrabLockFunc checkerFunc,
-                                           StatusWith<LocksType> returnThis);
+        void expectGrabLock(GrabLockFunc checkerFunc, StatusWith<LocksType> returnThis);
 
         /**
          * Expect grabLock to never be called after this is called.
@@ -122,24 +133,48 @@ namespace mongo {
          * Sets the checker method to use and the return value for unlock to return every
          * time it is called.
          */
-        void setSucceedingExpectedUnLock(UnlockFunc checkerFunc, Status returnThis);
+        void expectUnLock(UnlockFunc checkerFunc, Status returnThis);
 
         /**
-         * Sets the checker method to use and it's return value the every time ping is called.
+         * Sets the checker method to use and its return value the every time ping is called.
          */
-        void setSucceedingExpectedPing(PingFunc checkerFunc, Status returnThis);
+        void expectPing(PingFunc checkerFunc, Status returnThis);
 
         /**
-         * Sets the checker method to use and it's return value the every time stopPing is called.
+         * Sets the checker method to use and its return value the every time stopPing is called.
          */
-        void setSucceedingExpectedStopPing(StopPingFunc checkerFunc, Status returnThis);
+        void expectStopPing(StopPingFunc checkerFunc, Status returnThis);
 
         /**
-         * Sets the checker method to use and it's return value the every time
+         * Sets the checker method to use and its return value the every time
          * getLockByTS is called.
          */
-        void setSucceedingExpectedGetLockByTS(GetLockByTSFunc checkerFunc,
-                                              StatusWith<LocksType> returnThis);
+        void expectGetLockByTS(GetLockByTSFunc checkerFunc, StatusWith<LocksType> returnThis);
+
+        /**
+         * Sets the checker method to use and its return value the every time
+         * getLockByName is called.
+         */
+        void expectGetLockByName(GetLockByNameFunc checkerFunc, StatusWith<LocksType> returnThis);
+
+        /**
+         * Sets the checker method to use and its return value the every time
+         * overtakeLock is called.
+         */
+        void expectOvertakeLock(OvertakeLockFunc checkerFunc, StatusWith<LocksType> returnThis);
+
+        /**
+         * Sets the checker method to use and its return value the every time
+         * getPing is called.
+         */
+        void expectGetPing(GetPingFunc checkerFunc, StatusWith<LockpingsType> returnThis);
+
+        /**
+         * Sets the checker method to use and its return value the every time
+         * getServerInfo is called.
+         */
+        void expectGetServerInfo(GetServerInfoFunc checkerFunc,
+                                 StatusWith<DistLockCatalog::ServerInfo> returnThis);
 
     private:
         // Protects all the member variables.
@@ -159,5 +194,17 @@ namespace mongo {
 
         GetLockByTSFunc _getLockByTSChecker;
         StatusWith<LocksType> _getLockByTSReturnValue;
+
+        GetLockByNameFunc _getLockByNameChecker;
+        StatusWith<LocksType> _getLockByNameReturnValue;
+
+        OvertakeLockFunc _overtakeLockChecker;
+        StatusWith<LocksType> _overtakeLockReturnValue;
+
+        GetPingFunc _getPingChecker;
+        StatusWith<LockpingsType> _getPingReturnValue;
+
+        GetServerInfoFunc _getServerInfoChecker;
+        StatusWith<DistLockCatalog::ServerInfo> _getServerInfoReturnValue;
     };
 }

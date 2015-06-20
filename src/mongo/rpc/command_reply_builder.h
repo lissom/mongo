@@ -33,6 +33,7 @@
 #include "mongo/base/status_with.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/rpc/document_range.h"
+#include "mongo/rpc/protocol.h"
 #include "mongo/rpc/reply_builder_interface.h"
 #include "mongo/util/net/message.h"
 
@@ -64,12 +65,18 @@ namespace rpc {
 
         State getState() const final;
 
+        Protocol getProtocol() const final;
+
+        void reset() final;
+
         /**
          * Writes data then transfers ownership of the message to the caller.
          * The behavior of calling any methods on the object is subsequently
          * undefined.
          */
         std::unique_ptr<Message> done() final;
+
+        std::size_t availableSpaceForOutputDocs() const final;
 
     private:
         // Default values are all empty.

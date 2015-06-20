@@ -36,6 +36,7 @@
 #include "mongo/platform/unordered_set.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/util/decorable.h"
+#include "mongo/util/tick_source.h"
 
 namespace mongo {
 
@@ -157,7 +158,7 @@ namespace mongo {
             Client* next();
 
         private:
-            boost::unique_lock<boost::mutex> _lock;
+            stdx::unique_lock<stdx::mutex> _lock;
             ClientSet::const_iterator _curr;
             ClientSet::const_iterator _end;
         };
@@ -303,6 +304,18 @@ namespace mongo {
          */
         virtual OpObserver* getOpObserver() = 0;
 
+        /**
+         * Returns the tick source set in this context.
+         */
+        TickSource* getTickSource() const;
+
+        /**
+         * Replaces the current tick source with a new one. In other words, the old tick source
+         * will be destroyed. So make sure that no one is using the old tick source when
+         * calling this.
+         */
+        void setTickSource(std::unique_ptr<TickSource> newSource);
+
     protected:
         ServiceContext() = default;
 
@@ -310,7 +323,7 @@ namespace mongo {
          * Mutex used to synchronize access to mutable state of this ServiceContext instance,
          * including possibly by its subclasses.
          */
-        boost::mutex _mutex;
+        stdx::mutex _mutex;
 
     private:
         /**
@@ -323,6 +336,8 @@ namespace mongo {
          */
         std::vector<std::unique_ptr<ClientObserver>> _clientObservers;
         ClientSet _clients;
+
+        std::unique_ptr<TickSource> _tickSource;
     };
 
     /**

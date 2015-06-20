@@ -34,7 +34,6 @@
 
 #include "mongo/s/version_manager.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/dbclient_rs.h"
 #include "mongo/db/namespace_string.h"
@@ -52,7 +51,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::map;
     using std::string;
@@ -69,7 +68,7 @@ namespace mongo {
     struct ConnectionShardStatus {
 
         bool hasAnySequenceSet(DBClientBase* conn) {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             SequenceMap::const_iterator seenConnIt = _map.find(conn->getConnectionId());
             return seenConnIt != _map.end() && seenConnIt->second.size() > 0;
@@ -79,7 +78,7 @@ namespace mongo {
                          const string& ns,
                          unsigned long long* sequence) {
 
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             SequenceMap::const_iterator seenConnIt = _map.find(conn->getConnectionId());
             if (seenConnIt == _map.end())
@@ -94,12 +93,12 @@ namespace mongo {
         }
 
         void setSequence( DBClientBase * conn , const string& ns , const unsigned long long& s ) {
-            boost::lock_guard<boost::mutex> lk( _mutex );
+            stdx::lock_guard<stdx::mutex> lk( _mutex );
             _map[conn->getConnectionId()][ns] = s;
         }
 
         void reset( DBClientBase * conn ) {
-            boost::lock_guard<boost::mutex> lk( _mutex );
+            stdx::lock_guard<stdx::mutex> lk( _mutex );
             _map.erase( conn->getConnectionId() );
         }
 
@@ -200,7 +199,7 @@ namespace mongo {
             // Check to see if this is actually a shard and not a single config server
             // NOTE: Config servers are registered only by the name "config" in the shard cache, not
             // by host, so lookup by host will fail unless the host is also a shard.
-            const auto& shard = grid.shardRegistry()->findIfExists(conn->getServerAddress());
+            const auto shard = grid.shardRegistry()->getShard(conn->getServerAddress());
             if (!shard) {
                 return false;
             }
@@ -284,8 +283,7 @@ namespace mongo {
             return initShardVersionEmptyNS(conn_in);
         }
 
-        const NamespaceString nss(ns);
-        auto status = grid.catalogCache()->getDatabase(nss.db().toString());
+        auto status = grid.catalogCache()->getDatabase(nsToDatabase(ns));
         if (!status.isOK()) {
             return false;
         }
@@ -308,8 +306,7 @@ namespace mongo {
             officialSequenceNumber = manager->getSequenceNumber();
         }
 
-        const auto& shard =
-            grid.shardRegistry()->findIfExists(conn->getServerAddress());
+        const auto shard = grid.shardRegistry()->getShard(conn->getServerAddress());
         uassert(ErrorCodes::ShardNotFound,
                 str::stream() << conn->getServerAddress() << " is not recognized as a shard",
                 shard);

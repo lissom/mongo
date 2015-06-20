@@ -30,7 +30,6 @@
 
 #include "mongo/db/query/explain.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/owned_pointer_vector.h"
 #include "mongo/db/exec/multi_plan.h"
@@ -48,9 +47,8 @@
 namespace {
 
     using namespace mongo;
-    using boost::scoped_ptr;
-    using std::auto_ptr;
     using std::string;
+    using std::unique_ptr;
     using std::vector;
 
     /**
@@ -290,6 +288,9 @@ namespace mongo {
             bob->append("keyPattern", spec->keyPattern);
             bob->append("indexName", spec->indexName);
             bob->appendBool("isMultiKey", spec->isMultiKey);
+            bob->appendBool("isUnique", spec->isUnique);
+            bob->appendBool("isSparse", spec->isSparse);
+            bob->appendBool("isPartial", spec->isPartial);
             bob->append("indexVersion", spec->indexVersion);
         }
         else if (STAGE_DELETE == stats.stageType) {
@@ -345,6 +346,9 @@ namespace mongo {
             bob->append("keyPattern", spec->keyPattern);
             bob->append("indexName", spec->indexName);
             bob->appendBool("isMultiKey", spec->isMultiKey);
+            bob->appendBool("isUnique", spec->isUnique);
+            bob->appendBool("isSparse", spec->isSparse);
+            bob->appendBool("isPartial", spec->isPartial);
             bob->append("indexVersion", spec->indexVersion);
             bob->append("direction", spec->direction > 0 ? "forward" : "backward");
 
@@ -501,7 +505,7 @@ namespace mongo {
             AllowedIndices* allowedIndicesRaw;
             if (querySettings->getAllowedIndices(planCacheKey, &allowedIndicesRaw)) {
                 // Found an index filter set on the query shape.
-                boost::scoped_ptr<AllowedIndices> allowedIndices(allowedIndicesRaw);
+                std::unique_ptr<AllowedIndices> allowedIndices(allowedIndicesRaw);
                 indexFilterSet = true;
             }
         }
@@ -595,7 +599,7 @@ namespace mongo {
 
         // Get stats of the winning plan from the trial period, if the verbosity level
         // is high enough and there was a runoff between multiple plans.
-        auto_ptr<PlanStageStats> winningStatsTrial;
+        unique_ptr<PlanStageStats> winningStatsTrial;
         if (verbosity >= ExplainCommon::EXEC_ALL_PLANS && NULL != mps) {
             winningStatsTrial.reset(exec->getStats());
             invariant(winningStatsTrial.get());
@@ -612,7 +616,7 @@ namespace mongo {
         //
 
         // Get stats for the winning plan.
-        scoped_ptr<PlanStageStats> winningStats(exec->getStats());
+        unique_ptr<PlanStageStats> winningStats(exec->getStats());
 
         // Get stats for the rejected plans, if more than one plan was considered.
         OwnedPointerVector<PlanStageStats> allPlansStats;

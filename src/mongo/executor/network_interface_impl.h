@@ -29,15 +29,14 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
-#include <boost/thread.hpp>
-#include <boost/thread/condition_variable.hpp>
-#include <boost/thread/mutex.hpp>
 #include <vector>
 
 #include "mongo/client/remote_command_runner_impl.h"
 #include "mongo/executor/network_interface.h"
+#include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/list.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/stdx/thread.h"
 
 namespace mongo {
 namespace executor {
@@ -80,10 +79,10 @@ namespace executor {
         virtual void signalWorkAvailable();
         virtual Date_t now();
         virtual void startCommand(
-                const repl::ReplicationExecutor::CallbackHandle& cbHandle,
+                const TaskExecutor::CallbackHandle& cbHandle,
                 const RemoteCommandRequest& request,
                 const RemoteCommandCompletionFn& onFinish);
-        virtual void cancelCommand(const repl::ReplicationExecutor::CallbackHandle& cbHandle);
+        virtual void cancelCommand(const TaskExecutor::CallbackHandle& cbHandle);
 
     private:
 
@@ -91,12 +90,12 @@ namespace executor {
          * Information describing an in-flight command.
          */
         struct CommandData {
-            repl::ReplicationExecutor::CallbackHandle cbHandle;
+            TaskExecutor::CallbackHandle cbHandle;
             RemoteCommandRequest request;
             RemoteCommandCompletionFn onFinish;
         };
         typedef stdx::list<CommandData> CommandDataList;
-        typedef std::vector<boost::shared_ptr<boost::thread> > ThreadList;
+        typedef std::vector<std::shared_ptr<stdx::thread> > ThreadList;
 
         /**
          * Thread body for threads that synchronously perform network requests from
@@ -122,10 +121,10 @@ namespace executor {
 
         // Mutex guarding the state of this network interface, except for the remote command
         // executor, which has its own concurrency control.
-        boost::mutex _mutex;
+        stdx::mutex _mutex;
 
         // Condition signaled to indicate that there is work in the _pending queue.
-        boost::condition_variable _hasPending;
+        stdx::condition_variable _hasPending;
 
         // Queue of yet-to-be-executed network operations.
         CommandDataList _pending;
@@ -145,7 +144,7 @@ namespace executor {
 
         // Condition signaled to indicate that the executor, blocked in waitForWorkUntil or
         // waitForWork, should wake up.
-        boost::condition_variable _isExecutorRunnableCondition;
+        stdx::condition_variable _isExecutorRunnableCondition;
 
         // Flag indicating whether or not the executor associated with this interface is runnable.
         bool _isExecutorRunnable;

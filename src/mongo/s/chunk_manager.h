@@ -28,12 +28,13 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "mongo/util/concurrency/ticketholder.h"
 #include "mongo/s/chunk.h"
+#include "mongo/s/shard_key_pattern.h"
 
 namespace mongo {
 
@@ -42,11 +43,10 @@ namespace mongo {
     class CollectionType;
     struct QuerySolutionNode;
 
-    typedef boost::shared_ptr<ChunkManager> ChunkManagerPtr;
+    typedef std::shared_ptr<ChunkManager> ChunkManagerPtr;
 
     // The key for the map is max for each Chunk or ChunkRange
-    typedef std::map<BSONObj, boost::shared_ptr<Chunk>, BSONObjCmp> ChunkMap;
-
+    typedef std::map<BSONObj, std::shared_ptr<Chunk>, BSONObjCmp> ChunkMap;
 
     class ChunkRange {
     public:
@@ -78,7 +78,7 @@ namespace mongo {
         const BSONObj _max;
     };
 
-    typedef std::map<BSONObj, boost::shared_ptr<ChunkRange>, BSONObjCmp> ChunkRangeMap;
+    typedef std::map<BSONObj, std::shared_ptr<ChunkRange>, BSONObjCmp> ChunkRangeMap;
 
 
     class ChunkRangeManager {
@@ -206,7 +206,7 @@ namespace mongo {
 
         int getCurrentDesiredChunkSize() const;
 
-        boost::shared_ptr<ChunkManager> reload(bool force = true) const; // doesn't modify self!
+        std::shared_ptr<ChunkManager> reload(bool force = true) const; // doesn't modify self!
 
     private:
         // returns true if load was consistent
@@ -242,9 +242,7 @@ namespace mongo {
         //
         class SplitHeuristics {
         public:
-
-            SplitHeuristics()
-                : _splitTickets(maxParallelSplits) {
+            SplitHeuristics() : _splitTickets(maxParallelSplits) {
             }
 
             TicketHolder _splitTickets;

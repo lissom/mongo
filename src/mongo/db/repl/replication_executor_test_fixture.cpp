@@ -43,10 +43,15 @@ namespace {
 
 } // namespace
 
+    // static
+    Status ReplicationExecutorTest::getDetectableErrorStatus() {
+        return Status(ErrorCodes::InternalError, "Not mutated");
+    }
+
     void ReplicationExecutorTest::launchExecutorThread() {
         ASSERT(!_executorThread);
         _executorThread.reset(
-                new boost::thread(stdx::bind(&ReplicationExecutor::run, _executor.get())));
+                new stdx::thread(stdx::bind(&ReplicationExecutor::run, _executor.get())));
         postExecutorThreadLaunch();
     }
 

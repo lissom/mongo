@@ -28,7 +28,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include <map>
 #include <string>
@@ -42,7 +41,7 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::map;
     using std::string;
     using std::vector;
@@ -89,13 +88,13 @@ namespace {
                          BSONObjBuilder& result) {
 
             map<string, long long> sizes;
-            map<string, scoped_ptr<BSONObjBuilder> > dbShardInfo;
+            map<string, unique_ptr<BSONObjBuilder> > dbShardInfo;
 
             vector<ShardId> shardIds;
             grid.shardRegistry()->getAllShardIds(&shardIds);
 
             for (const ShardId& shardId : shardIds) {
-                const auto& s = grid.shardRegistry()->findIfExists(shardId);
+                const auto s = grid.shardRegistry()->getShard(shardId);
                 if (!s) {
                     continue;
                 }
@@ -119,7 +118,7 @@ namespace {
                         totalSize += size;
                     }
 
-                    scoped_ptr<BSONObjBuilder>& bb = dbShardInfo[name];
+                    unique_ptr<BSONObjBuilder>& bb = dbShardInfo[name];
                     if (!bb.get()) {
                         bb.reset(new BSONObjBuilder());
                     }
@@ -158,7 +157,7 @@ namespace {
             }
 
             // Obtain the cached config shard
-            const auto& configShard = grid.shardRegistry()->findIfExists("config");
+            const auto configShard = grid.shardRegistry()->getShard("config");
 
             {
                 // get config db from the config servers (first one)

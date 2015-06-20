@@ -31,8 +31,6 @@
 #include "mongo/platform/basic.h"
 
 #include <boost/intrusive_ptr.hpp>
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,8 +54,8 @@
 namespace mongo {
 
     using boost::intrusive_ptr;
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
     using std::string;
     using std::vector;
 
@@ -231,7 +229,7 @@ namespace {
 
             // Run merging command on primary shard of database. Need to use ShardConnection so
             // that the merging mongod is sent the config servers on connection init.
-            const auto& shard = grid.shardRegistry()->findIfExists(conf->getPrimaryId());
+            const auto shard = grid.shardRegistry()->getShard(conf->getPrimaryId());
             ShardConnection conn(shard->getConnString(), outputNsOrEmpty);
             BSONObj mergedResults = aggRunCommand(conn.get(),
                                                   dbname,
@@ -387,12 +385,12 @@ namespace {
                 "should only be running an aggregate command here",
                 str::equals(cmd.firstElementFieldName(), "aggregate"));
 
-        scoped_ptr<DBClientCursor> cursor(conn->query(db + ".$cmd",
-                                                      cmd,
-                                                      -1, // nToReturn
-                                                      0, // nToSkip
-                                                      NULL, // fieldsToReturn
-                                                      queryOptions));
+        auto cursor = conn->query(db + ".$cmd",
+                                  cmd,
+                                  -1, // nToReturn
+                                  0, // nToSkip
+                                  NULL, // fieldsToReturn
+                                  queryOptions);
         massert(17014,
                 str::stream() << "aggregate command didn't return results on host: "
                               << conn->toString(),
@@ -414,7 +412,7 @@ namespace {
                                          int queryOptions) {
 
         // Temporary hack. See comment on declaration for details.
-        const auto& shard = grid.shardRegistry()->findIfExists(conf->getPrimaryId());
+        const auto shard = grid.shardRegistry()->getShard(conf->getPrimaryId());
         ShardConnection conn(shard->getConnString(), "");
         BSONObj result = aggRunCommand(conn.get(), conf->name(), cmd, queryOptions);
         conn.done();

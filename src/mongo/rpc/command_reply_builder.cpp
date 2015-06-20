@@ -77,6 +77,21 @@ namespace rpc {
         return _state;
     }
 
+    Protocol CommandReplyBuilder::getProtocol() const {
+        return rpc::Protocol::kOpCommandV1;
+    }
+
+    void CommandReplyBuilder::reset() {
+        // If we are in State::kMetadata, we are already in the 'start' state, so by
+        // immediately returning, we save a heap allocation.
+        if (_state == State::kMetadata) {
+            return;
+        }
+        _builder.reset();
+        _message = stdx::make_unique<Message>();
+        _state = State::kMetadata;
+    }
+
     std::unique_ptr<Message> CommandReplyBuilder::done() {
         invariant(_state == State::kOutputDocs);
         // TODO: we can elide a large copy here by transferring the internal buffer of
@@ -84,6 +99,16 @@ namespace rpc {
         _message->setData(dbCommandReply, _builder.buf(), _builder.len());
         _state = State::kDone;
         return std::move(_message);
+    }
+
+    std::size_t CommandReplyBuilder::availableSpaceForOutputDocs() const {
+        invariant (State::kDone != _state);
+        int intLen = _builder.len();
+        invariant(0 <= intLen);
+        std::size_t len = static_cast<std::size_t>(intLen);
+        std::size_t msgHeaderSz = static_cast<std::size_t>(MsgData::MsgDataHeaderSize);
+        invariant(len + msgHeaderSz <= mongo::MaxMessageSizeBytes);
+        return mongo::MaxMessageSizeBytes - len - msgHeaderSz;
     }
 
 }  // rpc

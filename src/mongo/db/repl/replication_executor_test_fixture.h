@@ -28,9 +28,7 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/thread.hpp>
-
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 
 namespace mongo {
@@ -51,6 +49,14 @@ namespace repl {
      * a NetworkInterfaceMock.
      */
     class ReplicationExecutorTest : public unittest::Test {
+    public:
+
+        /**
+         * Creates an initial error status suitable for checking if
+         * component has modified the 'status' field in test fixture.
+         */
+        static Status getDetectableErrorStatus();
+
     protected:
         executor::NetworkInterfaceMock* getNet() { return _net; }
         ReplicationExecutor& getExecutor() { return *_executor; }
@@ -79,21 +85,21 @@ namespace repl {
          * To run the executor in the background, tests should invoke launchExecutorThread() or
          * override this function() to achieve the same effect.
          */
-        virtual void setUp();
+        void setUp() override;
 
         /**
          * Destroys the replication executor.
          *
          * Shuts down running background executor.
          */
-        virtual void tearDown();
+        void tearDown() override;
 
 
     private:
         executor::NetworkInterfaceMock* _net;
         StorageInterfaceMock* _storage;
         unique_ptr<ReplicationExecutor> _executor;
-        unique_ptr<boost::thread> _executorThread;
+        unique_ptr<stdx::thread> _executorThread;
     };
 
 }  // namespace repl

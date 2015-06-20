@@ -30,7 +30,6 @@
  * This file tests db/exec/fetch.cpp.  Fetch goes to disk so we cannot test outside of a dbtest.
  */
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/catalog/collection.h"
@@ -47,8 +46,8 @@
 
 namespace QueryStageFetch {
 
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::set;
 
     class QueryStageFetchBase {
@@ -108,7 +107,7 @@ namespace QueryStageFetch {
             ASSERT_EQUALS(size_t(1), locs.size());
 
             // Create a mock stage that returns the WSM.
-            auto_ptr<QueuedDataStage> mockStage(new QueuedDataStage(&ws));
+            unique_ptr<QueuedDataStage> mockStage(new QueuedDataStage(&ws));
 
             // Mock data.
             {
@@ -126,7 +125,7 @@ namespace QueryStageFetch {
                 mockStage->pushBack(mockMember);
             }
 
-            auto_ptr<FetchStage> fetchStage(new FetchStage(&_txn, &ws, mockStage.release(),
+            unique_ptr<FetchStage> fetchStage(new FetchStage(&_txn, &ws, mockStage.release(),
                                                            NULL, coll));
 
             WorkingSetID id = WorkingSet::INVALID_ID;
@@ -170,7 +169,7 @@ namespace QueryStageFetch {
             ASSERT_EQUALS(size_t(1), locs.size());
 
             // Create a mock stage that returns the WSM.
-            auto_ptr<QueuedDataStage> mockStage(new QueuedDataStage(&ws));
+            unique_ptr<QueuedDataStage> mockStage(new QueuedDataStage(&ws));
 
             // Mock data.
             {
@@ -188,10 +187,10 @@ namespace QueryStageFetch {
             BSONObj filterObj = BSON("foo" << 6);
             StatusWithMatchExpression swme = MatchExpressionParser::parse(filterObj);
             verify(swme.isOK());
-            auto_ptr<MatchExpression> filterExpr(swme.getValue());
+            unique_ptr<MatchExpression> filterExpr(swme.getValue());
 
             // Matcher requires that foo==6 but we only have data with foo==5.
-            auto_ptr<FetchStage> fetchStage(
+            unique_ptr<FetchStage> fetchStage(
                      new FetchStage(&_txn, &ws, mockStage.release(), filterExpr.get(), coll));
 
             // First call should return a fetch request as it's not in memory.

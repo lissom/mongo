@@ -1,41 +1,42 @@
-// d_migrate.cpp
-
 /**
-*    Copyright (C) 2008-2014 MongoDB Inc.
-*
-*    This program is free software: you can redistribute it and/or  modify
-*    it under the terms of the GNU Affero General Public License, version 3,
-*    as published by the Free Software Foundation.
-*
-*    This program is distributed in the hope that it will be useful,
-*    but WITHOUT ANY WARRANTY; without even the implied warranty of
-*    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-*    GNU Affero General Public License for more details.
-*
-*    You should have received a copy of the GNU Affero General Public License
-*    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*
-*    As a special exception, the copyright holders give permission to link the
-*    code of portions of this program with the OpenSSL library under certain
-*    conditions as described in each individual source file and distribute
-*    linked combinations including the program with the OpenSSL library. You
-*    must comply with the GNU Affero General Public License in all respects
-*    for all of the code used other than as permitted herein. If you modify
-*    file(s) with this exception, you may extend this exception to your
-*    version of the file(s), but you are not obligated to do so. If you do not
-*    wish to do so, delete this exception statement from your version. If you
-*    delete this exception statement from all source files in the program,
-*    then also delete it in the license file.
-*/
+ *    Copyright (C) 2008-2015 MongoDB Inc.
+ *
+ *    This program is free software: you can redistribute it and/or  modify
+ *    it under the terms of the GNU Affero General Public License, version 3,
+ *    as published by the Free Software Foundation.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU Affero General Public License for more details.
+ *
+ *    You should have received a copy of the GNU Affero General Public License
+ *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *    As a special exception, the copyright holders give permission to link the
+ *    code of portions of this program with the OpenSSL library under certain
+ *    conditions as described in each individual source file and distribute
+ *    linked combinations including the program with the OpenSSL library. You
+ *    must comply with the GNU Affero General Public License in all respects
+ *    for all of the code used other than as permitted herein. If you modify
+ *    file(s) with this exception, you may extend this exception to your
+ *    version of the file(s), but you are not obligated to do so. If you do not
+ *    wish to do so, delete this exception statement from your version. If you
+ *    delete this exception statement from all source files in the program,
+ *    then also delete it in the license file.
+ */
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kSharding
 
 #include "mongo/platform/basic.h"
 
 #include <algorithm>
-#include <boost/thread/thread.hpp>
+#include <chrono>
+#include <condition_variable>
 #include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "mongo/client/connpool.h"
@@ -77,16 +78,16 @@
 #include "mongo/s/config.h"
 #include "mongo/s/d_state.h"
 #include "mongo/s/catalog/dist_lock_manager.h"
-#include "mongo/s/grid.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/s/client/shard_registry.h"
+#include "mongo/s/grid.h"
+#include "mongo/s/shard_key_pattern.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/elapsed_tracker.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
 #include "mongo/util/processinfo.h"
-#include "mongo/util/queue.h"
 #include "mongo/util/startup_test.h"
 
 // Pause while a fail point is enabled.
@@ -94,6 +95,7 @@
 
 namespace mongo {
 
+    using namespace std::chrono;
     using std::list;
     using std::set;
     using std::string;
@@ -193,7 +195,7 @@ namespace {
 
             CurOp * op = CurOp::get(_txn);
             {
-                stdx::lock_guard<Client> lk(*_txn->getClient());
+                std::lock_guard<Client> lk(*_txn->getClient());
                 op->setMessage_inlock(s.c_str());
             }
 
@@ -266,7 +268,7 @@ namespace {
             // Get global shared to synchronize with logOp. Also see comments in the class
             // members declaration for more details.
             Lock::GlobalRead globalShared(txn->lockState());
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            std::lock_guard<std::mutex> lk(_mutex);
 
             if (_active) {
                 return false;
@@ -283,7 +285,7 @@ namespace {
 
             _active = true;
 
-            boost::lock_guard<boost::mutex> tLock(_cloneLocsMutex);
+            std::lock_guard<std::mutex> tLock(_cloneLocsMutex);
             verify(_cloneLocs.size() == 0);
 
             return true;
@@ -296,7 +298,7 @@ namespace {
             // Get global shared to synchronize with logOp. Also see comments in the class
             // members declaration for more details.
             Lock::GlobalRead globalShared(txn->lockState());
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            std::lock_guard<std::mutex> lk(_mutex);
 
             _active = false;
             _deleteNotifyExec.reset( NULL );
@@ -307,7 +309,7 @@ namespace {
             _reload.clear();
             _memoryUsed = 0;
 
-            boost::lock_guard<boost::mutex> cloneLock(_cloneLocsMutex);
+            std::lock_guard<std::mutex> cloneLock(_cloneLocsMutex);
             _cloneLocs.clear();
         }
 
@@ -435,7 +437,7 @@ namespace {
             {
                 AutoGetCollectionForRead ctx(txn, getNS());
 
-                boost::lock_guard<boost::mutex> sl(_mutex);
+                std::lock_guard<std::mutex> sl(_mutex);
                 if (!_active) {
                     errmsg = "no active migration!";
                     return false;
@@ -494,7 +496,7 @@ namespace {
                 // It's alright not to lock _mutex all the way through based on the assumption
                 // that this is only called by the main thread that drives the migration and
                 // only it can start and stop the current migration.
-                boost::lock_guard<boost::mutex> sl(_mutex);
+                std::lock_guard<std::mutex> sl(_mutex);
 
                 invariant( _deleteNotifyExec.get() == NULL );
                 WorkingSet* ws = new WorkingSet();
@@ -536,7 +538,7 @@ namespace {
                 avgRecSize = 0;
                 maxRecsWhenFull = Chunk::MaxObjectPerChunk + 1;
             }
-            
+
             // do a full traversal of the chunk and don't stop even if we think it is a large chunk
             // we want the number of records to better report, in that case
             bool isLargeChunk = false;
@@ -544,7 +546,7 @@ namespace {
             RecordId dl;
             while (PlanExecutor::ADVANCED == exec->getNext(NULL, &dl)) {
                 if ( ! isLargeChunk ) {
-                    boost::lock_guard<boost::mutex> lk(_cloneLocsMutex);
+                    std::lock_guard<std::mutex> lk(_cloneLocsMutex);
                     _cloneLocs.insert( dl );
                 }
 
@@ -557,7 +559,7 @@ namespace {
             exec.reset();
 
             if ( isLargeChunk ) {
-                boost::lock_guard<boost::mutex> sl(_mutex);
+                std::lock_guard<std::mutex> sl(_mutex);
                 warning() << "cannot move chunk: the maximum number of documents for a chunk is "
                           << maxRecsWhenFull << " , the maximum chunk size is " << maxChunkSize
                           << " , average document size is " << avgRecSize
@@ -585,7 +587,7 @@ namespace {
             {
                 AutoGetCollectionForRead ctx(txn, getNS());
 
-                boost::lock_guard<boost::mutex> sl(_mutex);
+                std::lock_guard<std::mutex> sl(_mutex);
                 if (!_active) {
                     errmsg = "not active";
                     return false;
@@ -608,7 +610,7 @@ namespace {
             while (!isBufferFilled) {
                 AutoGetCollectionForRead ctx(txn, getNS());
 
-                boost::lock_guard<boost::mutex> sl(_mutex);
+                std::lock_guard<std::mutex> sl(_mutex);
                 if (!_active) {
                     errmsg = "not active";
                     return false;
@@ -623,7 +625,7 @@ namespace {
                     return false;
                 }
 
-                boost::lock_guard<boost::mutex> lk(_cloneLocsMutex);
+                std::lock_guard<std::mutex> lk(_cloneLocsMutex);
                 set<RecordId>::iterator cloneLocsIter = _cloneLocs.begin();
                 for ( ; cloneLocsIter != _cloneLocs.end(); ++cloneLocsIter) {
                     if (tracker.intervalHasElapsed()) // should I yield?
@@ -666,33 +668,33 @@ namespace {
             // that check only works for non-mmapv1 engines, and this is needed
             // for mmapv1.
 
-            boost::lock_guard<boost::mutex> lk(_cloneLocsMutex);
+            std::lock_guard<std::mutex> lk(_cloneLocsMutex);
             _cloneLocs.erase( dl );
         }
 
         std::size_t cloneLocsRemaining() {
-            boost::lock_guard<boost::mutex> lk(_cloneLocsMutex);
+            std::lock_guard<std::mutex> lk(_cloneLocsMutex);
             return _cloneLocs.size();
         }
 
         long long mbUsed() const {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            std::lock_guard<std::mutex> lk(_mutex);
             return _memoryUsed / ( 1024 * 1024 );
         }
 
         bool getInCriticalSection() const {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            std::lock_guard<std::mutex> lk(_mutex);
             return _inCriticalSection;
         }
 
         void setInCriticalSection( bool b ) {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            std::lock_guard<std::mutex> lk(_mutex);
             _inCriticalSection = b;
             _inCriticalSectionCV.notify_all();
         }
 
         std::string getNS() const {
-            boost::lock_guard<boost::mutex> sl(_mutex);
+            std::lock_guard<std::mutex> sl(_mutex);
             return _ns;
         }
 
@@ -700,13 +702,10 @@ namespace {
          * @return true if we are NOT in the critical section
          */
         bool waitTillNotInCriticalSection( int maxSecondsToWait ) {
-            boost::xtime xt;
-            boost::xtime_get(&xt, MONGO_BOOST_TIME_UTC);
-            xt.sec += maxSecondsToWait;
-
-            boost::unique_lock<boost::mutex> lk(_mutex);
+            const auto deadline = system_clock::now() + seconds(maxSecondsToWait);
+            std::unique_lock<std::mutex> lk(_mutex);
             while (_inCriticalSection) {
-                if (!_inCriticalSectionCV.timed_wait(lk, xt))
+                if (std::cv_status::timeout == _inCriticalSectionCV.wait_until(lk, deadline))
                     return false;
             }
 
@@ -716,8 +715,8 @@ namespace {
         bool isActive() const { return _getActive(); }
 
     private:
-        bool _getActive() const { boost::lock_guard<boost::mutex> lk(_mutex); return _active; }
-        void _setActive( bool b ) { boost::lock_guard<boost::mutex> lk(_mutex); _active = b; }
+        bool _getActive() const { std::lock_guard<std::mutex> lk(_mutex); return _active; }
+        void _setActive( bool b ) { std::lock_guard<std::mutex> lk(_mutex); _active = b; }
 
         /**
          * Used to commit work for LogOpForSharding. Used to keep track of changes in documents
@@ -740,7 +739,7 @@ namespace {
             virtual void commit() {
                 switch (_op) {
                 case 'd': {
-                    boost::lock_guard<boost::mutex> sl(_migrateFromStatus->_mutex);
+                    std::lock_guard<std::mutex> sl(_migrateFromStatus->_mutex);
                     _migrateFromStatus->_deleted.push_back(_idObj);
                     _migrateFromStatus->_memoryUsed += _idObj.firstElement().size() + 5;
                     break;
@@ -749,7 +748,7 @@ namespace {
                 case 'i':
                 case 'u':
                 {
-                    boost::lock_guard<boost::mutex> sl(_migrateFromStatus->_mutex);
+                    std::lock_guard<std::mutex> sl(_migrateFromStatus->_mutex);
                     _migrateFromStatus->_reload.push_back(_idObj);
                     _migrateFromStatus->_memoryUsed += _idObj.firstElement().size() + 5;
                     break;
@@ -829,9 +828,9 @@ namespace {
         //
         // Global Lock -> _mutex -> _cloneLocsMutex
 
-        mutable mongo::mutex _mutex;
+        mutable std::mutex _mutex;
 
-        boost::condition _inCriticalSectionCV;                                           // (M)
+        std::condition_variable _inCriticalSectionCV;                                   // (M)
 
         // Is migration currently in critical section. This can be used to block new writes.
         bool _inCriticalSection;                                                         // (M)
@@ -855,7 +854,7 @@ namespace {
         BSONObj _max;                                                                    // (MG)
         BSONObj _shardKeyPattern;                                                        // (MG)
 
-        mutable mongo::mutex _cloneLocsMutex;
+        mutable std::mutex _cloneLocsMutex;
 
         // List of record id that needs to be transferred from here to the other side.
         set<RecordId> _cloneLocs;                                                        // (C)
@@ -1155,7 +1154,7 @@ namespace {
             MONGO_FP_PAUSE_WHILE(moveChunkHangAtStep1);
 
             // 2.
-            
+
             if ( migrateFromStatus.isActive() ) {
                 errmsg = "migration already in progress";
                 warning() << errmsg;
@@ -1261,7 +1260,7 @@ namespace {
 
             // 3.
             MigrateStatusHolder statusHolder(txn, ns, min, max, shardKeyPattern);
-            
+
             if (statusHolder.isAnotherMigrationActive()) {
                 errmsg = "moveChunk is already in progress from this shard";
                 warning() << errmsg;
@@ -1273,16 +1272,16 @@ namespace {
 
             // Resolve the shard connection strings.
             {
-                boost::shared_ptr<Shard> fromShard =
-                    grid.shardRegistry()->findIfExists(fromShardName);
+                std::shared_ptr<Shard> fromShard =
+                    grid.shardRegistry()->getShard(fromShardName);
                 uassert(28674,
                         str::stream() << "Source shard " << fromShardName
                                       << " is missing. This indicates metadata corruption.",
                         fromShard);
-                
+
                 fromShardCS = fromShard->getConnString();
 
-                boost::shared_ptr<Shard> toShard = grid.shardRegistry()->findIfExists(toShardName);
+                std::shared_ptr<Shard> toShard = grid.shardRegistry()->getShard(toShardName);
                 uassert(28675,
                         str::stream() << "Destination shard " << toShardName
                                       << " is missing. This indicates metadata corruption.",
@@ -1630,7 +1629,7 @@ namespace {
 
                 Status applyOpsStatus{Status::OK()};
                 try {
-                    
+
                     // For testing migration failures
                     if ( MONGO_FAIL_POINT(failMigrationConfigWritePrepare) ) {
                         throw DBException( "mock migration failure before config write",
@@ -1838,12 +1837,12 @@ namespace {
         }
 
         void setState(State newState) {
-            boost::lock_guard<boost::mutex> sl(_mutex);
+            std::lock_guard<std::mutex> sl(_mutex);
             _state = newState;
         }
 
         State getState() const {
-            boost::lock_guard<boost::mutex> sl(_mutex);
+            std::lock_guard<std::mutex> sl(_mutex);
             return _state;
         }
 
@@ -1855,7 +1854,7 @@ namespace {
                        const BSONObj& min,
                        const BSONObj& max,
                        const BSONObj& shardKeyPattern) {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            std::lock_guard<std::mutex> lk(_mutex);
 
             if (_active) {
                 return Status(ErrorCodes::ConflictingOperationInProgress,
@@ -1898,7 +1897,7 @@ namespace {
             }
             catch ( std::exception& e ) {
                 {
-                    boost::lock_guard<boost::mutex> sl(_mutex);
+                    std::lock_guard<std::mutex> sl(_mutex);
                     _state = FAIL;
                     _errmsg = e.what();
                 }
@@ -1907,7 +1906,7 @@ namespace {
             }
             catch ( ... ) {
                 {
-                    boost::lock_guard<boost::mutex> sl(_mutex);
+                    std::lock_guard<std::mutex> sl(_mutex);
                     _state = FAIL;
                     _errmsg = "UNKNOWN ERROR";
                 }
@@ -1994,9 +1993,9 @@ namespace {
                 }
             }
 
-            {                
+            {
                 // 1. copy indexes
-                
+
                 vector<BSONObj> indexSpecs;
                 {
                     const std::list<BSONObj> indexes = conn->getIndexSpecs(ns);
@@ -2192,7 +2191,7 @@ namespace {
                         thisTime++;
 
                         {
-                            boost::lock_guard<boost::mutex> statsLock(_mutex);
+                            std::lock_guard<std::mutex> statsLock(_mutex);
                             _numCloned++;
                             _clonedBytes += docToClone.objsize();
                         }
@@ -2244,7 +2243,7 @@ namespace {
                         break;
 
                     apply(txn, ns, min, max, shardKeyPattern, res, &lastOpApplied);
-                    
+
                     const int maxIterations = 3600*50;
                     int i;
                     for ( i=0;i<maxIterations; i++) {
@@ -2257,10 +2256,10 @@ namespace {
 
                             return;
                         }
-                        
+
                         if (opReplicatedEnough(txn, lastOpApplied, writeConcern))
                             break;
-                        
+
                         if ( i > 100 ) {
                             warning() << "secondaries having hard time keeping up with migrate" << migrateLog;
                         }
@@ -2274,14 +2273,14 @@ namespace {
                         conn.done();
                         setState(FAIL);
                         return;
-                    } 
+                    }
                 }
 
                 timing.done(4);
                 MONGO_FP_PAUSE_WHILE(migrateThreadHangAtStep4);
             }
 
-            { 
+            {
                 // pause to wait for replication
                 // this will prevent us from going into critical section until we're ready
                 Timer t;
@@ -2340,7 +2339,7 @@ namespace {
                     if ( getState() == ABORT ) {
                         return;
                     }
-                    
+
                     // We know we're finished when:
                     // 1) The from side has told us that it has locked writes (COMMIT_START)
                     // 2) We've checked at least one more time for un-transmitted mods
@@ -2348,7 +2347,7 @@ namespace {
                         if (flushPendingWrites(txn, ns, min, max, lastOpApplied, writeConcern))
                             break;
                     }
-                    
+
                     // Only sleep if we aren't committing
                     if ( getState() == STEADY ) sleepmillis( 10 );
                 }
@@ -2367,7 +2366,7 @@ namespace {
         }
 
         void status(BSONObjBuilder& b) {
-            boost::lock_guard<boost::mutex> sl(_mutex);
+            std::lock_guard<std::mutex> sl(_mutex);
 
             b.appendBool("active", _active);
 
@@ -2582,20 +2581,16 @@ namespace {
         }
 
         bool startCommit() {
-            boost::unique_lock<boost::mutex> lock(_mutex);
+            std::unique_lock<std::mutex> lock(_mutex);
 
             if (_state != STEADY) {
                 return false;
             }
 
-            boost::xtime xt;
-            boost::xtime_get(&xt, MONGO_BOOST_TIME_UTC);
-            xt.sec += 30;
-
+            const auto deadline = system_clock::now() + seconds(30);
             _state = COMMIT_START;
             while (_active) {
-                if ( ! isActiveCV.timed_wait( lock, xt ) ){
-                    // TIMEOUT
+                if (std::cv_status::timeout == isActiveCV.wait_until(lock, deadline)) {
                     _state = FAIL;
                     log() << "startCommit never finished!" << migrateLog;
                     return false;
@@ -2611,22 +2606,22 @@ namespace {
         }
 
         void abort() {
-            boost::lock_guard<boost::mutex> sl(_mutex);
+            std::lock_guard<std::mutex> sl(_mutex);
             _state = ABORT;
             _errmsg = "aborted";
         }
 
-        bool getActive() const { boost::lock_guard<boost::mutex> lk(_mutex); return _active; }
-        void setActive( bool b ) { 
-            boost::lock_guard<boost::mutex> lk(_mutex);
+        bool getActive() const { std::lock_guard<std::mutex> lk(_mutex); return _active; }
+        void setActive( bool b ) {
+            std::lock_guard<std::mutex> lk(_mutex);
             _active = b;
-            isActiveCV.notify_all(); 
+            isActiveCV.notify_all();
         }
 
         // Guards all fields.
-        mutable mongo::mutex _mutex;
+        mutable std::mutex _mutex;
         bool _active;
-        boost::condition isActiveCV;
+        std::condition_variable isActiveCV;
 
         std::string _ns;
         std::string _from;
@@ -2827,7 +2822,7 @@ namespace {
                 return appendCommandStatus(result, prepareStatus);
             }
 
-            boost::thread m(migrateThread,
+            std::thread m(migrateThread,
                             ns,
                             min,
                             max,
@@ -2836,6 +2831,7 @@ namespace {
                             currentVersion.epoch(),
                             writeConcern);
 
+            m.detach();
             result.appendBool( "started" , true );
             return true;
         }

@@ -29,8 +29,6 @@
 #include "mongo/platform/basic.h"
 
 #include <map>
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/thread.hpp>
 
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
@@ -39,6 +37,7 @@
 #include "mongo/db/repl/storage_interface_mock.h"
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/barrier.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
@@ -63,18 +62,18 @@ namespace {
         return !(lhs == rhs);
     }
 
-    void setStatus(const ReplicationExecutor::CallbackData& cbData, Status* target) {
+    void setStatus(const ReplicationExecutor::CallbackArgs& cbData, Status* target) {
         *target = cbData.status;
     }
 
-    void setStatusAndShutdown(const ReplicationExecutor::CallbackData& cbData,
+    void setStatusAndShutdown(const ReplicationExecutor::CallbackArgs& cbData,
                               Status* target) {
         setStatus(cbData, target);
         if (cbData.status != ErrorCodes::CallbackCanceled)
             cbData.executor->shutdown();
     }
 
-    void setStatusAndTriggerEvent(const ReplicationExecutor::CallbackData& cbData,
+    void setStatusAndTriggerEvent(const ReplicationExecutor::CallbackArgs& cbData,
                                   Status* outStatus,
                                   ReplicationExecutor::EventHandle event) {
         *outStatus = cbData.status;
@@ -83,7 +82,7 @@ namespace {
         cbData.executor->signalEvent(event);
     }
 
-    void scheduleSetStatusAndShutdown(const ReplicationExecutor::CallbackData& cbData,
+    void scheduleSetStatusAndShutdown(const ReplicationExecutor::CallbackArgs& cbData,
                                       Status* outStatus1,
                                       Status* outStatus2) {
         if (!cbData.status.isOK()) {
@@ -99,7 +98,7 @@ namespace {
 
     TEST_F(ReplicationExecutorTest, RunOne) {
         ReplicationExecutor& executor = getExecutor();
-        Status status(ErrorCodes::InternalError, "Not mutated");
+        Status status = getDetectableErrorStatus();
         ASSERT_OK(executor.scheduleWork(stdx::bind(setStatusAndShutdown,
                                                      stdx::placeholders::_1,
                                                      &status)).getStatus());
@@ -109,7 +108,7 @@ namespace {
 
     TEST_F(ReplicationExecutorTest, Schedule1ButShutdown) {
         ReplicationExecutor& executor = getExecutor();
-        Status status(ErrorCodes::InternalError, "Not mutated");
+        Status status = getDetectableErrorStatus();
         ASSERT_OK(executor.scheduleWork(stdx::bind(setStatusAndShutdown,
                                                    stdx::placeholders::_1,
                                                    &status)).getStatus());
@@ -120,8 +119,8 @@ namespace {
 
     TEST_F(ReplicationExecutorTest, Schedule2Cancel1) {
         ReplicationExecutor& executor = getExecutor();
-        Status status1(ErrorCodes::InternalError, "Not mutated");
-        Status status2(ErrorCodes::InternalError, "Not mutated");
+        Status status1 = getDetectableErrorStatus();
+        Status status2 = getDetectableErrorStatus();
         ReplicationExecutor::CallbackHandle cb = unittest::assertGet(
             executor.scheduleWork(stdx::bind(setStatusAndShutdown,
                                              stdx::placeholders::_1,
@@ -137,8 +136,8 @@ namespace {
 
     TEST_F(ReplicationExecutorTest, OneSchedulesAnother) {
         ReplicationExecutor& executor = getExecutor();
-        Status status1(ErrorCodes::InternalError, "Not mutated");
-        Status status2(ErrorCodes::InternalError, "Not mutated");
+        Status status1 = getDetectableErrorStatus();
+        Status status2 = getDetectableErrorStatus();
         ASSERT_OK(executor.scheduleWork(stdx::bind(scheduleSetStatusAndShutdown,
                                                    stdx::placeholders::_1,
                                                    &status1,
@@ -154,13 +153,13 @@ namespace {
         EventChainAndWaitingTest();
         void run();
     private:
-        void onGo(const ReplicationExecutor::CallbackData& cbData);
-        void onGoAfterTriggered(const ReplicationExecutor::CallbackData& cbData);
+        void onGo(const ReplicationExecutor::CallbackArgs& cbData);
+        void onGoAfterTriggered(const ReplicationExecutor::CallbackArgs& cbData);
 
         NetworkInterfaceMock* net;
         StorageInterfaceMock* storage;
         ReplicationExecutor executor;
-        boost::thread executorThread;
+        stdx::thread executorThread;
         const ReplicationExecutor::EventHandle goEvent;
         const ReplicationExecutor::EventHandle event2;
         const ReplicationExecutor::EventHandle event3;
@@ -214,7 +213,7 @@ namespace {
 
         ReplicationExecutor::EventHandle neverSignaledEvent =
             unittest::assertGet(executor.makeEvent());
-        boost::thread neverSignaledWaiter(stdx::bind(&ReplicationExecutor::waitForEvent,
+        stdx::thread neverSignaledWaiter(stdx::bind(&ReplicationExecutor::waitForEvent,
                                                      &executor,
                                                      neverSignaledEvent));
         ReplicationExecutor::CallbackHandle shutdownCallback = unittest::assertGet(
@@ -231,12 +230,12 @@ namespace {
         ASSERT_OK(status5);
     }
 
-    void EventChainAndWaitingTest::onGo(const ReplicationExecutor::CallbackData& cbData) {
+    void EventChainAndWaitingTest::onGo(const ReplicationExecutor::CallbackArgs& cbData) {
         if (!cbData.status.isOK()) {
             status1 = cbData.status;
             return;
         }
-        ReplicationExecutor* executor = cbData.executor;
+        executor::TaskExecutor* executor = cbData.executor;
         StatusWith<ReplicationExecutor::EventHandle> errorOrTriggerEvent = executor->makeEvent();
         if (!errorOrTriggerEvent.isOK()) {
             status1 = errorOrTriggerEvent.getStatus();
@@ -272,7 +271,7 @@ namespace {
     }
 
     void EventChainAndWaitingTest::onGoAfterTriggered(
-            const ReplicationExecutor::CallbackData& cbData) {
+            const ReplicationExecutor::CallbackArgs& cbData) {
         status4 = cbData.status;
         if (!cbData.status.isOK()) {
             return;
@@ -284,9 +283,9 @@ namespace {
         NetworkInterfaceMock* net = getNet();
         ReplicationExecutor& executor = getExecutor();
         launchExecutorThread();
-        Status status1(ErrorCodes::InternalError, "Not mutated");
-        Status status2(ErrorCodes::InternalError, "Not mutated");
-        Status status3(ErrorCodes::InternalError, "Not mutated");
+        Status status1 = getDetectableErrorStatus();
+        Status status2 = getDetectableErrorStatus();
+        Status status3 = getDetectableErrorStatus();
         const Date_t now = net->now();
         const ReplicationExecutor::CallbackHandle cb1 =
             unittest::assertGet(executor.scheduleWorkAt(now + Milliseconds(100),
@@ -320,7 +319,7 @@ namespace {
     }
 
     static void setStatusOnRemoteCommandCompletion(
-            const ReplicationExecutor::RemoteCommandCallbackData& cbData,
+            const ReplicationExecutor::RemoteCommandCallbackArgs& cbData,
             const RemoteCommandRequest& expectedRequest,
             Status* outStatus) {
 
@@ -339,7 +338,7 @@ namespace {
         NetworkInterfaceMock* net = getNet();
         ReplicationExecutor& executor = getExecutor();
         launchExecutorThread();
-        Status status1(ErrorCodes::InternalError, "Not mutated");
+        Status status1 = getDetectableErrorStatus();
         const RemoteCommandRequest request(
                 HostAndPort("localhost", 27017),
                 "mydb",
@@ -366,7 +365,7 @@ namespace {
 
     TEST_F(ReplicationExecutorTest, ScheduleAndCancelRemoteCommand) {
         ReplicationExecutor& executor = getExecutor();
-        Status status1(ErrorCodes::InternalError, "Not mutated");
+        Status status1 = getDetectableErrorStatus();
         const RemoteCommandRequest request(
                 HostAndPort("localhost", 27017),
                 "mydb",
@@ -391,16 +390,15 @@ namespace {
         unittest::Barrier barrier(2U);
         NamespaceString nss("mydb", "mycoll");
         ReplicationExecutor& executor = getExecutor();
-        Status status1(ErrorCodes::InternalError, "Not mutated");
+        Status status1 = getDetectableErrorStatus();
         OperationContext* txn = nullptr;
-        using CallbackData = ReplicationExecutor::CallbackData;
+        using CallbackData = ReplicationExecutor::CallbackArgs;
         ASSERT_OK(executor.scheduleDBWork([&](const CallbackData& cbData) {
             status1 = cbData.status;
             txn = cbData.txn;
             barrier.countDownAndWait();
-            if (cbData.status != ErrorCodes::CallbackCanceled) {
+            if (cbData.status != ErrorCodes::CallbackCanceled)
                 cbData.executor->shutdown();
-            }
         }).getStatus());
         ASSERT_OK(executor.scheduleWorkWithGlobalExclusiveLock([&](const CallbackData& cbData) {
             barrier.countDownAndWait();
@@ -413,19 +411,18 @@ namespace {
     TEST_F(ReplicationExecutorTest, ScheduleDBWorkWithCollectionLock) {
         NamespaceString nss("mydb", "mycoll");
         ReplicationExecutor& executor = getExecutor();
-        Status status1(ErrorCodes::InternalError, "Not mutated");
+        Status status1 = getDetectableErrorStatus();
         OperationContext* txn = nullptr;
         bool collectionIsLocked = false;
-        using CallbackData = ReplicationExecutor::CallbackData;
+        using CallbackData = ReplicationExecutor::CallbackArgs;
         ASSERT_OK(executor.scheduleDBWork([&](const CallbackData& cbData) {
             status1 = cbData.status;
             txn = cbData.txn;
             collectionIsLocked = txn ?
                 txn->lockState()->isCollectionLockedForMode(nss.ns(), MODE_X) :
                 false;
-            if (cbData.status != ErrorCodes::CallbackCanceled) {
+            if (cbData.status != ErrorCodes::CallbackCanceled)
                 cbData.executor->shutdown();
-            }
         }, nss, MODE_X).getStatus());
         executor.run();
         ASSERT_OK(status1);
@@ -435,17 +432,16 @@ namespace {
 
     TEST_F(ReplicationExecutorTest, ScheduleExclusiveLockOperation) {
         ReplicationExecutor& executor = getExecutor();
-        Status status1(ErrorCodes::InternalError, "Not mutated");
+        Status status1 = getDetectableErrorStatus();
         OperationContext* txn = nullptr;
         bool lockIsW = false;
-        using CallbackData = ReplicationExecutor::CallbackData;
+        using CallbackData = ReplicationExecutor::CallbackArgs;
         ASSERT_OK(executor.scheduleWorkWithGlobalExclusiveLock([&](const CallbackData& cbData) {
             status1 = cbData.status;
             txn = cbData.txn;
             lockIsW = txn ? txn->lockState()->isW() : false;
-            if (cbData.status != ErrorCodes::CallbackCanceled) {
+            if (cbData.status != ErrorCodes::CallbackCanceled)
                 cbData.executor->shutdown();
-            }
         }).getStatus());
         executor.run();
         ASSERT_OK(status1);
@@ -455,23 +451,21 @@ namespace {
 
     TEST_F(ReplicationExecutorTest, ShutdownBeforeRunningSecondExclusiveLockOperation) {
         ReplicationExecutor& executor = getExecutor();
-        using CallbackData = ReplicationExecutor::CallbackData;
-        Status status1(ErrorCodes::InternalError, "Not mutated");
+        using CallbackData = ReplicationExecutor::CallbackArgs;
+        Status status1 = getDetectableErrorStatus();
         ASSERT_OK(executor.scheduleWorkWithGlobalExclusiveLock([&](const CallbackData& cbData) {
             status1 = cbData.status;
-            if (cbData.status != ErrorCodes::CallbackCanceled) {
+            if (cbData.status != ErrorCodes::CallbackCanceled)
                 cbData.executor->shutdown();
-            }
         }).getStatus());
         // Second db work item is invoked by the main executor thread because the work item is
         // moved from the exclusive lock queue to the ready work item queue when the first callback
         // cancels the executor.
-        Status status2(ErrorCodes::InternalError, "Not mutated");
+        Status status2 = getDetectableErrorStatus();
         ASSERT_OK(executor.scheduleWorkWithGlobalExclusiveLock([&](const CallbackData& cbData) {
             status2 = cbData.status;
-            if (cbData.status != ErrorCodes::CallbackCanceled) {
+            if (cbData.status != ErrorCodes::CallbackCanceled)
                 cbData.executor->shutdown();
-            }
         }).getStatus());
         executor.run();
         ASSERT_OK(status1);

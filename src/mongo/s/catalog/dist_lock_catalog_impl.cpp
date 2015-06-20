@@ -41,6 +41,7 @@
 #include "mongo/db/lasterror.h"
 #include "mongo/db/query/find_and_modify_request.h"
 #include "mongo/rpc/get_status_from_command_result.h"
+#include "mongo/rpc/metadata/sharding_metadata.h"
 #include "mongo/s/type_lockpings.h"
 #include "mongo/s/type_locks.h"
 #include "mongo/s/write_ops/wc_error_detail.h"
@@ -115,11 +116,14 @@ namespace {
 
     /**
      * Extract the electionId from a command response.
+     *
+     * TODO: this needs to support OP_COMMAND metadata.
      */
     StatusWith<OID> extractElectionId(const BSONObj& responseObj) {
+
         BSONElement gleStatsElem;
         auto gleStatus = bsonExtractTypedField(responseObj,
-                                               kGLEStatsFieldName,
+                                               "$gleStats",
                                                Object,
                                                &gleStatsElem);
 
@@ -130,7 +134,7 @@ namespace {
         OID electionId;
 
         auto electionIdStatus = bsonExtractOIDField(gleStatsElem.Obj(),
-                                                    kGLEStatsElectionIdFieldName,
+                                                    "electionId",
                                                     &electionId);
 
         if (!electionIdStatus.isOK()) {
@@ -157,8 +161,7 @@ namespace {
     DistLockCatalogImpl::~DistLockCatalogImpl() = default;
 
     StatusWith<LockpingsType> DistLockCatalogImpl::getPing(StringData processID) {
-        invariant(false);
-        return {ErrorCodes::InternalError, "not yet implemented"};
+        invariant(false); // TODO
     }
 
     Status DistLockCatalogImpl::ping(StringData processID, Date_t ping) {
@@ -405,8 +408,11 @@ namespace {
     }
 
     StatusWith<LocksType> DistLockCatalogImpl::getLockByTS(const OID& lockSessionID) {
-        invariant(false);
-        return {ErrorCodes::InternalError, "not yet implemented"};
+        invariant(false); // TODO
+    }
+
+    StatusWith<LocksType> DistLockCatalogImpl::getLockByName(StringData name) {
+        invariant(false); // TODO
     }
 
     Status DistLockCatalogImpl::stopPing(StringData processId) {

@@ -43,7 +43,7 @@ namespace mongo {
                                                   ConnectionString* shardHost) const {
 
         // Internally uses our shard cache, does no reload
-        boost::shared_ptr<Shard> shard = grid.shardRegistry()->findIfExists(shardName);
+        std::shared_ptr<Shard> shard = grid.shardRegistry()->getShard(shardName);
         if (!shard) {
             return Status(ErrorCodes::ShardNotFound,
                           str::stream() << "unknown shard name " << shardName);
@@ -86,7 +86,8 @@ namespace mongo {
         try {
             // This can throw when we don't find a master!
             HostAndPort masterHostAndPort = replMonitor->getMasterOrUassert();
-            *resolvedHost = fassertStatusOK(0, ConnectionString::parse(masterHostAndPort.toString()));
+            *resolvedHost = fassertStatusOK(28687,
+                                            ConnectionString::parse(masterHostAndPort.toString()));
             return Status::OK();
         }
         catch ( const DBException& ) {

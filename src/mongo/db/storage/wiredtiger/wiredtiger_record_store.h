@@ -34,13 +34,11 @@
 #include <set>
 #include <string>
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/mutex.hpp>
-
 #include "mongo/db/catalog/collection_options.h"
-#include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/capped_callback.h"
+#include "mongo/db/storage/record_store.h"
 #include "mongo/platform/atomic_word.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/fail_point_service.h"
 
 /**
@@ -60,13 +58,6 @@ namespace mongo {
 
     class WiredTigerRecordStore : public RecordStore {
     public:
-
-        /**
-         * During record store creation, if size storer reports a record count under
-         * 'kCollectionScanOnCreationThreshold', perform a collection scan to update size storer
-         * as well as internal record and data size counters.
-         */
-        static const long long kCollectionScanOnCreationThreshold;
 
         /**
          * Parses collections options for wired tiger configuration string for table creation.
@@ -209,7 +200,7 @@ namespace mongo {
         int64_t cappedDeleteAsNeeded_inlock(OperationContext* txn,
                                             const RecordId& justInserted);
 
-        boost::timed_mutex& cappedDeleterMutex() { return _cappedDeleterMutex; }
+        stdx::timed_mutex& cappedDeleterMutex() { return _cappedDeleterMutex; }
 
     private:
         class Cursor;
@@ -243,9 +234,11 @@ namespace mongo {
         const int64_t _cappedMaxSize;
         const int64_t _cappedMaxSizeSlack; // when to start applying backpressure
         const int64_t _cappedMaxDocs;
+        AtomicInt64 _cappedSleep;
+        AtomicInt64 _cappedSleepMS;
         CappedDocumentDeleteCallback* _cappedDeleteCallback;
         int _cappedDeleteCheckCount; // see comment in ::cappedDeleteAsNeeded
-        mutable boost::timed_mutex _cappedDeleterMutex; // see comment in ::cappedDeleteAsNeeded
+        mutable stdx::timed_mutex _cappedDeleterMutex; // see comment in ::cappedDeleteAsNeeded
 
         const bool _useOplogHack;
 
@@ -253,7 +246,7 @@ namespace mongo {
         SortedDiskLocs _uncommittedDiskLocs;
         RecordId _oplog_visibleTo;
         RecordId _oplog_highestSeen;
-        mutable boost::mutex _uncommittedDiskLocsMutex;
+        mutable stdx::mutex _uncommittedDiskLocsMutex;
 
         AtomicInt64 _nextIdNum;
         AtomicInt64 _dataSize;

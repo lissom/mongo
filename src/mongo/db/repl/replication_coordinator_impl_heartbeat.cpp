@@ -61,7 +61,7 @@ namespace {
 
 }  //namespace
 
-    void ReplicationCoordinatorImpl::_doMemberHeartbeat(ReplicationExecutor::CallbackData cbData,
+    void ReplicationCoordinatorImpl::_doMemberHeartbeat(ReplicationExecutor::CallbackArgs cbData,
                                                         const HostAndPort& target,
                                                         int targetIndex) {
 
@@ -119,7 +119,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_handleHeartbeatResponse(
-            const ReplicationExecutor::RemoteCommandCallbackData& cbData, int targetIndex) {
+            const ReplicationExecutor::RemoteCommandCallbackArgs& cbData, int targetIndex) {
 
         // remove handle from queued heartbeats
         _untrackHeartbeatHandle(cbData.myHandle);
@@ -170,7 +170,7 @@ namespace {
                 targetIndex >= 0 &&
                 hbStatusResponse.getValue().hasState() &&
                 hbStatusResponse.getValue().getState() != MemberState::RS_PRIMARY) {
-            boost::unique_lock<boost::mutex> lk(_mutex);
+            stdx::unique_lock<stdx::mutex> lk(_mutex);
             if (hbStatusResponse.getValue().getConfigVersion() == _rsConfig.getConfigVersion()) {
                 _updateOpTimeFromHeartbeat_inlock(targetIndex,
                                                   hbStatusResponse.getValue().getOpTime());
@@ -209,7 +209,7 @@ namespace {
         case HeartbeatResponseAction::NoAction:
             // Update the cached member state if different than the current topology member state
             if (_memberState != _topCoord->getMemberState()) {
-                boost::unique_lock<boost::mutex> lk(_mutex);
+                stdx::unique_lock<stdx::mutex> lk(_mutex);
                 const PostMemberStateUpdateAction postUpdateAction =
                     _updateMemberStateFromTopologyCoordinator_inlock();
                 lk.unlock();
@@ -248,7 +248,7 @@ namespace {
     /**
      * This callback is purely for logging and has no effect on any other operations
      */
-    void remoteStepdownCallback(const ReplicationExecutor::RemoteCommandCallbackData& cbData) {
+    void remoteStepdownCallback(const ReplicationExecutor::RemoteCommandCallbackArgs& cbData) {
 
         const Status status = cbData.response.getStatus();
         if (status == ErrorCodes::CallbackCanceled) {
@@ -287,7 +287,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_stepDownFinish(
-            const ReplicationExecutor::CallbackData& cbData) {
+            const ReplicationExecutor::CallbackArgs& cbData) {
 
         if (cbData.status == ErrorCodes::CallbackCanceled) {
             return;
@@ -295,7 +295,7 @@ namespace {
         invariant(cbData.txn);
         // TODO Add invariant that we've got global shared or global exclusive lock, when supported
         // by lock manager.
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         _topCoord->stepDownIfPending();
         const PostMemberStateUpdateAction action =
             _updateMemberStateFromTopologyCoordinator_inlock();
@@ -304,7 +304,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_scheduleHeartbeatReconfig(const ReplicaSetConfig& newConfig) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         if (_inShutdown) {
             return;
         }
@@ -354,13 +354,13 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_heartbeatReconfigAfterElectionCanceled(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplicaSetConfig& newConfig) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
             return;
         }
         fassert(18911, cbData.status);
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         if (_inShutdown) {
             return;
         }
@@ -373,7 +373,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_heartbeatReconfigStore(
-        const ReplicationExecutor::CallbackData& cbd,
+        const ReplicationExecutor::CallbackArgs& cbd,
         const ReplicaSetConfig& newConfig) {
 
         if (cbd.status.code() == ErrorCodes::CallbackCanceled) {
@@ -382,7 +382,7 @@ namespace {
             return;
         }
 
-        boost::unique_lock<boost::mutex> lk(_mutex, boost::defer_lock_t());
+        stdx::unique_lock<stdx::mutex> lk(_mutex, stdx::defer_lock);
 
         const StatusWith<int> myIndex = validateConfigForHeartbeatReconfig(
                 _externalState.get(),
@@ -429,7 +429,7 @@ namespace {
             _externalState->startThreads();
         }
 
-        const stdx::function<void (const ReplicationExecutor::CallbackData&)> reconfigFinishFn(
+        const stdx::function<void (const ReplicationExecutor::CallbackArgs&)> reconfigFinishFn(
                 stdx::bind(&ReplicationCoordinatorImpl::_heartbeatReconfigFinish,
                            this,
                            stdx::placeholders::_1,
@@ -452,14 +452,14 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_heartbeatReconfigFinish(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplicaSetConfig& newConfig,
             StatusWith<int> myIndex) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
             return;
         }
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_rsConfigState == kConfigHBReconfiguring);
         invariant(!_rsConfig.isInitialized() ||
                   _rsConfig.getConfigVersion() < newConfig.getConfigVersion());

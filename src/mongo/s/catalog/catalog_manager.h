@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
 #include <set>
 #include <string>
 #include <vector>
@@ -84,6 +83,13 @@ namespace mongo {
          * Retrieves the connection string for the catalog manager's backing server.
          */
         virtual ConnectionString connectionString() const = 0;
+
+        /**
+         * Performs implementation-specific startup tasks including but not limited to doing any
+         * necessary config schema upgrade work.  Must be run after the catalog manager
+         * has been installed into the global 'grid' object.
+         */
+        virtual Status startup(bool upgrade) = 0;
 
         /**
          * Performs necessary cleanup when shutting down cleanly.
@@ -263,12 +269,6 @@ namespace mongo {
         virtual bool isShardHost(const ConnectionString& shardConnectionString) = 0;
 
         /**
-         * Returns true if there are any shards in the sharded cluster.
-         * Otherwise, returns false.
-         */
-        virtual bool doShardsExist() = 0;
-
-        /**
          * Runs a user management command on the config servers.
          * @param commandName: name of command
          * @param dbname: database for which the user management command is invoked
@@ -323,7 +323,10 @@ namespace mongo {
          * Returns global settings for a certain key.
          * @param key: key for SettingsType::ConfigNS document.
          *
-         * Returns NoSuchKey if no SettingsType::ConfigNS document with such key exists.
+         * Returns ErrorCodes::NoMatchingDocument if no SettingsType::ConfigNS document
+         * with such key exists.
+         * Returns ErrorCodes::FailedToParse if we encountered an error while parsing
+         * the settings document.
          */
         virtual StatusWith<SettingsType> getGlobalSettings(const std::string& key) = 0;
 

@@ -32,8 +32,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/thread.hpp>
 #include <fstream>
 #include <memory>
 
@@ -60,7 +58,6 @@
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/exec/delete.h"
 #include "mongo/db/exec/update.h"
-#include "mongo/db/service_context.h"
 #include "mongo/db/global_timestamp.h"
 #include "mongo/db/instance.h"
 #include "mongo/db/introspect.h"
@@ -82,6 +79,7 @@
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
+#include "mongo/db/service_context.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage_options.h"
@@ -93,14 +91,15 @@
 #include "mongo/rpc/legacy_reply_builder.h"
 #include "mongo/rpc/legacy_request.h"
 #include "mongo/rpc/legacy_request_builder.h"
-#include "mongo/rpc/request_interface.h"
 #include "mongo/rpc/metadata.h"
+#include "mongo/rpc/request_interface.h"
 #include "mongo/s/catalog/catalog_manager.h"
 #include "mongo/s/d_state.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/stale_exception.h" // for SendStaleConfigException
 #include "mongo/scripting/engine.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
@@ -110,15 +109,14 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
     using logger::LogComponent;
-    using std::auto_ptr;
     using std::endl;
     using std::hex;
     using std::ios;
     using std::ofstream;
     using std::string;
     using std::stringstream;
+    using std::unique_ptr;
     using std::vector;
 
     // for diaglog
@@ -246,13 +244,8 @@ namespace {
         rpc::LegacyReplyBuilder builder{};
 
         try {
+            // This will throw if the request is on an invalid namespace.
             rpc::LegacyRequest request{&message};
-            // Do the namespace validity check under the try/catch block so it does not cause the
-            // connection to be terminated.
-            uassert(ErrorCodes::InvalidNamespace,
-                    str::stream() << "Invalid ns [" << request.getDatabase() << ".$cmd" << "]",
-                    NamespaceString::validDBName(request.getDatabase()));
-
             // Auth checking for Commands happens later.
             int nToReturn = queryMessage.ntoreturn;
             beginQueryOp(txn, nss, queryMessage.query, nToReturn, queryMessage.ntoskip);
@@ -390,7 +383,7 @@ namespace {
 
         DbMessage d(m);
         QueryMessage q(d);
-        auto_ptr< Message > resp( new Message() );
+        unique_ptr< Message > resp( new Message() );
 
         CurOp& op = *CurOp::get(txn);
 
@@ -752,7 +745,7 @@ namespace {
                                                       &parsedUpdate,
                                                       &op.debug(),
                                                       &rawExec));
-                    boost::scoped_ptr<PlanExecutor> exec(rawExec);
+                    std::unique_ptr<PlanExecutor> exec(rawExec);
 
                     // Run the plan and get stats out.
                     uassertStatusOK(exec->executePlan());
@@ -806,7 +799,7 @@ namespace {
                                               &parsedUpdate,
                                               &op.debug(),
                                               &rawExec));
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             // Run the plan and get stats out.
             uassertStatusOK(exec->executePlan());
@@ -869,7 +862,7 @@ namespace {
                                                   ctx.db()->getCollection(nsString),
                                                   &parsedDelete,
                                                   &rawExec));
-                boost::scoped_ptr<PlanExecutor> exec(rawExec);
+                std::unique_ptr<PlanExecutor> exec(rawExec);
 
                 // Run the plan and get the number of docs deleted.
                 uassertStatusOK(exec->executePlan());
@@ -904,8 +897,8 @@ namespace {
         curop.debug().ntoreturn = ntoreturn;
         curop.debug().cursorid = cursorid;
 
-        scoped_ptr<AssertionException> ex;
-        scoped_ptr<Timer> timer;
+        unique_ptr<AssertionException> ex;
+        unique_ptr<Timer> timer;
         int pass = 0;
         bool exhaust = false;
         QueryResult::View msgdata = 0;
@@ -1254,7 +1247,7 @@ namespace {
 
         /* must do this before unmapping mem or you may get a seg fault */
         log(LogComponent::kNetwork) << "shutdown: going to close sockets..." << endl;
-        boost::thread close_socket_thread( stdx::bind(MessagingPort::closeAllSockets, 0) );
+        stdx::thread close_socket_thread( stdx::bind(MessagingPort::closeAllSockets, 0) );
 
         getGlobalServiceContext()->shutdownGlobalStorageEngineCleanly();
     }
@@ -1265,7 +1258,7 @@ namespace {
     //  Ensures shutdown is single threaded.
     // Lock Ordering:
     //  No restrictions
-    boost::mutex shutdownLock;
+    stdx::mutex shutdownLock;
 
     void signalShutdown() {
         // Notify all threads shutdown has started
@@ -1277,7 +1270,7 @@ namespace {
         shutdownInProgress.fetchAndAdd(1);
 
         // Grab the shutdown lock to prevent concurrent callers
-        boost::lock_guard<boost::mutex> lockguard(shutdownLock);
+        stdx::lock_guard<stdx::mutex> lockguard(shutdownLock);
 
         // Global storage engine may not be started in all cases before we exit
         if (getGlobalServiceContext()->getGlobalStorageEngine() == NULL) {
@@ -1372,37 +1365,37 @@ namespace {
     }
 
     int DiagLog::setLevel( int newLevel ) {
-        boost::lock_guard<boost::mutex> lk(mutex);
+        stdx::lock_guard<stdx::mutex> lk(mutex);
         int old = level;
         log() << "diagLogging level=" << newLevel << endl;
-        if( f == 0 ) { 
+        if( f == 0 ) {
             openFile();
         }
         level = newLevel; // must be done AFTER f is set
         return old;
     }
-    
+
     void DiagLog::flush() {
         if ( level ) {
             log() << "flushing diag log" << endl;
-            boost::lock_guard<boost::mutex> lk(mutex);
+            stdx::lock_guard<stdx::mutex> lk(mutex);
             f->flush();
         }
     }
-    
+
     void DiagLog::writeop(char *data,int len) {
         if ( level & 1 ) {
-            boost::lock_guard<boost::mutex> lk(mutex);
+            stdx::lock_guard<stdx::mutex> lk(mutex);
             f->write(data,len);
         }
     }
-    
+
     void DiagLog::readop(char *data, int len) {
         if ( level & 2 ) {
             bool log = (level & 4) == 0;
             OCCASIONALLY log = true;
             if ( log ) {
-                boost::lock_guard<boost::mutex> lk(mutex);
+                stdx::lock_guard<stdx::mutex> lk(mutex);
                 verify( f );
                 f->write(data,len);
             }

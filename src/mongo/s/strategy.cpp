@@ -32,7 +32,6 @@
 
 #include "mongo/s/strategy.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/status.h"
 #include "mongo/base/owned_pointer_vector.h"
@@ -70,8 +69,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::set;
     using std::string;
@@ -88,7 +87,11 @@ namespace mongo {
     static bool doShardedIndexQuery(Request& r, const QuerySpec& qSpec) {
         // Extract the ns field from the query, which may be embedded within the "query" or
         // "$query" field.
-        const NamespaceString indexNSSQuery(qSpec.filter()["ns"].str());
+        auto nsField = qSpec.filter()["ns"];
+        if (nsField.eoo()) {
+            return false;
+        }
+        const NamespaceString indexNSSQuery(nsField.str());
 
         auto status = grid.catalogCache()->getDatabase(indexNSSQuery.db().toString());
         if (!status.isOK()) {
@@ -111,7 +114,7 @@ namespace mongo {
             set<ShardId> shardIds;
             cm->getAllShardIds(&shardIds);
             verify(shardIds.size() > 0);
-            shard = grid.shardRegistry()->findIfExists(*shardIds.begin());
+            shard = grid.shardRegistry()->getShard(*shardIds.begin());
         }
 
         ShardConnection dbcon(shard->getConnString(), r.getns());
@@ -241,7 +244,7 @@ namespace mongo {
             // Only one shard is used
 
             // Remote cursors are stored remotely, we shouldn't need this around.
-            scoped_ptr<ParallelSortClusteredCursor> cursorDeleter( cursor );
+            unique_ptr<ParallelSortClusteredCursor> cursorDeleter( cursor );
 
             ShardPtr shard = cursor->getQueryShard();
             verify( shard.get() );
@@ -481,7 +484,7 @@ namespace mongo {
             CommandResult result;
             result.target = host;
             {
-                const auto& shard = grid.shardRegistry()->findIfExists(host.toString());
+                const auto shard = grid.shardRegistry()->getShard(host.toString());
                 result.shardTargetId = shard->getId();
             }
             result.result = response.toBSON();
@@ -516,7 +519,7 @@ namespace mongo {
             return Status(ErrorCodes::IllegalOperation, ss);
         }
 
-        const auto& primaryShard = grid.shardRegistry()->findIfExists(conf->getPrimaryId());
+        const auto primaryShard = grid.shardRegistry()->getShard(conf->getPrimaryId());
 
         BSONObj shardResult;
         try {

@@ -32,7 +32,6 @@
 
 #include "mongo/db/commands/index_filter_commands.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/json.h"
 #include "mongo/db/operation_context_noop.h"
@@ -44,12 +43,11 @@ using namespace mongo;
 
 namespace {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
     using std::string;
+    using std::unique_ptr;
     using std::vector;
 
-    static const char* ns = "somebogusns";
+    static const char* ns = "test.t";
 
     /**
      * Utility function to get list of index filters from the query settings.
@@ -97,10 +95,10 @@ namespace {
      * Utility function to create a PlanRankingDecision
      */
     PlanRankingDecision* createDecision(size_t numPlans) {
-        auto_ptr<PlanRankingDecision> why(new PlanRankingDecision());
+        unique_ptr<PlanRankingDecision> why(new PlanRankingDecision());
         for (size_t i = 0; i < numPlans; ++i) {
             CommonStats common("COLLSCAN");
-            auto_ptr<PlanStageStats> stats(new PlanStageStats(common, STAGE_COLLSCAN));
+            unique_ptr<PlanStageStats> stats(new PlanStageStats(common, STAGE_COLLSCAN));
             stats->specific.reset(new CollectionScanStats());
             why->stats.mutableVector().push_back(stats.release());
             why->scores.push_back(0U);
@@ -121,7 +119,7 @@ namespace {
         // Create canonical query.
         CanonicalQuery* cqRaw;
         ASSERT_OK(CanonicalQuery::canonicalize(ns, queryObj, sortObj, projectionObj, &cqRaw));
-        scoped_ptr<CanonicalQuery> cq(cqRaw);
+        unique_ptr<CanonicalQuery> cq(cqRaw);
 
         QuerySolution qs;
         qs.cacheData.reset(new SolutionCacheData());
@@ -143,7 +141,7 @@ namespace {
         // Create canonical query.
         CanonicalQuery* cqRaw;
         ASSERT_OK(CanonicalQuery::canonicalize(ns, queryObj, sortObj, projectionObj, &cqRaw));
-        scoped_ptr<CanonicalQuery> cq(cqRaw);
+        unique_ptr<CanonicalQuery> cq(cqRaw);
 
         // Retrieve cache entries from plan cache.
         vector<PlanCacheEntry*> entries = planCache.getAllEntries();
@@ -157,7 +155,7 @@ namespace {
             // Alternatively, we could add key to PlanCacheEntry but that would be used in one place only.
             ASSERT_OK(CanonicalQuery::canonicalize(ns, entry->query, entry->sort,
                                                    entry->projection, &cqRaw));
-            scoped_ptr<CanonicalQuery> currentQuery(cqRaw);
+            unique_ptr<CanonicalQuery> currentQuery(cqRaw);
 
             if (planCache.computeKey(*currentQuery) == planCache.computeKey(*cq)) {
                 found = true;

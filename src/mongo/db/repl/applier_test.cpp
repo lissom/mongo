@@ -49,17 +49,14 @@ namespace {
 
     class ApplierTest : public ReplicationExecutorTest {
     public:
-        /**
-         * Creates an initial error status suitable for checking if
-         * applier has modified the 'status' field in test fixture.
-         */
-        static Status getDetectableErrorStatus();
 
-        void setUp() override;
-        void tearDown() override;
         Applier* getApplier() const;
 
     protected:
+
+        void setUp() override;
+        void tearDown() override;
+
         /**
          * Test function to check behavior when we fail to apply one of the operations.
          */
@@ -68,10 +65,6 @@ namespace {
         std::unique_ptr<Applier> _applier;
         std::unique_ptr<unittest::Barrier> _barrier;
     };
-
-    Status ApplierTest::getDetectableErrorStatus() {
-        return Status(ErrorCodes::InternalError, "Not mutated");
-    }
 
     void ApplierTest::setUp() {
         ReplicationExecutorTest::setUp();
@@ -186,7 +179,7 @@ namespace {
         // Schedule a blocking DB work item before the applier to allow us to cancel the applier
         // work item before the executor runs it.
         unittest::Barrier barrier(2U);
-        using CallbackData = ReplicationExecutor::CallbackData;
+        using CallbackData = ReplicationExecutor::CallbackArgs;
         getExecutor().scheduleDBWork([&](const CallbackData& cbd) {
             barrier.countDownAndWait(); // generation 0
         });
@@ -223,7 +216,7 @@ namespace {
         // Schedule a blocking DB work item before the applier to allow us to destroy the applier
         // before the executor runs the work item.
         unittest::Barrier barrier(2U);
-        using CallbackData = ReplicationExecutor::CallbackData;
+        using CallbackData = ReplicationExecutor::CallbackArgs;
         getExecutor().scheduleDBWork([&](const CallbackData& cbd) {
             barrier.countDownAndWait(); // generation 0
             // Give the main thread a head start in invoking the applier destructor.

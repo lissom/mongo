@@ -35,10 +35,10 @@
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
+#include "mongo/client/fetcher.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/repl/collection_cloner.h"
 #include "mongo/db/repl/base_cloner.h"
-#include "mongo/db/repl/fetcher.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/mutex.h"
@@ -138,7 +138,7 @@ namespace repl {
         /**
          * Read collection names and options from listCollections result.
          */
-        void _listCollectionsCallback(const StatusWith<Fetcher::BatchData>& fetchResult,
+        void _listCollectionsCallback(const StatusWith<Fetcher::QueryResponse>& fetchResult,
                                       Fetcher::NextAction* nextAction,
                                       BSONObjBuilder* getMoreBob);
 

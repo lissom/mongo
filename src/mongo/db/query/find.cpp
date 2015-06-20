@@ -32,7 +32,6 @@
 
 #include "mongo/db/query/find.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/catalog/collection.h"
@@ -62,9 +61,8 @@
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 
-using boost::scoped_ptr;
-using std::auto_ptr;
 using std::endl;
+using std::unique_ptr;
 
 namespace mongo {
 
@@ -150,7 +148,7 @@ namespace mongo {
             return false;
         }
 
-        if (!pq.fromFindCommand() && pq.getBatchSize() && *pq.getBatchSize() == 1) {
+        if (!pq.isFromFindCommand() && pq.getBatchSize() && *pq.getBatchSize() == 1) {
             return false;
         }
 
@@ -230,7 +228,7 @@ namespace mongo {
         // Set debug information for consumption by the profiler only.
         if (dbProfilingLevel > 0) {
             // Get BSON stats.
-            scoped_ptr<PlanStageStats> execStats(exec->getStats());
+            unique_ptr<PlanStageStats> execStats(exec->getStats());
             BSONObjBuilder statsBob;
             Explain::statsToBSON(*execStats, &statsBob);
             curop->debug().execStats.set(statsBob.obj());
@@ -286,9 +284,9 @@ namespace mongo {
         // Note that we declare our locks before our ClientCursorPin, in order to ensure that the
         // pin's destructor is called before the lock destructors (so that the unpin occurs under
         // the lock).
-        boost::scoped_ptr<AutoGetCollectionForRead> ctx;
-        boost::scoped_ptr<Lock::DBLock> unpinDBLock;
-        boost::scoped_ptr<Lock::CollectionLock> unpinCollLock;
+        std::unique_ptr<AutoGetCollectionForRead> ctx;
+        std::unique_ptr<Lock::DBLock> unpinDBLock;
+        std::unique_ptr<Lock::CollectionLock> unpinCollLock;
 
         CursorManager* cursorManager;
         CursorManager* globalCursorManager = CursorManager::getGlobalCursorManager();
@@ -530,7 +528,7 @@ namespace mongo {
         beginQueryOp(txn, nss, q.query, q.ntoreturn, q.ntoskip);
 
         // Parse the qm into a CanonicalQuery.
-        std::auto_ptr<CanonicalQuery> cq;
+        std::unique_ptr<CanonicalQuery> cq;
         {
             CanonicalQuery* cqRaw;
             Status canonStatus = CanonicalQuery::canonicalize(q,

@@ -47,14 +47,12 @@
 #include "mongo/db/index/expression_params.h"
 #include "mongo/util/log.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <algorithm>
 
 namespace mongo {
 
-    using boost::scoped_ptr;
     using std::abs;
-    using std::auto_ptr;
+    using std::unique_ptr;
 
     //
     // Shared GeoNear search functionality
@@ -79,7 +77,7 @@ namespace mongo {
                 if (!element.isABSONObj())
                     return NULL;
 
-                auto_ptr<StoredGeometry> stored(new StoredGeometry);
+                unique_ptr<StoredGeometry> stored(new StoredGeometry);
                 if (!stored->geometry.parseFromStorage(element).isOK())
                     return NULL;
                 stored->element = element;
@@ -106,7 +104,7 @@ namespace mongo {
         for (BSONElementSet::iterator it = geomElements.begin(); it != geomElements.end(); ++it) {
 
             const BSONElement& el = *it;
-            auto_ptr<StoredGeometry> stored(StoredGeometry::parseFrom(el));
+            unique_ptr<StoredGeometry> stored(StoredGeometry::parseFrom(el));
 
             if (stored.get()) {
                 // Valid geometry element
@@ -312,8 +310,8 @@ namespace mongo {
 
         const IndexDescriptor* _twoDIndex;  // Not owned here.
         const GeoNearParams* _nearParams;  // Not owned here.
-        scoped_ptr<IndexScan> _indexScan;
-        scoped_ptr<GeoHashConverter> _converter;
+        unique_ptr<IndexScan> _indexScan;
+        unique_ptr<GeoHashConverter> _converter;
         GeoHash _centroidCell;
         unsigned _currentLevel;
     };
@@ -624,7 +622,7 @@ namespace mongo {
 
         private:
 
-            const scoped_ptr<R2Region> _region;
+            const unique_ptr<R2Region> _region;
             const GeoHashConverter _unhasher;
         };
 
@@ -645,7 +643,7 @@ namespace mongo {
         private:
 
             // Owns matcher
-            const scoped_ptr<MatchExpression> _matcher;
+            const unique_ptr<MatchExpression> _matcher;
         };
 
         // Helper class to maintain ownership of a match expression alongside an index scan
@@ -666,7 +664,7 @@ namespace mongo {
         private:
 
             // Owns matcher
-            const scoped_ptr<MatchExpression> _matcher;
+            const unique_ptr<MatchExpression> _matcher;
         };
     }
 
@@ -746,7 +744,7 @@ namespace mongo {
 
         const CRS queryCRS = _nearParams.nearQuery->centroid->crs;
 
-        auto_ptr<R2Region> coverRegion;
+        unique_ptr<R2Region> coverRegion;
 
         if (FLAT == queryCRS) {
 
@@ -1009,7 +1007,7 @@ namespace mongo {
 
         private:
 
-            const scoped_ptr<S2Region> _region;
+            const unique_ptr<S2Region> _region;
         };
     }
 
@@ -1046,7 +1044,7 @@ namespace mongo {
         const IndexDescriptor* _s2Index; // Not owned here.
         const GeoNearParams* _nearParams; // Not owned here.
         int _currentLevel;
-        scoped_ptr<IndexScan> _indexScan;
+        unique_ptr<IndexScan> _indexScan;
     };
 
     // Setup the index scan stage for neighbors at this level.

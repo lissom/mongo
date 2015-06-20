@@ -33,7 +33,6 @@
 
 #include "mongo/db/repl/rs_rollback.h"
 
-#include <boost/shared_ptr.hpp>
 #include <memory>
 
 #include "mongo/db/auth/authorization_manager_global.h"
@@ -103,8 +102,8 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::list;
     using std::map;
@@ -475,7 +474,7 @@ namespace {
                     removeSaver.reset(new Helpers::RemoveSaver("rollback", "", *it));
 
                 // perform a collection scan and write all documents in the collection to disk
-                boost::scoped_ptr<PlanExecutor> exec(
+                std::unique_ptr<PlanExecutor> exec(
                         InternalPlanner::collectionScan(txn,
                                                         *it,
                                                         db->getCollection(*it)));

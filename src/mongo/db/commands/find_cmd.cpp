@@ -103,17 +103,16 @@ namespace mongo {
                        BSONObjBuilder* out) const override {
             const std::string fullns = parseNs(dbname, cmdObj);
             const NamespaceString nss(fullns);
+            if (!nss.isValid()) {
+                return {ErrorCodes::InvalidNamespace,
+                        str::stream() << "Invalid collection name: " << nss.ns()};
+            }
 
             // Parse the command BSON to a LiteParsedQuery.
-            std::unique_ptr<LiteParsedQuery> lpq;
-            {
-                LiteParsedQuery* rawLpq;
-                const bool isExplain = true;
-                Status lpqStatus = LiteParsedQuery::make(fullns, cmdObj, isExplain, &rawLpq);
-                if (!lpqStatus.isOK()) {
-                    return lpqStatus;
-                }
-                lpq.reset(rawLpq);
+            const bool isExplain = true;
+            auto lpqStatus = LiteParsedQuery::makeFromFindCommand(nss, cmdObj, isExplain);
+            if (!lpqStatus.isOK()) {
+                return lpqStatus.getStatus();
             }
 
             // Finish the parsing step by using the LiteParsedQuery to create a CanonicalQuery.
@@ -121,7 +120,7 @@ namespace mongo {
             {
                 CanonicalQuery* rawCq;
                 WhereCallbackReal whereCallback(txn, nss.db());
-                Status canonStatus = CanonicalQuery::canonicalize(lpq.release(),
+                Status canonStatus = CanonicalQuery::canonicalize(lpqStatus.getValue().release(),
                                                                   &rawCq,
                                                                   whereCallback);
                 if (!canonStatus.isOK()) {
@@ -178,6 +177,11 @@ namespace mongo {
                  BSONObjBuilder& result) override {
             const std::string fullns = parseNs(dbname, cmdObj);
             const NamespaceString nss(fullns);
+            if (!nss.isValid()) {
+                return appendCommandStatus(result, {ErrorCodes::InvalidNamespace,
+                                                    str::stream() << "Invalid collection name: "
+                                                                  << nss.ns()});
+            }
 
             // Although it is a command, a find command gets counted as a query.
             globalOpCounters.gotQuery();
@@ -189,16 +193,13 @@ namespace mongo {
             }
 
             // 1a) Parse the command BSON to a LiteParsedQuery.
-            std::unique_ptr<LiteParsedQuery> lpq;
-            {
-                LiteParsedQuery* rawLpq;
-                const bool isExplain = false;
-                Status lpqStatus = LiteParsedQuery::make(fullns, cmdObj, isExplain, &rawLpq);
-                if (!lpqStatus.isOK()) {
-                    return appendCommandStatus(result, lpqStatus);
-                }
-                lpq.reset(rawLpq);
+            const bool isExplain = false;
+            auto lpqStatus = LiteParsedQuery::makeFromFindCommand(nss, cmdObj, isExplain);
+            if (!lpqStatus.isOK()) {
+                return appendCommandStatus(result, lpqStatus.getStatus());
             }
+
+            auto& lpq = lpqStatus.getValue();
 
             // Fill out curop information.
             int ntoreturn = lpq->getBatchSize().value_or(0);

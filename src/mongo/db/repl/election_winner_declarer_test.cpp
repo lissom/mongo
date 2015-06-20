@@ -28,19 +28,17 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/db/repl/election_winner_declarer.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/mongoutils/str.h"
 
-using boost::scoped_ptr;
+using std::unique_ptr;
 
 namespace mongo {
 namespace repl {
@@ -149,7 +147,7 @@ namespace {
         }
 
     private:
-        scoped_ptr<ElectionWinnerDeclarer::Algorithm> _declarer;
+        unique_ptr<ElectionWinnerDeclarer::Algorithm> _declarer;
 
     };
 

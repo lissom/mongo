@@ -32,8 +32,6 @@
 
 #include "mongo/s/chunk.h"
 
-#include <iostream>
-
 #include "mongo/client/connpool.h"
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/config.h"
@@ -51,13 +49,13 @@
 #include "mongo/s/config.h"
 #include "mongo/s/cursors.h"
 #include "mongo/s/grid.h"
-#include "mongo/util/concurrency/ticketholder.h"
+#include "mongo/s/shard_key_pattern.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
 
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::map;
     using std::ostringstream;
     using std::set;
@@ -130,7 +128,7 @@ namespace {
 
         log() << "moving chunk (auto): " << toMove->toString() << " to: " << newLocation;
 
-        shared_ptr<Shard> newShard = grid.shardRegistry()->findIfExists(newLocation);
+        shared_ptr<Shard> newShard = grid.shardRegistry()->getShard(newLocation);
         if (!newShard) {
             warning() << "Newly selected shard " << newLocation << " could not be found.";
             return false;
@@ -179,7 +177,7 @@ namespace {
         uassert( 13327 ,  "Chunk ns must match server ns" , ns == _manager->getns() );
 
         {
-            const auto& shard = grid.shardRegistry()->findIfExists(_shardId);
+            const auto shard = grid.shardRegistry()->getShard(_shardId);
             uassert(10171, "Chunk needs a server", shard);
         }
 
@@ -204,11 +202,6 @@ namespace {
     int Chunk::mkDataWritten() {
         PseudoRandom r(static_cast<int64_t>(time(0)));
         return r.nextInt32( MaxChunkSize / ChunkManager::SplitHeuristics::splitTestFactor );
-    }
-
-    string Chunk::getns() const {
-        verify( _manager );
-        return _manager->getns();
     }
 
     bool Chunk::containsKey( const BSONObj& shardKey ) const {
@@ -260,7 +253,7 @@ namespace {
             // Splitting close to the lower bound means that the split point will be the
             // upper bound. Chunk range upper bounds are exclusive so skip a document to
             // make the lower half of the split end up with a single document.
-            auto_ptr<DBClientCursor> cursor = conn->query(_manager->getns(),
+            unique_ptr<DBClientCursor> cursor = conn->query(_manager->getns(),
                                                           q,
                                                           1, /* nToReturn */
                                                           1 /* nToSkip */);
@@ -496,13 +489,13 @@ namespace {
         log() << "moving chunk ns: " << _manager->getns() << " moving ( " << toString() << ") "
               << getShardId() << " -> " << toShardId;
 
-        const auto& from = grid.shardRegistry()->findIfExists(getShardId());
+        const auto from = grid.shardRegistry()->getShard(getShardId());
 
         BSONObjBuilder builder;
         builder.append("moveChunk", _manager->getns());
         builder.append("from", from->getConnString().toString());
         {
-            const auto& toShard = grid.shardRegistry()->findIfExists(toShardId);
+            const auto toShard = grid.shardRegistry()->getShard(toShardId);
             builder.append("to", toShard->getConnString().toString());
         }
         // NEEDED FOR 2.0 COMPATIBILITY
@@ -626,7 +619,7 @@ namespace {
 
                 ChunkType chunkToMove;
                 {
-                    const auto& shard = grid.shardRegistry()->findIfExists(getShardId());
+                    const auto shard = grid.shardRegistry()->getShard(getShardId());
                     chunkToMove.setShard(shard->toString());
                 }
                 chunkToMove.setMin(range["min"].embeddedObject());
@@ -651,7 +644,7 @@ namespace {
     }
 
     const ConnectionString& Chunk::_getShardConnectionString() const {
-        const auto& shard = grid.shardRegistry()->findIfExists(getShardId());
+        const auto shard = grid.shardRegistry()->getShard(getShardId());
         return shard->getConnString();
     }
 
@@ -755,7 +748,7 @@ namespace {
             return;
         }
         SettingsType chunkSizeSettings = chunkSizeSettingsResult.getValue();
-        int csize = chunkSizeSettings.getChunkSize();
+        int csize = chunkSizeSettings.getChunkSizeMB();
 
         LOG(1) << "Refreshing MaxChunkSize: " << csize << "MB";
 

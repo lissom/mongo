@@ -28,36 +28,63 @@
 
 #pragma once
 
-#include <algorithm>
 #include <boost/optional.hpp>
+#include <string>
 
-#include "mongo/client/dbclientinterface.h"
 #include "mongo/db/jsobj.h"
 
 namespace mongo {
 
+    class NamespaceString;
     class QueryMessage;
+    class Status;
+    template<typename T> class StatusWith;
 
     /**
-     * Parses the QueryMessage received from the user and makes the various fields more easily
-     * accessible.
+     * Parses the QueryMessage or find command received from the user and makes the various fields
+     * more easily accessible.
      */
     class LiteParsedQuery {
     public:
         /**
-         * Parses a find command object, 'cmdObj'. Caller must indicate whether or not
-         * this lite parsed query is an explained query or not via 'isExplain'.
+         * Parses a find command object, 'cmdObj'. Caller must indicate whether or not this lite
+         * parsed query is an explained query or not via 'isExplain'.
          *
-         * On success, fills in the out-parameter 'parsedQuery' and returns an OK status.
-         * The caller takes ownership of *out.
-         *
-         * Returns a failure status if 'cmdObj' is not well formed. On failure the caller
-         * is not responsible for deleting *out.
+         * Returns a heap allocated LiteParsedQuery on success or an error if 'cmdObj' is not well
+         * formed.
          */
-        static Status make(const std::string& fullns,
-                           const BSONObj& cmdObj,
-                           bool isExplain,
-                           LiteParsedQuery** out);
+        static StatusWith<std::unique_ptr<LiteParsedQuery>>
+            makeFromFindCommand(const NamespaceString& nss, const BSONObj& cmdObj, bool isExplain);
+
+        /**
+         * Constructs a LiteParseQuery object as though it is from a legacy QueryMessage.
+         */
+        static StatusWith<std::unique_ptr<LiteParsedQuery>> makeAsOpQuery(const std::string& ns,
+                                                                          int ntoskip,
+                                                                          int ntoreturn,
+                                                                          int queryoptions,
+                                                                          const BSONObj& query,
+                                                                          const BSONObj& proj,
+                                                                          const BSONObj& sort,
+                                                                          const BSONObj& hint,
+                                                                          const BSONObj& minObj,
+                                                                          const BSONObj& maxObj,
+                                                                          bool snapshot,
+                                                                          bool explain);
+
+        /**
+         * Constructs a LiteParseQuery object that can be used to serialize to find command
+         * BSON object.
+         */
+        static StatusWith<std::unique_ptr<LiteParsedQuery>>
+        makeAsFindCmd(const NamespaceString& ns,
+                      const BSONObj& query,
+                      boost::optional<int> limit);
+
+        /**
+         * Converts this LPQ into a find command.
+         */
+        BSONObj asFindCommand() const;
 
         /**
          * Helper functions to parse maxTimeMS from a command object.  Returns the contained value,
@@ -111,7 +138,6 @@ namespace mongo {
         static const std::string metaIndexKey;
 
         const std::string& ns() const { return _ns; }
-        bool isLocalDB() const { return _ns.compare(0, 6, "local.") == 0; }
 
         const BSONObj& getFilter() const { return _filter; }
         const BSONObj& getProj() const { return _proj; }
@@ -125,7 +151,7 @@ namespace mongo {
         boost::optional<int> getBatchSize() const { return _batchSize; }
         bool wantMore() const { return _wantMore; }
 
-        bool fromFindCommand() const { return _fromCommand; }
+        bool isFromFindCommand() const { return _fromCommand; }
         bool isExplain() const { return _explain; }
 
         const std::string& getComment() const { return _comment; }
@@ -159,30 +185,11 @@ namespace mongo {
         //
 
         /**
-         * Parse the provided QueryMessage and set *out to point to the output.
-         *
-         * Return Status::OK() if parsing succeeded.  Caller owns *out.
-         * Otherwise, *out is invalid and the returned Status indicates why parsing failed.
+         * Parse the provided QueryMessage and return a heap constructed LiteParsedQuery, which
+         * represents it or an error.
          */
-        static Status make(const QueryMessage& qm, LiteParsedQuery** out);
-
-        /**
-         * Fills out a LiteParsedQuery.  Used for debugging and testing, when we don't have a
-         * QueryMessage.
-         */
-        static Status make(const std::string& ns,
-                           int ntoskip,
-                           int ntoreturn,
-                           int queryoptions,
-                           const BSONObj& query,
-                           const BSONObj& proj,
-                           const BSONObj& sort,
-                           const BSONObj& hint,
-                           const BSONObj& minObj,
-                           const BSONObj& maxObj,
-                           bool snapshot,
-                           bool explain,
-                           LiteParsedQuery** out);
+        static StatusWith<std::unique_ptr<LiteParsedQuery>> fromLegacyQueryMessage(
+            const QueryMessage& qm);
 
     private:
         LiteParsedQuery() = default;
@@ -216,6 +223,16 @@ namespace mongo {
          * This contains flags such as tailable, exhaust, and noCursorTimeout.
          */
         void initFromInt(int options);
+
+        /**
+         * Add the meta projection to this object if needed.
+         */
+        void addMetaProjection();
+
+        /**
+         * Returns OK if this is valid in the find command context.
+         */
+        Status validateFindCmd();
 
         std::string _ns;
 

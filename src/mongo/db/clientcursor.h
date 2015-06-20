@@ -28,9 +28,6 @@
 
 #pragma once
 
-#include <boost/noncopyable.hpp>
-#include <boost/scoped_ptr.hpp>
-
 #include "mongo/db/jsobj.h"
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/record_id.h"
@@ -51,7 +48,8 @@ namespace mongo {
      * ClientCursor is a wrapper that represents a cursorid from our database application's
      * perspective.
      */
-    class ClientCursor : private boost::noncopyable {
+    class ClientCursor {
+        MONGO_DISALLOW_COPYING(ClientCursor);
     public:
         /**
          * This ClientCursor constructor creates a cursorid that can be used with getMore and
@@ -264,7 +262,7 @@ namespace mongo {
 
         // Only one of these is not-NULL.
         RecoveryUnit* _unownedRU;
-        std::auto_ptr<RecoveryUnit> _ownedRU;
+        std::unique_ptr<RecoveryUnit> _ownedRU;
         // NOTE: _ownedRU must come before _exec, because _ownedRU must outlive _exec.
         // The storage engine can have resources in the PlanExecutor that rely on
         // the RecoveryUnit being alive.
@@ -272,7 +270,7 @@ namespace mongo {
         //
         // The underlying execution machinery.
         //
-        boost::scoped_ptr<PlanExecutor> _exec;
+        std::unique_ptr<PlanExecutor> _exec;
     };
 
     /**

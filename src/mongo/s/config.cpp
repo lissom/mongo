@@ -32,7 +32,6 @@
 
 #include "mongo/s/config.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/connpool.h"
 #include "mongo/db/client.h"
@@ -57,11 +56,10 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
     using std::endl;
     using std::set;
     using std::string;
+    using std::unique_ptr;
     using std::vector;
 
     CollectionInfo::CollectionInfo(const CollectionType& coll) {
@@ -151,7 +149,7 @@ namespace mongo {
     bool DBConfig::isSharded( const string& ns ) {
         if ( ! _shardingEnabled )
             return false;
-        boost::lock_guard<boost::mutex> lk( _lock );
+        stdx::lock_guard<stdx::mutex> lk( _lock );
         return _isSharded( ns );
     }
 
@@ -173,7 +171,7 @@ namespace mongo {
 
         uassert(10178,
                 "no primary!",
-                grid.shardRegistry()->findIfExists(_primaryId));
+                grid.shardRegistry()->getShard(_primaryId));
         return _primaryId;
     }
 
@@ -183,7 +181,7 @@ namespace mongo {
         
         verify( _name != "config" );
 
-        boost::lock_guard<boost::mutex> lk( _lock );
+        stdx::lock_guard<stdx::mutex> lk( _lock );
         _shardingEnabled = true;
         if( save ) _save();
     }
@@ -196,7 +194,7 @@ namespace mongo {
             return false;
         }
 
-        boost::lock_guard<boost::mutex> lk( _lock );
+        stdx::lock_guard<stdx::mutex> lk( _lock );
 
         CollectionInfoMap::iterator i = _collections.find( ns );
 
@@ -218,8 +216,8 @@ namespace mongo {
 
     // Handles weird logic related to getting *either* a chunk manager *or* the collection primary shard
     void DBConfig::getChunkManagerOrPrimary(const string& ns,
-                                            boost::shared_ptr<ChunkManager>& manager,
-                                            boost::shared_ptr<Shard>& primary) {
+                                            std::shared_ptr<ChunkManager>& manager,
+                                            std::shared_ptr<Shard>& primary) {
 
         // The logic here is basically that at any time, our collection can become sharded or unsharded
         // via a command.  If we're not sharded, we want to send data to the primary, if sharded, we want
@@ -229,14 +227,14 @@ namespace mongo {
         primary.reset();
 
         {
-            boost::lock_guard<boost::mutex> lk( _lock );
+            stdx::lock_guard<stdx::mutex> lk( _lock );
 
             CollectionInfoMap::iterator i = _collections.find( ns );
 
             // No namespace
             if( i == _collections.end() ){
                 // If we don't know about this namespace, it's unsharded by default
-                primary = grid.shardRegistry()->findIfExists(_primaryId);
+                primary = grid.shardRegistry()->getShard(_primaryId);
             }
             else {
                 CollectionInfo& cInfo = i->second;
@@ -248,7 +246,7 @@ namespace mongo {
                     manager = cInfo.getCM();
                 }
                 else{
-                    primary = grid.shardRegistry()->findIfExists(_primaryId);
+                    primary = grid.shardRegistry()->getShard(_primaryId);
                 }
             }
         }
@@ -275,7 +273,7 @@ namespace mongo {
         }
     }
 
-    boost::shared_ptr<ChunkManager> DBConfig::getChunkManager(const string& ns,
+    std::shared_ptr<ChunkManager> DBConfig::getChunkManager(const string& ns,
                                                               bool shouldReload,
                                                               bool forceReload) {
         BSONObj key;
@@ -283,7 +281,7 @@ namespace mongo {
         ChunkManagerPtr oldManager;
 
         {
-            boost::lock_guard<boost::mutex> lk(_lock);
+            stdx::lock_guard<stdx::mutex> lk(_lock);
 
             bool earlyReload = !_collections[ns].isSharded() && (shouldReload || forceReload);
             if (earlyReload) {
@@ -324,7 +322,7 @@ namespace mongo {
                 invariant(newestChunk.size() == 1);
                 ChunkVersion v = newestChunk[0].getVersion();
                 if (v.equals(oldVersion)) {
-                    boost::lock_guard<boost::mutex> lk( _lock );
+                    stdx::lock_guard<stdx::mutex> lk( _lock );
                     const CollectionInfo& ci = _collections[ns];
                     uassert(15885,
                             str::stream() << "not sharded after reloading from chunks : "
@@ -341,14 +339,14 @@ namespace mongo {
 
         // we are not locked now, and want to load a new ChunkManager
         
-        auto_ptr<ChunkManager> tempChunkManager;
+        unique_ptr<ChunkManager> tempChunkManager;
 
         {
-            boost::lock_guard<boost::mutex> lll ( _hitConfigServerLock );
-            
+            stdx::lock_guard<stdx::mutex> lll ( _hitConfigServerLock );
+
             if (!newestChunk.empty() && !forceReload) {
                 // If we have a target we're going for see if we've hit already
-                boost::lock_guard<boost::mutex> lk( _lock );
+                stdx::lock_guard<stdx::mutex> lk( _lock );
 
                 CollectionInfo& ci = _collections[ns];
 
@@ -377,8 +375,8 @@ namespace mongo {
             }
         }
 
-        boost::lock_guard<boost::mutex> lk( _lock );
-        
+        stdx::lock_guard<stdx::mutex> lk( _lock );
+
         CollectionInfo& ci = _collections[ns];
         uassert(14822, (string)"state changed in the middle: " + ns, ci.isSharded());
 
@@ -423,15 +421,15 @@ namespace mongo {
     }
 
     void DBConfig::setPrimary(const std::string& s) {
-        const auto& shard = grid.shardRegistry()->findIfExists(s);
+        const auto shard = grid.shardRegistry()->getShard(s);
 
-        boost::lock_guard<boost::mutex> lk( _lock );
+        stdx::lock_guard<stdx::mutex> lk( _lock );
         _primaryId = shard->getId();
         _save();
     }
 
     bool DBConfig::load() {
-        boost::lock_guard<boost::mutex> lk( _lock );
+        stdx::lock_guard<stdx::mutex> lk( _lock );
         return _load();
     }
 
@@ -501,7 +499,7 @@ namespace mongo {
         bool successful = false;
 
         {
-            boost::lock_guard<boost::mutex> lk( _lock );
+            stdx::lock_guard<stdx::mutex> lk( _lock );
             successful = _reload();
         }
 
@@ -564,7 +562,7 @@ namespace mongo {
 
         // 3
         {
-            const auto& shard = grid.shardRegistry()->findIfExists(_primaryId);
+            const auto shard = grid.shardRegistry()->getShard(_primaryId);
             ScopedDbConnection conn(shard->getConnString(), 30.0);
             BSONObj res;
                 if ( ! conn->dropDatabase( _name , &res ) ) {
@@ -576,7 +574,7 @@ namespace mongo {
 
         // 4
         for (const ShardId& shardId : shardIds) {
-            const auto& shard = grid.shardRegistry()->findIfExists(shardId);
+            const auto shard = grid.shardRegistry()->getShard(shardId);
             if (!shard) {
                 continue;
             }
@@ -642,7 +640,7 @@ namespace mongo {
     void DBConfig::getAllShardIds(set<ShardId>* shardIds) {
         dassert(shardIds);
 
-        boost::lock_guard<boost::mutex> lk(_lock);
+        stdx::lock_guard<stdx::mutex> lk(_lock);
         shardIds->insert(getPrimaryId());
         for (CollectionInfoMap::const_iterator it(_collections.begin()), end(_collections.end());
              it != end;
@@ -654,7 +652,7 @@ namespace mongo {
     }
 
     void DBConfig::getAllShardedCollections( set<string>& namespaces ) {
-        boost::lock_guard<boost::mutex> lk(_lock);
+        stdx::lock_guard<stdx::mutex> lk(_lock);
 
         for( CollectionInfoMap::const_iterator i = _collections.begin(); i != _collections.end(); i++ ) {
             log() << "Coll : " << i->first << " sharded? " << i->second.isSharded() << endl;
@@ -666,28 +664,28 @@ namespace mongo {
     /* --- ConfigServer ---- */
 
     void ConfigServer::reloadSettings() {
-        auto chunkSize = grid.catalogManager()->getGlobalSettings(SettingsType::ChunkSizeDocKey);
-        if (chunkSize.isOK()) {
-            const int csize = chunkSize.getValue().getChunkSize();
+        auto chunkSizeResult = grid.catalogManager()->getGlobalSettings(SettingsType::ChunkSizeDocKey);
+        if (chunkSizeResult.isOK()) {
+            const int csize = chunkSizeResult.getValue().getChunkSizeMB();
             LOG(1) << "Found MaxChunkSize: " << csize;
 
             if (!Chunk::setMaxChunkSizeSizeMB(csize)) {
                 warning() << "invalid chunksize: " << csize;
             }
         }
-        else if (chunkSize == ErrorCodes::NoSuchKey) {
+        else if (chunkSizeResult.getStatus() == ErrorCodes::NoMatchingDocument) {
             const int chunkSize = Chunk::MaxChunkSize / (1024 * 1024);
             Status result =
                 grid.catalogManager()->insert(SettingsType::ConfigNS,
                                               BSON(SettingsType::key(SettingsType::ChunkSizeDocKey)
-                                                   << SettingsType::chunkSize(chunkSize)),
+                                                   << SettingsType::chunkSizeMB(chunkSize)),
                                               NULL);
             if (!result.isOK()) {
                 warning() << "couldn't set chunkSize on config db" << causedBy(result);
             }
         }
         else {
-            warning() << "couldn't load settings on config db: " << chunkSize.getStatus();
+            warning() << "couldn't load settings on config db: " << chunkSizeResult.getStatus();
         }
 
         // indexes

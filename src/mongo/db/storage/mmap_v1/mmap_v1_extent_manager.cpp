@@ -55,7 +55,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::max;
     using std::string;
@@ -105,7 +105,7 @@ namespace mongo {
 
         // This ensures that our MmapV1RecordHeader* does not drop out from under our feet before
         // we dereference it.
-        boost::scoped_ptr<LockMongoFilesShared> _filesLock;
+        std::unique_ptr<LockMongoFilesShared> _filesLock;
     };
 
     MmapV1ExtentManager::MmapV1ExtentManager(StringData dbname,
@@ -166,7 +166,7 @@ namespace mongo {
                 }
             }
 
-            auto_ptr<DataFile> df(new DataFile(n));
+            unique_ptr<DataFile> df(new DataFile(n));
 
             Status s = df->openExisting(fullNameString.c_str());
             if (!s.isOK()) {
@@ -235,7 +235,7 @@ namespace mongo {
         }
 
         {
-            auto_ptr<DataFile> allocFile(new DataFile(allocFileId));
+            unique_ptr<DataFile> allocFile(new DataFile(allocFileId));
             const string allocFileName = _fileName(allocFileId).string();
 
             Timer t;
@@ -254,7 +254,7 @@ namespace mongo {
 
         // Preallocate is asynchronous
         if (preallocateNextFile) {
-            auto_ptr<DataFile> nextFile(new DataFile(allocFileId + 1));
+            unique_ptr<DataFile> nextFile(new DataFile(allocFileId + 1));
             const string nextFileName = _fileName(allocFileId + 1).string();
 
             nextFile->open(txn, nextFileName.c_str(), minSize, false);
@@ -659,7 +659,7 @@ namespace mongo {
     }
 
     void MmapV1ExtentManager::FilesArray::push_back(DataFile* val) {
-        boost::lock_guard<boost::mutex> lk(_writersMutex);
+        stdx::lock_guard<stdx::mutex> lk(_writersMutex);
         const int n = _size.load();
         invariant(n < DiskLoc::MaxFiles);
         // Note ordering: _size update must come after updating the _files array

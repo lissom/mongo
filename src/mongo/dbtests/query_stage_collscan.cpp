@@ -30,7 +30,6 @@
  * This file tests db/exec/collection_scan.cpp.
  */
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/catalog/collection.h"
@@ -49,8 +48,7 @@
 
 namespace QueryStageCollectionScan {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     //
@@ -90,7 +88,7 @@ namespace QueryStageCollectionScan {
             // Make the filter.
             StatusWithMatchExpression swme = MatchExpressionParser::parse(filterObj);
             verify(swme.isOK());
-            auto_ptr<MatchExpression> filterExpr(swme.getValue());
+            unique_ptr<MatchExpression> filterExpr(swme.getValue());
 
             // Make a scan and have the runner own it.
             WorkingSet* ws = new WorkingSet();
@@ -100,7 +98,7 @@ namespace QueryStageCollectionScan {
             Status status = PlanExecutor::make(&_txn, ws, ps, params.collection,
                                                PlanExecutor::YIELD_MANUAL, &rawExec);
             ASSERT_OK(status);
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             // Use the runner to count the number of objects scanned.
             int count = 0;
@@ -118,7 +116,7 @@ namespace QueryStageCollectionScan {
             params.direction = direction;
             params.tailable = false;
 
-            scoped_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
+            unique_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
             while (!scan->isEOF()) {
                 WorkingSetID id = WorkingSet::INVALID_ID;
                 PlanStage::StageState state = scan->work(&id);
@@ -210,7 +208,7 @@ namespace QueryStageCollectionScan {
             Status status = PlanExecutor::make(&_txn, ws, ps, params.collection,
                                                PlanExecutor::YIELD_MANUAL, &rawExec);
             ASSERT_OK(status);
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             int count = 0;
             for (BSONObj obj; PlanExecutor::ADVANCED == exec->getNext(&obj, NULL); ) {
@@ -244,7 +242,7 @@ namespace QueryStageCollectionScan {
             Status status = PlanExecutor::make(&_txn, ws, ps, params.collection,
                                                PlanExecutor::YIELD_MANUAL, &rawExec);
             ASSERT_OK(status);
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             int count = 0;
             for (BSONObj obj; PlanExecutor::ADVANCED == exec->getNext(&obj, NULL); ) {
@@ -279,7 +277,7 @@ namespace QueryStageCollectionScan {
             params.tailable = false;
 
             WorkingSet ws;
-            scoped_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
+            unique_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
 
             int count = 0;
             while (count < 10) {
@@ -340,7 +338,7 @@ namespace QueryStageCollectionScan {
             params.tailable = false;
 
             WorkingSet ws;
-            scoped_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
+            unique_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
 
             int count = 0;
             while (count < 10) {

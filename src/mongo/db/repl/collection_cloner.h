@@ -35,10 +35,10 @@
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
+#include "mongo/client/fetcher.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/repl/base_cloner.h"
-#include "mongo/db/repl/fetcher.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/stdx/condition_variable.h"
@@ -123,14 +123,14 @@ namespace repl {
         /**
          * Read index specs from listIndexes result.
          */
-        void _listIndexesCallback(const StatusWith<Fetcher::BatchData>& fetchResult,
+        void _listIndexesCallback(const StatusWith<Fetcher::QueryResponse>& fetchResult,
                                   Fetcher::NextAction* nextAction,
                                   BSONObjBuilder* getMoreBob);
 
         /**
          * Read collection documents from find result.
          */
-        void _findCallback(const StatusWith<Fetcher::BatchData>& fetchResult,
+        void _findCallback(const StatusWith<Fetcher::QueryResponse>& fetchResult,
                            Fetcher::NextAction* nextAction,
                            BSONObjBuilder* getMoreBob);
 
@@ -143,7 +143,7 @@ namespace repl {
          * 'nextAction' is an in/out arg indicating the next action planned and to be taken
          *  by the fetcher.
          */
-        void _beginCollectionCallback(const ReplicationExecutor::CallbackData& callbackData);
+        void _beginCollectionCallback(const ReplicationExecutor::CallbackArgs& callbackData);
 
         /**
          * Called multiple times if there are more than one batch of documents from the fetcher.
@@ -152,7 +152,7 @@ namespace repl {
          * Each document returned will be inserted via the storage interfaceRequest storage
          * interface.
          */
-        void _insertDocumentsCallback(const ReplicationExecutor::CallbackData& callbackData,
+        void _insertDocumentsCallback(const ReplicationExecutor::CallbackArgs& callbackData,
                                       bool lastBatch);
 
         /**

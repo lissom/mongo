@@ -34,7 +34,6 @@
 
 #include "mongo/client/parallel.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/connpool.h"
 #include "mongo/client/constants.h"
@@ -53,7 +52,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::list;
     using std::map;
@@ -481,7 +480,7 @@ namespace mongo {
                      end = _cursorMap.end();
                  i != end;
                  ++i) {
-                const auto& shard = grid.shardRegistry()->findIfExists(i->first);
+                const auto shard = grid.shardRegistry()->getShard(i->first);
                 if (!shard) {
                     continue;
                 }
@@ -560,7 +559,7 @@ namespace mongo {
     void ParallelSortClusteredCursor::setupVersionAndHandleSlaveOk(
         PCStatePtr state,
         const ShardId& shardId,
-        boost::shared_ptr<Shard> primary,
+        std::shared_ptr<Shard> primary,
         const NamespaceString& ns,
         const string& vinfo,
         ChunkManagerPtr manager ) {
@@ -576,7 +575,7 @@ namespace mongo {
 
         // Setup conn
         if (!state->conn) {
-            const auto& shard = grid.shardRegistry()->findIfExists(shardId);
+            const auto shard = grid.shardRegistry()->getShard(shardId);
             state->conn.reset(new ShardConnection(shard->getConnString(), ns, manager));
         }
 
@@ -1162,7 +1161,7 @@ namespace mongo {
             _cursors[ index ].reset( mdata.pcState->cursor.get(), &mdata );
 
             {
-                const auto& shard = grid.shardRegistry()->findIfExists(i->first);
+                const auto shard = grid.shardRegistry()->getShard(i->first);
                 _servers.insert(shard->getConnString().toString());
             }
 
@@ -1187,8 +1186,8 @@ namespace mongo {
         return _cursorMap.size();
     }
 
-    boost::shared_ptr<Shard> ParallelSortClusteredCursor::getQueryShard() {
-        return grid.shardRegistry()->findIfExists(_cursorMap.begin()->first);
+    std::shared_ptr<Shard> ParallelSortClusteredCursor::getQueryShard() {
+        return grid.shardRegistry()->getShard(_cursorMap.begin()->first);
     }
 
     void ParallelSortClusteredCursor::getQueryShardIds(set<ShardId>& shardIds) {
@@ -1199,9 +1198,9 @@ namespace mongo {
         }
     }
 
-    boost::shared_ptr<Shard> ParallelSortClusteredCursor::getPrimary() {
+    std::shared_ptr<Shard> ParallelSortClusteredCursor::getPrimary() {
         if (isSharded())
-            return boost::shared_ptr<Shard>();
+            return std::shared_ptr<Shard>();
         return _cursorMap.begin()->second.pcState->primary;
     }
 

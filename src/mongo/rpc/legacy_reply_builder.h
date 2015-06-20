@@ -33,6 +33,7 @@
 #include "mongo/base/status_with.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/rpc/document_range.h"
+#include "mongo/rpc/protocol.h"
 #include "mongo/rpc/reply_builder_interface.h"
 
 namespace mongo {
@@ -53,10 +54,18 @@ namespace rpc {
 
         State getState() const final;
 
+        void reset() final;
+
         std::unique_ptr<Message> done() final;
 
+        Protocol getProtocol() const final;
+
+        std::size_t availableSpaceForOutputDocs() const final;
+
     private:
+
         BufBuilder _builder{};
+        BSONObj _metadata{};
         std::unique_ptr<Message> _message;
         State _state{State::kMetadata};
     };

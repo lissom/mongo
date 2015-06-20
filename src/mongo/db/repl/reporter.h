@@ -46,7 +46,7 @@ namespace repl {
 
     public:
         Reporter(ReplicationExecutor* executor,
-                 ReplicationProgressManager* ReplicationProgressManager,
+                 ReplicationProgressManager* replicationProgressManager,
                  const HostAndPort& target);
         virtual ~Reporter();
 
@@ -95,7 +95,7 @@ namespace repl {
         /**
          * Callback for remote command.
          */
-        void _callback(const ReplicationExecutor::RemoteCommandCallbackData& rcbd);
+        void _callback(const ReplicationExecutor::RemoteCommandCallbackArgs& rcbd);
 
         // Not owned by us.
         ReplicationExecutor* _executor;
@@ -105,7 +105,7 @@ namespace repl {
         HostAndPort _target;
 
         // Protects member data of this Reporter.
-        mutable boost::mutex _mutex;
+        mutable stdx::mutex _mutex;
 
         // Stores the most recent Status returned from the ReplicationExecutor.
         Status _status;

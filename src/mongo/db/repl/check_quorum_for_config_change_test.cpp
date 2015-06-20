@@ -30,9 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/thread.hpp>
-#include <boost/scoped_ptr.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/db/repl/check_quorum_for_config_change.h"
@@ -44,6 +41,7 @@
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/platform/unordered_set.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/net/hostandport.h"
 
@@ -75,7 +73,7 @@ namespace {
 
         NetworkInterfaceMock* _net;
         StorageInterfaceMock* _storage;
-        boost::scoped_ptr<ReplicationExecutor> _executor;
+        std::unique_ptr<ReplicationExecutor> _executor;
 
     private:
         void setUp();
@@ -84,10 +82,10 @@ namespace {
         void _runQuorumCheck(const ReplicaSetConfig& config, int myIndex);
         virtual Status _runQuorumCheckImpl(const ReplicaSetConfig& config, int myIndex) = 0;
 
-        boost::scoped_ptr<boost::thread> _executorThread;
-        boost::scoped_ptr<boost::thread> _quorumCheckThread;
+        std::unique_ptr<stdx::thread> _executorThread;
+        std::unique_ptr<stdx::thread> _quorumCheckThread;
         Status _quorumCheckStatus;
-        boost::mutex _mutex;
+        stdx::mutex _mutex;
         bool _isQuorumCheckDone;
     };
 
@@ -99,7 +97,7 @@ namespace {
         _net = new NetworkInterfaceMock;
         _storage = new StorageInterfaceMock;
         _executor.reset(new ReplicationExecutor(_net, _storage, 1 /* prng */ ));
-        _executorThread.reset(new boost::thread(stdx::bind(&ReplicationExecutor::run,
+        _executorThread.reset(new stdx::thread(stdx::bind(&ReplicationExecutor::run,
                                                            _executor.get())));
     }
 
@@ -111,7 +109,7 @@ namespace {
     void CheckQuorumTest::startQuorumCheck(const ReplicaSetConfig& config, int myIndex) {
         ASSERT_FALSE(_quorumCheckThread);
         _isQuorumCheckDone = false;
-        _quorumCheckThread.reset(new boost::thread(stdx::bind(&CheckQuorumTest::_runQuorumCheck,
+        _quorumCheckThread.reset(new stdx::thread(stdx::bind(&CheckQuorumTest::_runQuorumCheck,
                                                               this,
                                                               config,
                                                               myIndex)));
@@ -124,13 +122,13 @@ namespace {
     }
 
     bool CheckQuorumTest::isQuorumCheckDone() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _isQuorumCheckDone;
     }
 
     void CheckQuorumTest::_runQuorumCheck(const ReplicaSetConfig& config, int myIndex) {
         _quorumCheckStatus = _runQuorumCheckImpl(config, myIndex);
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _isQuorumCheckDone = true;
     }
 

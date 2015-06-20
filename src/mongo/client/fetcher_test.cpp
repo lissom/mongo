@@ -30,8 +30,8 @@
 
 #include <memory>
 
+#include "mongo/client/fetcher.h"
 #include "mongo/db/jsobj.h"
-#include "mongo/db/repl/fetcher.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/db/repl/replication_executor_test_fixture.h"
 #include "mongo/executor/network_interface_mock.h"
@@ -49,10 +49,7 @@ namespace {
 
     class FetcherTest : public ReplicationExecutorTest {
     public:
-        static Status getDetectableErrorStatus();
         FetcherTest();
-        void setUp() override;
-        void tearDown() override;
         void clear();
         void scheduleNetworkResponse(const BSONObj& obj);
         void scheduleNetworkResponse(ErrorCodes::Error code, const std::string& reason);
@@ -61,24 +58,24 @@ namespace {
         void finishProcessingNetworkResponse();
 
     protected:
+
+        void setUp() override;
+        void tearDown() override;
+
         Status status;
         CursorId cursorId;
+        NamespaceString nss;
         Fetcher::Documents documents;
         Fetcher::NextAction nextAction;
-        Fetcher::NextAction newNextAction;
         std::unique_ptr<Fetcher> fetcher;
         // Called at end of _callback
         Fetcher::CallbackFn callbackHook;
 
     private:
-        void _callback(const StatusWith<Fetcher::BatchData>& result,
+        void _callback(const StatusWith<Fetcher::QueryResponse>& result,
                        Fetcher::NextAction* nextAction,
                        BSONObjBuilder* getMoreBob);
     };
-
-    Status FetcherTest::getDetectableErrorStatus() {
-        return Status(ErrorCodes::InternalError, "Not mutated");
-    }
 
     FetcherTest::FetcherTest()
         : status(getDetectableErrorStatus()),
@@ -104,8 +101,10 @@ namespace {
     void FetcherTest::clear() {
         status = getDetectableErrorStatus();
         cursorId = -1;
+        nss = NamespaceString();
         documents.clear();
         nextAction = Fetcher::NextAction::kInvalid;
+        callbackHook = Fetcher::CallbackFn();
     }
 
     void FetcherTest::scheduleNetworkResponse(const BSONObj& obj) {
@@ -143,13 +142,14 @@ namespace {
         ASSERT_FALSE(fetcher->isActive());
     }
 
-    void FetcherTest::_callback(const StatusWith<Fetcher::BatchData>& result,
+    void FetcherTest::_callback(const StatusWith<Fetcher::QueryResponse>& result,
                                 Fetcher::NextAction* nextActionFromFetcher,
                                 BSONObjBuilder* getMoreBob) {
         status = result.getStatus();
         if (result.isOK()) {
-            const Fetcher::BatchData& batchData = result.getValue();
+            const Fetcher::QueryResponse& batchData = result.getValue();
             cursorId = batchData.cursorId;
+            nss = batchData.nss;
             documents = batchData.documents;
         }
 
@@ -162,7 +162,7 @@ namespace {
         }
     }
 
-    void unusedFetcherCallback(const StatusWith<Fetcher::BatchData>& fetchResult,
+    void unusedFetcherCallback(const StatusWith<Fetcher::QueryResponse>& fetchResult,
                                Fetcher::NextAction* nextAction,
                                BSONObjBuilder* getMoreBob) {
         FAIL("should not reach here");
@@ -379,6 +379,8 @@ namespace {
                                                      "firstBatch" << BSONArray()) <<
                                     "ok" << 1));
         ASSERT_OK(status);
+        ASSERT_EQUALS(0, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_TRUE(documents.empty());
     }
 
@@ -391,6 +393,7 @@ namespace {
                                     "ok" << 1));
         ASSERT_OK(status);
         ASSERT_EQUALS(0, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc, documents.front());
     }
@@ -398,17 +401,15 @@ namespace {
     TEST_F(FetcherTest, SetNextActionToContinueWhenNextBatchIsNotAvailable) {
         ASSERT_OK(fetcher->schedule());
         const BSONObj doc = BSON("_id" << 1);
-        callbackHook = [](const StatusWith<Fetcher::BatchData>& fetchResult,
+        callbackHook = [](const StatusWith<Fetcher::QueryResponse>& fetchResult,
                           Fetcher::NextAction* nextAction,
                           BSONObjBuilder* getMoreBob) {
             ASSERT_OK(fetchResult.getStatus());
-            Fetcher::BatchData batchData{fetchResult.getValue()};
+            Fetcher::QueryResponse batchData{fetchResult.getValue()};
 
             ASSERT(nextAction);
             *nextAction = Fetcher::NextAction::kGetMore;
-            ASSERT(getMoreBob);
-            getMoreBob->append("getMore", batchData.cursorId);
-            getMoreBob->append("collection", batchData.nss.coll());
+            ASSERT_FALSE(getMoreBob);
         };
         processNetworkResponse(BSON("cursor" << BSON("id" << 0LL <<
                                                      "ns" << "db.coll" <<
@@ -416,11 +417,25 @@ namespace {
                                     "ok" << 1));
         ASSERT_OK(status);
         ASSERT_EQUALS(0, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc, documents.front());
     }
 
+    void appendGetMoreRequest(const StatusWith<Fetcher::QueryResponse>& fetchResult,
+                              Fetcher::NextAction* nextAction,
+                              BSONObjBuilder* getMoreBob) {
+        if (!getMoreBob) {
+            return;
+        }
+        const auto& batchData = fetchResult.getValue();
+        getMoreBob->append("getMore", batchData.cursorId);
+        getMoreBob->append("collection", batchData.nss.coll());
+    }
+
     TEST_F(FetcherTest, FetchMultipleBatches) {
+        callbackHook = appendGetMoreRequest;
+
         ASSERT_OK(fetcher->schedule());
         const BSONObj doc = BSON("_id" << 1);
         scheduleNetworkResponse(BSON("cursor" << BSON("id" << 1LL <<
@@ -429,6 +444,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == nextAction);
@@ -442,6 +459,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc2, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == nextAction);
@@ -455,6 +474,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(0, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc3, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kNoAction == nextAction);
@@ -464,6 +485,8 @@ namespace {
     }
 
     TEST_F(FetcherTest, ScheduleGetMoreAndCancel) {
+        callbackHook = appendGetMoreRequest;
+
         ASSERT_OK(fetcher->schedule());
         const BSONObj doc = BSON("_id" << 1);
         scheduleNetworkResponse(BSON("cursor" << BSON("id" << 1LL <<
@@ -472,6 +495,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == nextAction);
@@ -485,6 +510,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc2, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == nextAction);
@@ -496,6 +523,8 @@ namespace {
     }
 
     TEST_F(FetcherTest, ScheduleGetMoreButShutdown) {
+        callbackHook = appendGetMoreRequest;
+
         ASSERT_OK(fetcher->schedule());
         const BSONObj doc = BSON("_id" << 1);
         scheduleNetworkResponse(BSON("cursor" << BSON("id" << 1LL <<
@@ -504,6 +533,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == nextAction);
@@ -517,6 +548,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc2, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == nextAction);
@@ -527,13 +560,15 @@ namespace {
         ASSERT_NOT_OK(status);
     }
 
-    void setNextActionToNoAction(const StatusWith<Fetcher::BatchData>& fetchResult,
+    void setNextActionToNoAction(const StatusWith<Fetcher::QueryResponse>& fetchResult,
                                  Fetcher::NextAction* nextAction,
                                  BSONObjBuilder* getMoreBob) {
         *nextAction = Fetcher::NextAction::kNoAction;
     }
 
     TEST_F(FetcherTest, UpdateNextActionAfterSecondBatch) {
+        callbackHook = appendGetMoreRequest;
+
         ASSERT_OK(fetcher->schedule());
         const BSONObj doc = BSON("_id" << 1);
         scheduleNetworkResponse(BSON("cursor" << BSON("id" << 1LL <<
@@ -542,6 +577,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == nextAction);
@@ -558,6 +595,8 @@ namespace {
 
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc2, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kNoAction == nextAction);
@@ -567,7 +606,7 @@ namespace {
     /**
      * This will be invoked twice before the fetcher returns control to the replication executor.
      */
-    void shutdownDuringSecondBatch(const StatusWith<Fetcher::BatchData>& fetchResult,
+    void shutdownDuringSecondBatch(const StatusWith<Fetcher::QueryResponse>& fetchResult,
                                    Fetcher::NextAction* nextAction,
                                    BSONObjBuilder* getMoreBob,
                                    const BSONObj& doc2,
@@ -578,7 +617,7 @@ namespace {
 
         // First time during second batch
         ASSERT_OK(fetchResult.getStatus());
-        Fetcher::BatchData batchData{fetchResult.getValue()};
+        Fetcher::QueryResponse batchData{fetchResult.getValue()};
         ASSERT_EQUALS(1U, batchData.documents.size());
         ASSERT_EQUALS(doc2, batchData.documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == *nextAction);
@@ -591,6 +630,8 @@ namespace {
     }
 
     TEST_F(FetcherTest, ShutdownDuringSecondBatch) {
+        callbackHook = appendGetMoreRequest;
+
         ASSERT_OK(fetcher->schedule());
         const BSONObj doc = BSON("_id" << 1);
         scheduleNetworkResponse(BSON("cursor" << BSON("id" << 1LL <<
@@ -599,6 +640,8 @@ namespace {
                                      "ok" << 1));
         getNet()->runReadyNetworkOperations();
         ASSERT_OK(status);
+        ASSERT_EQUALS(1LL, cursorId);
+        ASSERT_EQUALS("db.coll", nss.ns());
         ASSERT_EQUALS(1U, documents.size());
         ASSERT_EQUALS(doc, documents.front());
         ASSERT_TRUE(Fetcher::NextAction::kGetMore == nextAction);

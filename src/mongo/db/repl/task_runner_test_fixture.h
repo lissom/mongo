@@ -35,13 +35,8 @@
 
 namespace mongo {
 
+    class OldThreadPool;
     class OperationContext;
-
-namespace threadpool {
-
-    class ThreadPool;
-
-} // namespace threadpool
 
 namespace repl {
 
@@ -67,17 +62,19 @@ namespace repl {
          */
         virtual OperationContext* createOperationContext() const;
 
-        threadpool::ThreadPool& getThreadPool() const;
+        OldThreadPool& getThreadPool() const;
         TaskRunner& getTaskRunner() const;
 
         void resetTaskRunner(TaskRunner* taskRunner);
         void destroyTaskRunner();
 
+    protected:
+
         void setUp() override;
         void tearDown() override;
 
     private:
-        std::unique_ptr<threadpool::ThreadPool> _threadPool;
+        std::unique_ptr<OldThreadPool> _threadPool;
         std::unique_ptr<TaskRunner> _taskRunner;
     };
 

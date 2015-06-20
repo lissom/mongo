@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -134,7 +133,7 @@ namespace mongo {
         CommonStats common;
 
         // Per-stage place to stash additional information
-        boost::scoped_ptr<SpecificStats> specific;
+        std::unique_ptr<SpecificStats> specific;
 
         // The stats of the node's children.
         std::vector<PlanStageStats*> children;
@@ -241,6 +240,9 @@ namespace mongo {
     struct CountScanStats : public SpecificStats {
         CountScanStats() : indexVersion(0),
                            isMultiKey(false),
+                           isPartial(false),
+                           isSparse(false),
+                           isUnique(false),
                            keysExamined(0) { }
 
         virtual ~CountScanStats() { }
@@ -259,6 +261,9 @@ namespace mongo {
         int indexVersion;
 
         bool isMultiKey;
+        bool isPartial;
+        bool isSparse;
+        bool isUnique;
 
         size_t keysExamined;
 
@@ -356,6 +361,9 @@ namespace mongo {
         IndexScanStats() : indexVersion(0),
                            direction(1),
                            isMultiKey(false),
+                           isPartial(false),
+                           isSparse(false),
+                           isUnique(false),
                            dupsTested(0),
                            dupsDropped(0),
                            seenInvalidated(0),
@@ -389,8 +397,12 @@ namespace mongo {
         // against the order.
         int direction;
 
+        // index properties
         // Whether this index is over a field that contain array values.
         bool isMultiKey;
+        bool isPartial;
+        bool isSparse;
+        bool isUnique;
 
         size_t dupsTested;
         size_t dupsDropped;

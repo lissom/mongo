@@ -28,15 +28,13 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread.hpp>
-
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/db/repl/scatter_gather_algorithm.h"
 #include "mongo/db/repl/scatter_gather_runner.h"
 #include "mongo/db/repl/storage_interface_mock.h"
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 
 namespace mongo {
@@ -116,15 +114,15 @@ namespace {
         // owned by _executor
         NetworkInterfaceMock* _net;
         StorageInterfaceMock* _storage;
-        boost::scoped_ptr<ReplicationExecutor> _executor;
-        boost::scoped_ptr<boost::thread> _executorThread;
+        std::unique_ptr<ReplicationExecutor> _executor;
+        std::unique_ptr<stdx::thread> _executorThread;
     };
 
     void ScatterGatherTest::setUp() {
         _net = new NetworkInterfaceMock;
         _storage = new StorageInterfaceMock;
         _executor.reset(new ReplicationExecutor(_net, _storage, 1 /* prng seed */));
-        _executorThread.reset(new boost::thread(stdx::bind(&ReplicationExecutor::run,
+        _executorThread.reset(new stdx::thread(stdx::bind(&ReplicationExecutor::run,
                                                            _executor.get())));
     }
 
@@ -150,7 +148,7 @@ namespace {
         }
 
         void run() {
-            _thread.reset(new boost::thread(stdx::bind(&ScatterGatherRunnerRunner::_run,
+            _thread.reset(new stdx::thread(stdx::bind(&ScatterGatherRunnerRunner::_run,
                                                        this,
                                                        _executor)));
         }
@@ -164,7 +162,7 @@ namespace {
         ScatterGatherRunner* _sgr;
         ReplicationExecutor* _executor;
         Status _result;
-        boost::scoped_ptr<boost::thread> _thread;
+        std::unique_ptr<stdx::thread> _thread;
     };
 
     // Simple onCompletion function which will toggle a bool, so that we can check the logs to

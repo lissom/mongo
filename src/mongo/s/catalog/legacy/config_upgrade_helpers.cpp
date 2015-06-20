@@ -32,7 +32,6 @@
 
 #include "mongo/s/catalog/legacy/config_upgrade_helpers.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/connpool.h"
 #include "mongo/db/field_parser.h"
@@ -46,10 +45,9 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
     using std::endl;
     using std::string;
+    using std::unique_ptr;
 
     using mongoutils::str::stream;
 

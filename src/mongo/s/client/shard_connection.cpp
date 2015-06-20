@@ -49,7 +49,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::map;
     using std::set;
     using std::string;
@@ -67,12 +67,12 @@ namespace {
     class ActiveClientConnections {
     public:
         void add(const ClientConnections* cc) {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             _clientConnections.insert(cc);
         }
 
         void remove(const ClientConnections* cc) {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             _clientConnections.erase(cc);
         }
 
@@ -208,7 +208,7 @@ namespace {
 
             Status* s = _getStatus(addr);
 
-            auto_ptr<DBClientBase> c;
+            unique_ptr<DBClientBase> c;
             if (s->avail) {
                 c.reset(s->avail);
                 s->avail = 0;
@@ -288,7 +288,7 @@ namespace {
             // Now only check top-level shard connections
             for (const ShardId& shardId : all) {
                 try {
-                    const auto& shard = grid.shardRegistry()->findIfExists(shardId);
+                    const auto shard = grid.shardRegistry()->getShard(shardId);
                     if (!shard) {
                         continue;
                     }
@@ -389,7 +389,7 @@ namespace {
         BSONArrayBuilder arr(64 * 1024); // There may be quite a few threads
 
         {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             for (set<const ClientConnections*>::const_iterator i = _clientConnections.begin();
                 i != _clientConnections.end();
                 ++i) {
@@ -416,7 +416,7 @@ namespace {
 
     ShardConnection::ShardConnection(const ConnectionString& connectionString,
                                      const string& ns,
-                                     boost::shared_ptr<ChunkManager> manager)
+                                     std::shared_ptr<ChunkManager> manager)
         : _cs(connectionString),
           _ns(ns),
           _manager(manager) {
@@ -534,7 +534,7 @@ namespace {
 
         ShardId shardId;
         {
-            const auto& shard = grid.shardRegistry()->findIfExists(conn.getServerAddress());
+            const auto shard = grid.shardRegistry()->getShard(conn.getServerAddress());
             shardId = shard->getId();
             cmdBuilder.append("shard", shardId);
             cmdBuilder.append("shardHost", shard->getConnString().toString());

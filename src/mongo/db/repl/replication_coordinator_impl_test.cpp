@@ -30,8 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread.hpp>
 #include <future>
 #include <iostream>
 #include <memory>
@@ -58,6 +56,7 @@
 #include "mongo/db/write_concern_options.h"
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
@@ -243,7 +242,7 @@ namespace {
         hbArgs.setSenderId(0);
 
         Status status(ErrorCodes::InternalError, "Not set");
-        boost::thread prsiThread(stdx::bind(doReplSetInitiate, getReplCoord(), &status));
+        stdx::thread prsiThread(stdx::bind(doReplSetInitiate, getReplCoord(), &status));
         const Date_t startDate = getNet()->now();
         getNet()->enterNetwork();
         const NetworkInterfaceMock::NetworkOperationIterator noi = getNet()->getNextReadyRequest();
@@ -274,7 +273,7 @@ namespace {
         hbArgs.setSenderId(0);
 
         Status status(ErrorCodes::InternalError, "Not set");
-        boost::thread prsiThread(stdx::bind(doReplSetInitiate, getReplCoord(), &status));
+        stdx::thread prsiThread(stdx::bind(doReplSetInitiate, getReplCoord(), &status));
         const Date_t startDate = getNet()->now();
         getNet()->enterNetwork();
         const NetworkInterfaceMock::NetworkOperationIterator noi = getNet()->getNextReadyRequest();
@@ -675,7 +674,7 @@ namespace {
 
         void start(OperationContext* txn) {
             ASSERT(!_finished);
-            _thread.reset(new boost::thread(stdx::bind(&ReplicationAwaiter::_awaitReplication,
+            _thread.reset(new stdx::thread(stdx::bind(&ReplicationAwaiter::_awaitReplication,
                                                        this,
                                                        txn)));
         }
@@ -699,7 +698,7 @@ namespace {
         OpTime _optime;
         WriteConcernOptions _writeConcern;
         ReplicationCoordinator::StatusAndDuration _result;
-        boost::scoped_ptr<boost::thread> _thread;
+        std::unique_ptr<stdx::thread> _thread;
     };
 
     TEST_F(ReplCoordTest, AwaitReplicationNumberOfNodesBlocking) {
@@ -1085,7 +1084,7 @@ namespace {
 
         void start(OperationContext* txn) {
             ASSERT(!_finished);
-            _thread.reset(new boost::thread(stdx::bind(&StepDownRunner::_stepDown,
+            _thread.reset(new stdx::thread(stdx::bind(&StepDownRunner::_stepDown,
                                                        this,
                                                        txn)));
         }
@@ -1118,7 +1117,7 @@ namespace {
         ReplicationCoordinatorImpl* _replCoord;
         bool _finished;
         Status _result;
-        boost::scoped_ptr<boost::thread> _thread;
+        std::unique_ptr<stdx::thread> _thread;
         bool _force;
         Milliseconds _waitTime;
         Milliseconds _stepDownTime;
@@ -1707,7 +1706,7 @@ namespace {
 
         // reconfig
         Status status(ErrorCodes::InternalError, "Not Set");
-        boost::thread reconfigThread(stdx::bind(doReplSetReconfig, getReplCoord(), &status));
+        stdx::thread reconfigThread(stdx::bind(doReplSetReconfig, getReplCoord(), &status));
 
         NetworkInterfaceMock* net = getNet();
         getNet()->enterNetwork();
@@ -1777,7 +1776,7 @@ namespace {
 
         // reconfig to fewer nodes
         Status status(ErrorCodes::InternalError, "Not Set");
-        boost::thread reconfigThread(stdx::bind(doReplSetReconfigToFewer, getReplCoord(), &status));
+        stdx::thread reconfigThread(stdx::bind(doReplSetReconfigToFewer, getReplCoord(), &status));
 
         NetworkInterfaceMock* net = getNet();
         getNet()->enterNetwork();
@@ -1845,7 +1844,7 @@ namespace {
 
         // reconfig to three nodes
         Status status(ErrorCodes::InternalError, "Not Set");
-        boost::thread reconfigThread(stdx::bind(doReplSetReconfig, getReplCoord(), &status));
+        stdx::thread reconfigThread(stdx::bind(doReplSetReconfig, getReplCoord(), &status));
 
         NetworkInterfaceMock* net = getNet();
         getNet()->enterNetwork();
@@ -1962,8 +1961,7 @@ namespace {
         init(ReplSettings());
         OperationContextNoop txn;
         auto result = getReplCoord()->waitUntilOpTime(&txn,
-                ReadAfterOpTimeArgs(OpTimeWithTermZero(50, 0),
-                                    Milliseconds(0)));
+                ReadAfterOpTimeArgs(OpTimeWithTermZero(50, 0)));
 
         ASSERT_FALSE(result.didWait());
         ASSERT_EQUALS(ErrorCodes::NotAReplicaSet, result.getStatus());
@@ -1982,8 +1980,7 @@ namespace {
         shutdown();
 
         auto result = getReplCoord()->waitUntilOpTime(&txn,
-                ReadAfterOpTimeArgs(OpTimeWithTermZero(50, 0),
-                                    Milliseconds(0)));
+                ReadAfterOpTimeArgs(OpTimeWithTermZero(50, 0)));
 
         ASSERT_TRUE(result.didWait());
         ASSERT_EQUALS(ErrorCodes::ShutdownInProgress, result.getStatus());
@@ -2002,8 +1999,7 @@ namespace {
         txn.setCheckForInterruptStatus(Status(ErrorCodes::Interrupted, "test"));
 
         auto result = getReplCoord()->waitUntilOpTime(&txn,
-                ReadAfterOpTimeArgs(OpTimeWithTermZero(50, 0),
-                                    Milliseconds(0)));
+                ReadAfterOpTimeArgs(OpTimeWithTermZero(50, 0)));
 
         ASSERT_TRUE(result.didWait());
         ASSERT_EQUALS(ErrorCodes::Interrupted, result.getStatus());
@@ -2033,8 +2029,7 @@ namespace {
 
         getReplCoord()->setMyLastOptime(OpTimeWithTermZero(100, 0));
         auto result = getReplCoord()->waitUntilOpTime(&txn,
-                ReadAfterOpTimeArgs(OpTimeWithTermZero(50, 0),
-                                    Milliseconds(100)));
+                ReadAfterOpTimeArgs(OpTimeWithTermZero(50, 0)));
 
         ASSERT_TRUE(result.didWait());
         ASSERT_OK(result.getStatus());
@@ -2051,8 +2046,7 @@ namespace {
 
         OpTimeWithTermZero time(100, 0);
         getReplCoord()->setMyLastOptime(time);
-        auto result = getReplCoord()->waitUntilOpTime(&txn,
-                ReadAfterOpTimeArgs(time, Milliseconds(100)));
+        auto result = getReplCoord()->waitUntilOpTime(&txn, ReadAfterOpTimeArgs(time));
 
         ASSERT_TRUE(result.didWait());
         ASSERT_OK(result.getStatus());
@@ -2074,8 +2068,7 @@ namespace {
         });
 
         auto result = getReplCoord()->waitUntilOpTime(&txn,
-                ReadAfterOpTimeArgs(OpTimeWithTermZero(100, 0),
-                                    Milliseconds(0)));
+                ReadAfterOpTimeArgs(OpTimeWithTermZero(100, 0)));
         pseudoLogOp.get();
 
         ASSERT_TRUE(result.didWait());
@@ -2099,29 +2092,11 @@ namespace {
             getReplCoord()->setMyLastOptime(opTimeToWait);
         });
 
-        auto result = getReplCoord()->waitUntilOpTime(&txn,
-                ReadAfterOpTimeArgs(opTimeToWait, Milliseconds(0)));
+        auto result = getReplCoord()->waitUntilOpTime(&txn, ReadAfterOpTimeArgs(opTimeToWait));
         pseudoLogOp.get();
 
         ASSERT_TRUE(result.didWait());
         ASSERT_OK(result.getStatus());
-    }
-
-    TEST_F(ReplCoordTest, ReadAfterOpTimeTimeoutNoMaxTimeMS) {
-        OperationContextNoop txn;
-        assertStartSuccess(
-                BSON("_id" << "mySet" <<
-                     "version" << 2 <<
-                     "members" << BSON_ARRAY(BSON("host" << "node1:12345" << "_id" << 0))),
-                HostAndPort("node1", 12345));
-
-        getReplCoord()->setMyLastOptime(OpTimeWithTermZero(100, 0));
-
-        auto result = getReplCoord()->waitUntilOpTime(&txn,
-                ReadAfterOpTimeArgs(OpTimeWithTermZero(200, 0), Milliseconds(10)));
-
-        ASSERT_TRUE(result.didWait());
-        ASSERT_EQUALS(ErrorCodes::ReadAfterOptimeTimeout, result.getStatus());
     }
 
     // TODO(schwerin): Unit test election id updating

@@ -32,10 +32,8 @@
 
 #include "mongo/s/client/shard_registry.h"
 
-#include <boost/make_shared.hpp>
-#include <boost/thread/lock_guard.hpp>
-
 #include "mongo/client/connection_string.h"
+#include "mongo/client/query_fetcher.h"
 #include "mongo/client/remote_command_runner_impl.h"
 #include "mongo/client/remote_command_targeter.h"
 #include "mongo/client/remote_command_targeter_factory.h"
@@ -44,14 +42,23 @@
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::string;
+    using std::unique_ptr;
     using std::vector;
+
+    using executor::TaskExecutor;
+    using RemoteCommandCallbackArgs = TaskExecutor::RemoteCommandCallbackArgs;
+
+namespace {
+    const Seconds kConfigCommandTimeout{30};
+} // unnamed namespace
 
     ShardRegistry::ShardRegistry(std::unique_ptr<RemoteCommandTargeterFactory> targeterFactory,
                                  std::unique_ptr<RemoteCommandRunner> commandRunner,
@@ -62,21 +69,13 @@ namespace mongo {
            _executor(std::move(executor)),
            _catalogManager(catalogManager) {
 
+        // add config shard registry entry so know it's always there
+        std::lock_guard<std::mutex> lk(_mutex);
+        _addConfigShard_inlock();
+
     }
 
     ShardRegistry::~ShardRegistry() = default;
-
-    shared_ptr<RemoteCommandTargeter> ShardRegistry::getTargeterForShard(const string& shardId) {
-        auto targeter = _findTargeter(shardId);
-        if (targeter) {
-            return targeter;
-        }
-
-        // If we can't find the shard, we might just need to reload the cache
-        reload();
-
-        return _findTargeter(shardId);
-    }
 
     void ShardRegistry::reload() {
         vector<ShardType> shards;
@@ -87,17 +86,12 @@ namespace mongo {
 
         LOG(1) << "found " << numShards << " shards listed on config server(s)";
 
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        std::lock_guard<std::mutex> lk(_mutex);
 
         _lookup.clear();
-        _targeters.clear();
         _rsLookup.clear();
 
-        ShardType configServerShard;
-        configServerShard.setName("config");
-        configServerShard.setHost(_catalogManager->connectionString().toString());
-
-        _addShard_inlock(configServerShard);
+        _addConfigShard_inlock();
 
         for (const ShardType& shardType : shards) {
             uassertStatusOK(shardType.validate());
@@ -112,8 +106,8 @@ namespace mongo {
         }
     }
 
-    shared_ptr<Shard> ShardRegistry::findIfExists(const ShardId& id) {
-        shared_ptr<Shard> shard = _findUsingLookUp(id);
+    shared_ptr<Shard> ShardRegistry::getShard(const ShardId& shardId) {
+        shared_ptr<Shard> shard = _findUsingLookUp(shardId);
         if (shard) {
             return shard;
         }
@@ -121,25 +115,18 @@ namespace mongo {
         // If we can't find the shard, we might just need to reload the cache
         reload();
 
-        return _findUsingLookUp(id);
+        return _findUsingLookUp(shardId);
     }
 
-    shared_ptr<Shard> ShardRegistry::lookupRSName(const string& name) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
-        ShardMap::iterator i = _rsLookup.find(name);
+    shared_ptr<Shard> ShardRegistry::lookupRSName(const string& name) const {
+        std::lock_guard<std::mutex> lk(_mutex);
+        ShardMap::const_iterator i = _rsLookup.find(name);
 
         return (i == _rsLookup.end()) ? nullptr : i->second;
     }
 
-    void ShardRegistry::set(const ShardId& id, const Shard& s) {
-        shared_ptr<Shard> ss(boost::make_shared<Shard>(s.getId(), s.getConnString()));
-
-        boost::lock_guard<boost::mutex> lk(_mutex);
-        _lookup[id] = ss;
-    }
-
     void ShardRegistry::remove(const ShardId& id) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        std::lock_guard<std::mutex> lk(_mutex);
 
         for (ShardMap::iterator i = _lookup.begin(); i != _lookup.end();) {
             shared_ptr<Shard> s = i->second;
@@ -166,7 +153,7 @@ namespace mongo {
         std::set<string> seen;
 
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            std::lock_guard<std::mutex> lk(_mutex);
             for (ShardMap::const_iterator i = _lookup.begin(); i != _lookup.end(); ++i) {
                 const shared_ptr<Shard>& s = i->second;
                 if (s->getId() == "config") {
@@ -183,16 +170,23 @@ namespace mongo {
         all->assign(seen.begin(), seen.end());
     }
 
-    void ShardRegistry::toBSON(BSONObjBuilder* result) const {
+    void ShardRegistry::toBSON(BSONObjBuilder* result) {
         BSONObjBuilder b(_lookup.size() + 50);
 
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        std::lock_guard<std::mutex> lk(_mutex);
 
         for (ShardMap::const_iterator i = _lookup.begin(); i != _lookup.end(); ++i) {
             b.append(i->first, i->second->getConnString().toString());
         }
 
         result->append("map", b.obj());
+    }
+
+    void ShardRegistry::_addConfigShard_inlock() {
+        ShardType configServerShard;
+        configServerShard.setName("config");
+        configServerShard.setHost(_catalogManager->connectionString().toString());
+        _addShard_inlock(configServerShard);
     }
 
     void ShardRegistry::_addShard_inlock(const ShardType& shardType) {
@@ -202,21 +196,28 @@ namespace mongo {
         auto shardHostStatus = ConnectionString::parse(shardType.getHost());
         if (!shardHostStatus.isOK()) {
             warning() << "Unable to parse shard host "
-                        << shardHostStatus.getStatus().toString();
+                      << shardHostStatus.getStatus().toString();
         }
 
         const ConnectionString& shardHost(shardHostStatus.getValue());
-
-        shared_ptr<Shard> shard = boost::make_shared<Shard>(shardType.getName(), shardHost);
-        _lookup[shardType.getName()] = shard;
 
         // Sync cluster connections (legacy config server) do not go through the normal targeting
         // mechanism and must only be reachable through CatalogManagerLegacy or legacy-style
         // queries and inserts. Do not create targeter for these connections. This code should go
         // away after 3.2 is released.
         if (shardHost.type() == ConnectionString::SYNC) {
+            _lookup[shardType.getName()] =
+                std::make_shared<Shard>(shardType.getName(), shardHost, nullptr);
             return;
         }
+
+        // Non-SYNC shards
+        shared_ptr<Shard> shard =
+            std::make_shared<Shard>(shardType.getName(),
+                                    shardHost,
+                                    std::move(_targeterFactory->create(shardHost)));
+
+        _lookup[shardType.getName()] = shard;
 
         // TODO: The only reason to have the shard host names in the lookup table is for the
         // setShardVersion call, which resolves the shard id from the shard address. This is
@@ -237,12 +238,10 @@ namespace mongo {
         if (shardHost.type() == ConnectionString::SET) {
             _rsLookup[shardHost.getSetName()] = shard;
         }
-
-        _targeters[shardType.getName()] = std::move(_targeterFactory->create(shardHost));
     }
 
     shared_ptr<Shard> ShardRegistry::_findUsingLookUp(const ShardId& shardId) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        std::lock_guard<std::mutex> lk(_mutex);
         ShardMap::iterator it = _lookup.find(shardId);
         if (it != _lookup.end()) {
             return it->second;
@@ -251,15 +250,79 @@ namespace mongo {
         return nullptr;
     }
 
-    boost::shared_ptr<RemoteCommandTargeter> ShardRegistry::_findTargeter(const string& shardId) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+    StatusWith<std::vector<BSONObj>> ShardRegistry::exhaustiveFind(const HostAndPort& host,
+                                                                   const NamespaceString& nss,
+                                                                   const BSONObj& query,
+                                                                   boost::optional<int> limit) {
+        // If for some reason the callback never gets invoked, we will return this status
+        Status status = Status(ErrorCodes::InternalError, "Internal error running find command");
+        vector<BSONObj> results;
 
-        TargeterMap::iterator it = _targeters.find(shardId);
-        if (it != _targeters.end()) {
-            return it->second;
+        auto fetcherCallback = [&status, &results](const Fetcher::QueryResponseStatus& dataStatus,
+                                                   Fetcher::NextAction* nextAction) {
+
+            // Throw out any accumulated results on error
+            if (!dataStatus.isOK()) {
+                status = dataStatus.getStatus();
+                results.clear();
+                return;
+            }
+
+            auto& data = dataStatus.getValue();
+            for (const BSONObj& doc : data.documents) {
+                results.push_back(std::move(doc.getOwned()));
+            }
+
+            status = Status::OK();
+        };
+
+        unique_ptr<LiteParsedQuery> findCmd(
+            fassertStatusOK(28688, LiteParsedQuery::makeAsFindCmd(nss, query, std::move(limit))));
+
+        QueryFetcher fetcher(_executor.get(),
+                             host,
+                             nss,
+                             findCmd->asFindCommand(),
+                             fetcherCallback);
+
+        Status scheduleStatus = fetcher.schedule();
+        if (!scheduleStatus.isOK()) {
+            return scheduleStatus;
         }
 
-        return nullptr;
+        fetcher.wait();
+
+        if (!status.isOK()) {
+            return status;
+        }
+
+        return results;
+    }
+
+    StatusWith<BSONObj> ShardRegistry::runCommand(const HostAndPort& host,
+                                                  const std::string& dbName,
+                                                  const BSONObj& cmdObj) {
+        StatusWith<RemoteCommandResponse> responseStatus =
+            Status(ErrorCodes::InternalError, "Internal error running command");
+
+        RemoteCommandRequest request(host, dbName, cmdObj, kConfigCommandTimeout);
+        auto callStatus = _executor->scheduleRemoteCommand(request,
+                [&responseStatus](const RemoteCommandCallbackArgs& args) {
+            responseStatus = args.response;
+        });
+
+        if (!callStatus.isOK()) {
+            return callStatus.getStatus();
+        }
+
+        // Block until the command is carried out
+        _executor->wait(callStatus.getValue());
+
+        if (!responseStatus.isOK()) {
+            return responseStatus.getStatus();
+        }
+
+        return responseStatus.getValue().data;
     }
 
 } // namespace mongo

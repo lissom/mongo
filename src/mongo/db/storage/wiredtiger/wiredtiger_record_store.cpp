@@ -35,7 +35,6 @@
 
 #include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <boost/shared_array.hpp>
 #include <wiredtiger.h>
 
@@ -43,7 +42,9 @@
 #include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
+#include "mongo/db/service_context.h"
 #include "mongo/db/storage/oplog_hack.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_customization_hooks.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_global_options.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_kv_engine.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
@@ -56,13 +57,14 @@
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/scopeguard.h"
+#include "mongo/util/time_support.h"
 
 //#define RS_ITERATOR_TRACE(x) log() << "WTRS::Iterator " << x
 #define RS_ITERATOR_TRACE(x)
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::string;
 
 namespace {
@@ -87,8 +89,6 @@ namespace {
     MONGO_FP_DECLARE(WTWriteConflictException);
 
     const std::string kWiredTigerEngineName = "wiredTiger";
-
-    const long long WiredTigerRecordStore::kCollectionScanOnCreationThreshold = 10000;
 
     class WiredTigerRecordStore::Cursor final : public RecordCursor {
     public:
@@ -319,13 +319,15 @@ namespace {
         // Choose a higher split percent, since most usage is append only. Allow some space
         // for workloads where updates increase the size of documents.
         ss << "split_pct=90,";
-        ss << "leaf_value_max=1MB,";
+        ss << "leaf_value_max=64MB,";
         ss << "checksum=on,";
         if (wiredTigerGlobalOptions.useCollectionPrefixCompression) {
             ss << "prefix_compression,";
         }
 
         ss << "block_compressor=" << wiredTigerGlobalOptions.collectionBlockCompressor << ",";
+
+        ss << WiredTigerCustomizationHooks::get(getGlobalServiceContext())->getOpenConfig(ns);
 
         ss << extraStrings << ",";
 
@@ -374,6 +376,8 @@ namespace {
               _cappedMaxSize( cappedMaxSize ),
               _cappedMaxSizeSlack( std::min(cappedMaxSize/10, int64_t(16*1024*1024)) ),
               _cappedMaxDocs( cappedMaxDocs ),
+              _cappedSleep(0),
+              _cappedSleepMS(0),
               _cappedDeleteCallback( cappedDeleteCallback ),
               _cappedDeleteCheckCount(0),
               _useOplogHack(shouldUseOplogHack(ctx, _uri)),
@@ -412,8 +416,8 @@ namespace {
                 _sizeStorer->onCreate( this, numRecords, dataSize );
             }
 
-            if (_sizeStorer == NULL || _numRecords.load() < kCollectionScanOnCreationThreshold) {
-                LOG(1) << "doing scan of collection " << ns << " to get info";
+            else {
+                LOG(1) << "Doing scan of collection " << ns << " to get size and count info";
 
                 _numRecords.store(0);
                 _dataSize.store(0);
@@ -427,7 +431,6 @@ namespace {
                     _sizeStorer->storeToCache( _uri, _numRecords.load(), _dataSize.load() );
                 }
             }
-
         }
         else {
             _dataSize.store(0);
@@ -443,7 +446,7 @@ namespace {
 
     WiredTigerRecordStore::~WiredTigerRecordStore() {
         {
-            boost::lock_guard<boost::timed_mutex> lk(_cappedDeleterMutex);
+            stdx::lock_guard<stdx::timed_mutex> lk(_cappedDeleterMutex);
             _shuttingDown = true;
         }
 
@@ -458,7 +461,7 @@ namespace {
     }
 
     bool WiredTigerRecordStore::inShutdown() const {
-        boost::lock_guard<boost::timed_mutex> lk(_cappedDeleterMutex);
+        stdx::lock_guard<stdx::timed_mutex> lk(_cappedDeleterMutex);
         return _shuttingDown;
     }
 
@@ -585,7 +588,7 @@ namespace {
             return 0;
 
         // ensure only one thread at a time can do deletes, otherwise they'll conflict.
-        boost::unique_lock<boost::timed_mutex> lock(_cappedDeleterMutex, boost::defer_lock);
+        stdx::unique_lock<stdx::timed_mutex> lock(_cappedDeleterMutex, stdx::defer_lock);
 
         if (_cappedMaxDocs != -1) {
             lock.lock(); // Max docs has to be exact, so have to check every time.
@@ -602,7 +605,13 @@ namespace {
             // We're not actually going to delete anything, but we're going to syncronize
             // on the deleter thread.
             // Don't wait forever: we're in a transaction, we could block eviction.
-            (void)lock.timed_lock(boost::posix_time::millisec(200));
+            if (!lock.try_lock()) {
+                Date_t before = Date_t::now();
+                (void)lock.timed_lock(boost::posix_time::millisec(200));
+                stdx::chrono::milliseconds delay = Date_t::now() - before;
+                _cappedSleep.fetchAndAdd(1);
+                _cappedSleepMS.fetchAndAdd(delay.count());
+            }
             return 0;
         }
         else {
@@ -613,9 +622,14 @@ namespace {
                     return 0;
 
                 // Don't wait forever: we're in a transaction, we could block eviction.
-                if (!lock.timed_lock(boost::posix_time::millisec(200)))
+                Date_t before = Date_t::now();
+                bool gotLock = lock.timed_lock(boost::posix_time::millisec(200));
+                stdx::chrono::milliseconds delay = Date_t::now() - before;
+                _cappedSleep.fetchAndAdd(1);
+                _cappedSleepMS.fetchAndAdd(delay.count());
+                if (!gotLock)
                     return 0;
-
+                
                 // If we already waited, let someone else do cleanup unless we are significantly
                 // over the limit.
                 if ((_dataSize.load() - _cappedMaxSize) < (2 * _cappedMaxSizeSlack))
@@ -755,14 +769,14 @@ namespace {
                 return status;
             loc = status.getValue();
             if ( loc > _oplog_highestSeen ) {
-                boost::lock_guard<boost::mutex> lk( _uncommittedDiskLocsMutex );
+                stdx::lock_guard<stdx::mutex> lk( _uncommittedDiskLocsMutex );
                 if ( loc > _oplog_highestSeen ) {
                     _oplog_highestSeen = loc;
                 }
             }
         }
         else if ( _isCapped ) {
-            boost::lock_guard<boost::mutex> lk( _uncommittedDiskLocsMutex );
+            stdx::lock_guard<stdx::mutex> lk( _uncommittedDiskLocsMutex );
             loc = _nextId();
             _addUncommitedDiskLoc_inlock( txn, loc );
         }
@@ -792,7 +806,7 @@ namespace {
     }
 
     void WiredTigerRecordStore::dealtWithCappedLoc( const RecordId& loc ) {
-        boost::lock_guard<boost::mutex> lk( _uncommittedDiskLocsMutex );
+        stdx::lock_guard<stdx::mutex> lk( _uncommittedDiskLocsMutex );
         SortedDiskLocs::iterator it = std::find(_uncommittedDiskLocs.begin(),
                                                 _uncommittedDiskLocs.end(),
                                                 loc);
@@ -801,7 +815,7 @@ namespace {
     }
 
     bool WiredTigerRecordStore::isCappedHidden( const RecordId& loc ) const {
-        boost::lock_guard<boost::mutex> lk( _uncommittedDiskLocsMutex );
+        stdx::lock_guard<stdx::mutex> lk( _uncommittedDiskLocsMutex );
         if (_uncommittedDiskLocs.empty()) {
             return false;
         }
@@ -865,7 +879,7 @@ namespace {
     }
 
     void WiredTigerRecordStore::_oplogSetStartHack( WiredTigerRecoveryUnit* wru ) const {
-        boost::lock_guard<boost::mutex> lk( _uncommittedDiskLocsMutex );
+        stdx::lock_guard<stdx::mutex> lk( _uncommittedDiskLocsMutex );
         if ( _uncommittedDiskLocs.empty() ) {
             wru->setOplogReadTill( _oplog_highestSeen );
         }
@@ -1005,8 +1019,10 @@ namespace {
                                                    double scale ) const {
         result->appendBool( "capped", _isCapped );
         if ( _isCapped ) {
-            result->appendIntOrLL( "max", _cappedMaxDocs );
-            result->appendIntOrLL( "maxSize", static_cast<long long>(_cappedMaxSize / scale) );
+            result->appendIntOrLL("max", _cappedMaxDocs );
+            result->appendIntOrLL("maxSize", static_cast<long long>(_cappedMaxSize / scale) );
+            result->appendIntOrLL("sleepCount", _cappedSleep.load());
+            result->appendIntOrLL("sleepMS", _cappedSleepMS.load());
         }
         WiredTigerSession* session = WiredTigerRecoveryUnit::get(txn)->getSession(txn);
         WT_SESSION* s = session->getSession();
@@ -1053,7 +1069,7 @@ namespace {
         if ( !loc.isOK() )
             return loc.getStatus();
 
-        boost::lock_guard<boost::mutex> lk( _uncommittedDiskLocsMutex );
+        stdx::lock_guard<stdx::mutex> lk( _uncommittedDiskLocsMutex );
         _addUncommitedDiskLoc_inlock( txn, loc.getValue() );
         return Status::OK();
     }

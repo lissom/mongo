@@ -33,7 +33,6 @@
 #include "mongo/s/balance.h"
 
 #include <algorithm>
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/client.h"
@@ -65,12 +64,11 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
-    using std::auto_ptr;
     using std::map;
     using std::set;
+    using std::shared_ptr;
     using std::string;
+    using std::unique_ptr;
     using std::vector;
 
     MONGO_FP_DECLARE(skipBalanceRound);
@@ -98,7 +96,7 @@ namespace mongo {
                 grid.catalogManager()->getGlobalSettings(SettingsType::BalancerDocKey);
 
             const bool isBalSettingsAbsent =
-                balSettingsResult.getStatus() == ErrorCodes::NoSuchKey;
+                balSettingsResult.getStatus() == ErrorCodes::NoMatchingDocument;
 
             if (!balSettingsResult.isOK() && !isBalSettingsAbsent) {
                 warning() << balSettingsResult.getStatus();
@@ -265,7 +263,7 @@ namespace mongo {
         map<int, string> oids;
 
         for (const ShardId& shardId : all) {
-            const auto& s = grid.shardRegistry()->findIfExists(shardId);
+            const auto s = grid.shardRegistry()->getShard(shardId);
             if (!s) {
                 continue;
             }
@@ -282,7 +280,7 @@ namespace mongo {
                           << " and " << oids[x];
                     s->runCommand("admin", BSON("features" << 1 << "oidReset" << 1));
 
-                    const auto& otherShard = grid.shardRegistry()->findIfExists(oids[x]);
+                    const auto otherShard = grid.shardRegistry()->getShard(oids[x]);
                     if (otherShard) {
                         otherShard->runCommand("admin", BSON("features" << 1 << "oidReset" << 1));
                     }
@@ -541,7 +539,7 @@ namespace mongo {
                 auto balSettingsResult =
                     grid.catalogManager()->getGlobalSettings(SettingsType::BalancerDocKey);
                 const bool isBalSettingsAbsent =
-                    balSettingsResult.getStatus() == ErrorCodes::NoSuchKey;
+                    balSettingsResult.getStatus() == ErrorCodes::NoMatchingDocument;
                 if (!balSettingsResult.isOK() && !isBalSettingsAbsent) {
                     warning() << balSettingsResult.getStatus();
                     return;

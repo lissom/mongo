@@ -99,12 +99,13 @@ namespace mongo {
                 str::stream() << "Argument to listIndexes must be of type String, not "
                               << typeName(first.type()),
                 first.type() == String);
-            const NamespaceString ns(parseNs(dbname, cmdObj));
+            StringData collectionName = first.valueStringData();
             uassert(
                 28529,
                 str::stream() << "Argument to listIndexes must be a collection name, "
                               << "not the empty string",
-                !ns.coll().empty());
+                !collectionName.empty());
+            const NamespaceString ns(dbname, collectionName);
 
             const long long defaultBatchSize = std::numeric_limits<long long>::max();
             long long batchSize;
@@ -136,8 +137,8 @@ namespace mongo {
                 cce->getAllIndexes( txn, &indexNames );
             } MONGO_WRITE_CONFLICT_RETRY_LOOP_END(txn, "listIndexes", ns.ns());
 
-            std::auto_ptr<WorkingSet> ws(new WorkingSet());
-            std::auto_ptr<QueuedDataStage> root(new QueuedDataStage(ws.get()));
+            std::unique_ptr<WorkingSet> ws(new WorkingSet());
+            std::unique_ptr<QueuedDataStage> root(new QueuedDataStage(ws.get()));
 
             for ( size_t i = 0; i < indexNames.size(); i++ ) {
                 BSONObj indexSpec;
@@ -166,7 +167,7 @@ namespace mongo {
                                                    cursorNamespace,
                                                    PlanExecutor::YIELD_MANUAL,
                                                    &rawExec);
-            std::auto_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
             if (!makeStatus.isOK()) {
                 return appendCommandStatus( result, makeStatus );
             }

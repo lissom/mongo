@@ -30,8 +30,6 @@
 
 #include "mongo/executor/network_interface_mock.h"
 
-#include "mongo/db/repl/operation_context_repl_mock.h"
-#include "mongo/db/repl/replication_executor.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/util/time_support.h"
 
@@ -48,7 +46,7 @@ namespace executor {
     }
 
     NetworkInterfaceMock::~NetworkInterfaceMock() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(!_hasStarted || _inShutdown);
         invariant(_scheduled.empty());
         invariant(_blackHoled.empty());
@@ -60,16 +58,16 @@ namespace executor {
     }
 
     Date_t NetworkInterfaceMock::now() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _now_inlock();
     }
 
     void NetworkInterfaceMock::startCommand(
-            const repl::ReplicationExecutor::CallbackHandle& cbHandle,
+            const TaskExecutor::CallbackHandle& cbHandle,
             const RemoteCommandRequest& request,
             const RemoteCommandCompletionFn& onFinish) {
 
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(!_inShutdown);
         const Date_t now = _now_inlock();
         NetworkOperationIterator insertBefore = _unscheduled.begin();
@@ -92,14 +90,14 @@ namespace executor {
             return false;
         }
         scheduled->splice(scheduled->begin(), *other, noi);
-        noi->setResponse(now, repl::ResponseStatus(ErrorCodes::CallbackCanceled,
-                                                   "Network operation canceled"));
+        noi->setResponse(now, TaskExecutor::ResponseStatus(ErrorCodes::CallbackCanceled,
+                                                           "Network operation canceled"));
         return true;
     }
 
     void NetworkInterfaceMock::cancelCommand(
-            const repl::ReplicationExecutor::CallbackHandle& cbHandle) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+            const TaskExecutor::CallbackHandle& cbHandle) {
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(!_inShutdown);
         stdx::function<bool (const NetworkOperation&)> matchesHandle = stdx::bind(
                 &NetworkOperation::isForCallback,
@@ -119,7 +117,7 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::startup() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(!_hasStarted);
         _hasStarted = true;
         _inShutdown = false;
@@ -128,7 +126,7 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::shutdown() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_hasStarted);
         invariant(!_inShutdown);
         _inShutdown = true;
@@ -142,8 +140,8 @@ namespace executor {
         _waitingToRunMask |= kExecutorThread;  // Prevents network thread from scheduling.
         lk.unlock();
         for (NetworkOperationIterator iter = todo.begin(); iter != todo.end(); ++iter) {
-            iter->setResponse(now, repl::ResponseStatus(ErrorCodes::ShutdownInProgress,
-                                                        "Shutting down mock network"));
+            iter->setResponse(now, TaskExecutor::ResponseStatus(ErrorCodes::ShutdownInProgress,
+                                                                "Shutting down mock network"));
             iter->finishResponse();
         }
         lk.lock();
@@ -154,7 +152,7 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::enterNetwork() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         while (!_isNetworkThreadRunnable_inlock()) {
             _shouldWakeNetworkCondition.wait(lk);
         }
@@ -163,7 +161,7 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::exitNetwork() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         if (_currentlyRunning != kNetworkThread) {
             return;
         }
@@ -175,7 +173,7 @@ namespace executor {
     }
 
     bool NetworkInterfaceMock::hasReadyRequests() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kNetworkThread);
         return _hasReadyRequests_inlock();
     }
@@ -190,7 +188,7 @@ namespace executor {
     }
 
     NetworkInterfaceMock::NetworkOperationIterator NetworkInterfaceMock::getNextReadyRequest() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kNetworkThread);
         while (!_hasReadyRequests_inlock()) {
             _waitingToRunMask |= kExecutorThread;
@@ -204,9 +202,9 @@ namespace executor {
     void NetworkInterfaceMock::scheduleResponse(
             NetworkOperationIterator noi,
             Date_t when,
-            const repl::ResponseStatus& response) {
+            const TaskExecutor::ResponseStatus& response) {
 
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kNetworkThread);
         NetworkOperationIterator insertBefore = _scheduled.begin();
         while ((insertBefore != _scheduled.end()) && (insertBefore->getResponseDate() <= when)) {
@@ -217,13 +215,13 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::blackHole(NetworkOperationIterator noi) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kNetworkThread);
         _blackHoled.splice(_blackHoled.end(), _processing, noi);
     }
 
     void NetworkInterfaceMock::requeueAt(NetworkOperationIterator noi, Date_t dontAskUntil) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kNetworkThread);
         invariant(noi->getNextConsiderationDate() < dontAskUntil);
         invariant(_now_inlock() < dontAskUntil);
@@ -238,7 +236,7 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::runUntil(Date_t until) {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kNetworkThread);
         invariant(until > _now_inlock());
         while (until > _now_inlock()) {
@@ -261,19 +259,19 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::runReadyNetworkOperations() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kNetworkThread);
         _runReadyNetworkOperations_inlock(&lk);
     }
 
     void NetworkInterfaceMock::waitForWork() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kExecutorThread);
         _waitForWork_inlock(&lk);
     }
 
     void NetworkInterfaceMock::waitForWorkUntil(Date_t when) {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_currentlyRunning == kExecutorThread);
         _executorNextWakeupDate = when;
         if (_executorNextWakeupDate <= _now_inlock()) {
@@ -283,7 +281,7 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::signalWorkAvailable() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _waitingToRunMask |= kExecutorThread;
         if (_currentlyRunning == kNoThread) {
             _shouldWakeExecutorCondition.notify_one();
@@ -291,7 +289,7 @@ namespace executor {
     }
 
     void NetworkInterfaceMock::_runReadyNetworkOperations_inlock(
-            boost::unique_lock<boost::mutex>* lk) {
+            stdx::unique_lock<stdx::mutex>* lk) {
         while (!_scheduled.empty() && _scheduled.front().getResponseDate() <= _now_inlock()) {
             invariant(_currentlyRunning == kNetworkThread);
             NetworkOperation op = _scheduled.front();
@@ -314,7 +312,7 @@ namespace executor {
         _waitingToRunMask &= ~kNetworkThread;
     }
 
-    void NetworkInterfaceMock::_waitForWork_inlock(boost::unique_lock<boost::mutex>* lk) {
+    void NetworkInterfaceMock::_waitForWork_inlock(stdx::unique_lock<stdx::mutex>* lk) {
         if (_waitingToRunMask & kExecutorThread) {
             _waitingToRunMask &= ~kExecutorThread;
             return;
@@ -360,7 +358,7 @@ namespace executor {
     }
 
     NetworkInterfaceMock::NetworkOperation::NetworkOperation(
-            const repl::ReplicationExecutor::CallbackHandle& cbHandle,
+            const TaskExecutor::CallbackHandle& cbHandle,
             const RemoteCommandRequest& theRequest,
             Date_t theRequestDate,
             const RemoteCommandCompletionFn& onFinish)
@@ -384,7 +382,7 @@ namespace executor {
 
     void NetworkInterfaceMock::NetworkOperation::setResponse(
             Date_t responseDate,
-            const repl::ResponseStatus& response) {
+            const TaskExecutor::ResponseStatus& response) {
 
         invariant(responseDate >= _requestDate);
         _responseDate = responseDate;

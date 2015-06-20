@@ -104,7 +104,7 @@ namespace {
     // Synchronizes the section where a new Timestamp is generated and when it actually
     // appears in the oplog.
     mongo::mutex newOpMutex;
-    boost::condition newTimestampNotifier;
+    stdx::condition_variable newTimestampNotifier;
 
     static std::string _oplogCollectionName;
 
@@ -130,7 +130,7 @@ namespace {
                                                const char* ns,
                                                ReplicationCoordinator* replCoord,
                                                const char* opstr) {
-        boost::lock_guard<boost::mutex> lk(newOpMutex);
+        stdx::lock_guard<stdx::mutex> lk(newOpMutex);
         Timestamp ts = getNextGlobalTimestamp();
         newTimestampNotifier.notify_all();
 
@@ -509,7 +509,9 @@ namespace {
                     BSONObjBuilder resultWeDontCareAbout;
                     return dropCollection(txn, parseNs(ns, cmd), resultWeDontCareAbout);
                 },
-                {ErrorCodes::NamespaceNotFound}
+                // IllegalOperation is necessary because in 3.0 we replicate drops of system.profile
+                // TODO(dannenberg) remove IllegalOperation once we no longer need 3.0 compatibility
+                {ErrorCodes::NamespaceNotFound, ErrorCodes::IllegalOperation}
             }
         },
         // deleteIndex(es) is deprecated but still works as of April 10, 2015
@@ -870,7 +872,7 @@ namespace {
     }
 
     void waitUpToOneSecondForTimestampChange(const Timestamp& referenceTime) {
-        boost::unique_lock<boost::mutex> lk(newOpMutex);
+        stdx::unique_lock<stdx::mutex> lk(newOpMutex);
 
         while (referenceTime == getLastSetTimestamp()) {
             if (!newTimestampNotifier.timed_wait(lk, boost::posix_time::seconds(1)))
@@ -879,7 +881,7 @@ namespace {
     }
 
     void setNewTimestamp(const Timestamp& newTime) {
-        boost::lock_guard<boost::mutex> lk(newOpMutex);
+        stdx::lock_guard<stdx::mutex> lk(newOpMutex);
         setGlobalTimestamp(newTime);
         newTimestampNotifier.notify_all();
     }

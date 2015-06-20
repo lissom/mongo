@@ -32,14 +32,14 @@
 #include "mongo/client/replica_set_monitor.h"
 
 #include <algorithm>
-#include <boost/make_shared.hpp>
-#include <boost/thread.hpp>
-#include <boost/thread/condition.hpp>
 #include <limits>
 
-#include "mongo/db/server_options.h"
 #include "mongo/client/connpool.h"
+#include "mongo/client/global_conn_pool.h"
 #include "mongo/client/replica_set_monitor_internal.h"
+#include "mongo/db/server_options.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/background.h"
 #include "mongo/util/concurrency/mutex.h" // for StaticObserver
 #include "mongo/util/debug_util.h"
@@ -50,10 +50,11 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::numeric_limits;
     using std::set;
     using std::string;
+    using std::vector;
 
 namespace {
 
@@ -71,30 +72,8 @@ namespace {
 
     const double socketTimeoutSecs = 5;
 
-    /*  Replica Set Monitor shared state:
-     *      If a program (such as one built with the C++ driver) exits (by either calling exit()
-     *      or by returning from main()), static objects will be destroyed in the reverse order
-     *      of their creation (within each translation unit (source code file)).  This makes it
-     *      vital that the order be explicitly controlled within the source file so that destroyed
-     *      objects never reference objects that have been destroyed earlier.
-     *
-     *      The order chosen below is intended to allow safe destruction in reverse order from
-     *      construction order:
-     *          setsLock                 -- mutex protecting sets, destroyed last
-     *          sets                     -- list (map) of ReplicaSetMonitors
-     *          replicaSetMonitorWatcher -- background job to check Replica Set members
-     *          staticObserver           -- sentinel to detect process termination
-     *
-     *      Related to:
-     *          SERVER-8891 -- Simple client fail with segmentation fault in mongoclient library
-     *
-     *      Mutex locking order:
-     *          Don't lock setsLock while holding any SetState::mutex. It is however safe to grab a
-     *          SetState::mutex without holder setsLock, but then you can't grab setsLock until you
-     *          release the SetState::mutex.
-     */
-    mongo::mutex setsLock;
-    StringMap<ReplicaSetMonitorPtr> sets;
+    // TODO: Move to ReplicaSetMonitorManager
+    ReplicaSetMonitor::ConfigChangeHook configChangeHook;
 
     // global background job responsible for checking every X amount of time
     class ReplicaSetMonitorWatcher : public BackgroundJob {
@@ -118,7 +97,7 @@ namespace {
         virtual string name() const { return "ReplicaSetMonitorWatcher"; }
 
         void safeGo() {
-            boost::lock_guard<boost::mutex> lk( _monitorMutex );
+            stdx::lock_guard<stdx::mutex> lk( _monitorMutex );
             if ( _started )
                 return;
 
@@ -132,7 +111,7 @@ namespace {
          * Stops monitoring the sets and wait for the monitoring thread to terminate.
          */
         void stop() {
-            boost::lock_guard<boost::mutex> sl( _monitorMutex );
+            stdx::lock_guard<stdx::mutex> sl( _monitorMutex );
             _stopRequested = true;
             _stopRequestedCV.notify_one();
         }
@@ -146,14 +125,14 @@ namespace {
             // Should not be needed after SERVER-7533 gets implemented and tests start
             // using it.
             if (!inShutdown() && !StaticObserver::_destroyingStatics) {
-                boost::unique_lock<boost::mutex> sl( _monitorMutex );
+                stdx::unique_lock<stdx::mutex> sl( _monitorMutex );
                 _stopRequestedCV.timed_wait(sl, boost::posix_time::seconds(10));
             }
 
             while ( !inShutdown() &&
                     !StaticObserver::_destroyingStatics ) {
                 {
-                    boost::lock_guard<boost::mutex> sl( _monitorMutex );
+                    stdx::lock_guard<stdx::mutex> sl( _monitorMutex );
                     if (_stopRequested) {
                         break;
                     }
@@ -169,7 +148,7 @@ namespace {
                     error() << "unknown error";
                 }
 
-                boost::unique_lock<boost::mutex> sl( _monitorMutex );
+                stdx::unique_lock<stdx::mutex> sl( _monitorMutex );
                 if (_stopRequested) {
                     break;
                 }
@@ -180,17 +159,13 @@ namespace {
 
         void checkAllSets() {
             // make a copy so we can quickly unlock setsLock
-            StringMap<ReplicaSetMonitorPtr> setsCopy;
-            {
-                boost::lock_guard<boost::mutex> lk( setsLock );
-                setsCopy = sets;
-            }
+            for (const string& setName : globalRSMonitorManager.getAllSetNames()) {
+                LOG(1) << "checking replica set: " << setName;
 
-            for (StringMap<ReplicaSetMonitorPtr>::const_iterator it = setsCopy.begin();
-                    it != setsCopy.end(); ++it) {
-
-                LOG(1) << "checking replica set: " << it->first;
-                ReplicaSetMonitorPtr m = it->second;
+                shared_ptr<ReplicaSetMonitor> m = globalRSMonitorManager.getMonitor(setName);
+                if (!m) {
+                    continue;
+                }
 
                 m->startOrContinueRefresh().refreshAll();
 
@@ -209,7 +184,7 @@ namespace {
         mongo::mutex _monitorMutex;
         bool _started;
 
-        boost::condition _stopRequestedCV;
+        stdx::condition_variable _stopRequestedCV;
         bool _stopRequested;
     } replicaSetMonitorWatcher;
 
@@ -264,7 +239,7 @@ namespace {
     bool ReplicaSetMonitor::useDeterministicHostSelection = false;
 
     ReplicaSetMonitor::ReplicaSetMonitor(StringData name, const std::set<HostAndPort>& seeds)
-            : _state(boost::make_shared<SetState>(name, seeds)) {
+            : _state(std::make_shared<SetState>(name, seeds)) {
 
         log() << "starting new replica set monitor for replica set " << name << " with seeds ";
 
@@ -279,7 +254,7 @@ namespace {
 
     HostAndPort ReplicaSetMonitor::getHostOrRefresh(const ReadPreferenceSetting& criteria) {
         {
-            boost::lock_guard<boost::mutex> lk(_state->mutex);
+            stdx::lock_guard<stdx::mutex> lk(_state->mutex);
             HostAndPort out = _state->getMatchingHost(criteria);
             if (!out.empty())
                 return out;
@@ -308,7 +283,7 @@ namespace {
     }
 
     Refresher ReplicaSetMonitor::startOrContinueRefresh() {
-        boost::lock_guard<boost::mutex> lk(_state->mutex);
+        stdx::lock_guard<stdx::mutex> lk(_state->mutex);
 
         Refresher out(_state);
         DEV _state->checkInvariants();
@@ -316,7 +291,7 @@ namespace {
     }
 
     void ReplicaSetMonitor::failedHost(const HostAndPort& host) {
-        boost::lock_guard<boost::mutex> lk(_state->mutex);
+        stdx::lock_guard<stdx::mutex> lk(_state->mutex);
         Node* node = _state->findNode(host);
         if (node)
             node->markFailed();
@@ -324,19 +299,19 @@ namespace {
     }
 
     bool ReplicaSetMonitor::isPrimary(const HostAndPort& host) const {
-        boost::lock_guard<boost::mutex> lk(_state->mutex);
+        stdx::lock_guard<stdx::mutex> lk(_state->mutex);
         Node* node = _state->findNode(host);
         return node ? node->isMaster : false;
     }
 
     bool ReplicaSetMonitor::isHostUp(const HostAndPort& host) const {
-        boost::lock_guard<boost::mutex> lk(_state->mutex);
+        stdx::lock_guard<stdx::mutex> lk(_state->mutex);
         Node* node = _state->findNode(host);
         return node ? node->isUp : false;
     }
 
     int ReplicaSetMonitor::getConsecutiveFailedScans() const {
-        boost::lock_guard<boost::mutex> lk(_state->mutex);
+        stdx::lock_guard<stdx::mutex> lk(_state->mutex);
         return _state->consecutiveFailedScans;
     }
 
@@ -346,71 +321,43 @@ namespace {
     }
 
     std::string ReplicaSetMonitor::getServerAddress() const {
-        boost::lock_guard<boost::mutex> lk(_state->mutex);
+        stdx::lock_guard<stdx::mutex> lk(_state->mutex);
         return _state->getServerAddress();
     }
 
     bool ReplicaSetMonitor::contains(const HostAndPort& host) const {
-        boost::lock_guard<boost::mutex> lk(_state->mutex);
+        stdx::lock_guard<stdx::mutex> lk(_state->mutex);
         return _state->seedNodes.count(host);
     }
 
     void ReplicaSetMonitor::createIfNeeded(const string& name, const set<HostAndPort>& servers) {
-        LOG(3) << "ReplicaSetMonitor::createIfNeeded " << name;
-        boost::lock_guard<boost::mutex> lk(setsLock);
-        ReplicaSetMonitorPtr& m = sets[name];
-        if (!m) {
-            m = boost::make_shared<ReplicaSetMonitor>(name, servers);
-        }
+        globalRSMonitorManager.getOrCreateMonitor(
+            ConnectionString::forReplicaSet(name,
+                                            vector<HostAndPort>(servers.begin(), servers.end())));
 
         replicaSetMonitorWatcher.safeGo();
     }
 
     shared_ptr<ReplicaSetMonitor> ReplicaSetMonitor::get(const std::string& name) {
-        LOG(2) << "ReplicaSetMonitor::get " << name;
-
-        boost::lock_guard<boost::mutex> lk( setsLock );
-        StringMap<ReplicaSetMonitorPtr>::const_iterator i = sets.find( name );
-        if ( i != sets.end() ) {
-            return i->second;
-        }
-
-        return ReplicaSetMonitorPtr();
-    }
-
-    set<string> ReplicaSetMonitor::getAllTrackedSets() {
-        set<string> activeSets;
-        boost::lock_guard<boost::mutex> lk( setsLock );
-        for (StringMap<ReplicaSetMonitorPtr>::const_iterator it = sets.begin();
-             it != sets.end(); ++it)
-        {
-            activeSets.insert(it->first);
-        }
-        return activeSets;
+        return globalRSMonitorManager.getMonitor(name);
     }
 
     void ReplicaSetMonitor::remove(const string& name) {
-        LOG(2) << "Removing ReplicaSetMonitor for " << name << " from replica set table";
-
-        boost::lock_guard<boost::mutex> lk(setsLock);
-        StringMap<ReplicaSetMonitorPtr>::const_iterator setIt = sets.find(name);
-        if (setIt != sets.end()) {
-            sets.erase(setIt);
-        }
+        globalRSMonitorManager.removeMonitor(name);
 
         // Kill all pooled ReplicaSetConnections for this set. They will not function correctly
         // after we kill the ReplicaSetMonitor.
-        pool.removeHost(name);
+        globalConnPool.removeHost(name);
     }
 
     void ReplicaSetMonitor::setConfigChangeHook(ConfigChangeHook hook) {
-        massert(13610, "ConfigChangeHook already specified", !SetState::configChangeHook);
-        SetState::configChangeHook = hook;
+        massert(13610, "ConfigChangeHook already specified", !configChangeHook);
+        configChangeHook = hook;
     }
 
     // TODO move to correct order with non-statics before pushing
     void ReplicaSetMonitor::appendInfo(BSONObjBuilder& bsonObjBuilder) const {
-        boost::lock_guard<boost::mutex> lk(_state->mutex);
+        stdx::lock_guard<stdx::mutex> lk(_state->mutex);
 
         // NOTE: the format here must be consistent for backwards compatibility
         BSONArrayBuilder hosts(bsonObjBuilder.subarrayStart("hosts"));
@@ -448,8 +395,7 @@ namespace {
         replicaSetMonitorWatcher.cancel();
         replicaSetMonitorWatcher.stop();
         replicaSetMonitorWatcher.wait();
-        boost::lock_guard<boost::mutex> lock(setsLock);
-        sets = StringMap<ReplicaSetMonitorPtr>();
+        globalRSMonitorManager.removeAllMonitors();
     }
 
     Refresher::Refresher(const SetStatePtr& setState)
@@ -589,7 +535,7 @@ namespace {
     }
 
     ScanStatePtr Refresher::startNewScan(const SetState* set) {
-        const ScanStatePtr scan = boost::make_shared<ScanState>();
+        const ScanStatePtr scan = std::make_shared<ScanState>();
 
         // The heuristics we use in deciding the order to contact hosts are designed to find a
         // master as quickly as possible. This is because we can't use any hosts we find until
@@ -691,10 +637,10 @@ namespace {
             // and we want to record our changes
             log() << "changing hosts to " << _set->getServerAddress() << " from " << oldAddr;
 
-            if (SetState::configChangeHook) {
+            if (configChangeHook) {
                 // call from a separate thread to avoid blocking and holding lock while potentially
                 // going over the network
-                boost::thread bg(SetState::configChangeHook, _set->name, _set->getServerAddress());
+                stdx::thread bg(configChangeHook, _set->name, _set->getServerAddress());
                 bg.detach();
             }
         }
@@ -736,7 +682,7 @@ namespace {
     }
 
     HostAndPort Refresher::_refreshUntilMatches(const ReadPreferenceSetting* criteria) {
-        boost::unique_lock<boost::mutex> lk(_set->mutex);
+        stdx::unique_lock<stdx::mutex> lk(_set->mutex);
         while (true) {
             if (criteria) {
                 HostAndPort out = _set->getMatchingHost(*criteria);
@@ -879,8 +825,6 @@ namespace {
             }
         }
     }
-
-    ReplicaSetMonitor::ConfigChangeHook SetState::configChangeHook;
 
     SetState::SetState(StringData name, const std::set<HostAndPort>& seedNodes)
         : name(name.toString())

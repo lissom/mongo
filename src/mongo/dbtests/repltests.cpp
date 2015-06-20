@@ -54,7 +54,7 @@ using namespace mongo::repl;
 
 namespace ReplTests {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::string;
     using std::stringstream;
@@ -66,18 +66,15 @@ namespace ReplTests {
 
     class Base {
     protected:
-        repl::ReplicationCoordinator* _prevGlobGoordinator;
         mutable OperationContextImpl _txn;
         mutable DBDirectClient _client;
 
     public:
-        Base() : _prevGlobGoordinator(getGlobalReplicationCoordinator())
-               , _client(&_txn) {
+        Base() : _client(&_txn) {
             ReplSettings replSettings;
-            replSettings.oplogSize = 5 * 1024 * 1024;
+            replSettings.oplogSize = 10 * 1024 * 1024;
             replSettings.master = true;
-            ReplicationCoordinatorMock* replCoord = new ReplicationCoordinatorMock(replSettings);
-            setGlobalReplicationCoordinator(replCoord);
+            setGlobalReplicationCoordinator(new repl::ReplicationCoordinatorMock(replSettings));
 
             setOplogCollectionName();
             createOplog(&_txn);
@@ -95,12 +92,11 @@ namespace ReplTests {
         }
         ~Base() {
             try {
-                delete getGlobalReplicationCoordinator();
-                setGlobalReplicationCoordinator(_prevGlobGoordinator);
-                _prevGlobGoordinator = NULL;
-
                 deleteAll( ns() );
                 deleteAll( cllNS() );
+                ReplSettings replSettings;
+                replSettings.oplogSize = 10 * 1024 * 1024;
+                setGlobalReplicationCoordinator(new repl::ReplicationCoordinatorMock(replSettings));
             }
             catch ( ... ) {
                 FAIL( "Exception while cleaning up test" );
@@ -120,7 +116,7 @@ namespace ReplTests {
             check( o, one( o ) );
         }
         void checkAll( const BSONObj &o ) const {
-            auto_ptr< DBClientCursor > c = _client.query( ns(), o );
+            unique_ptr< DBClientCursor > c = _client.query( ns(), o );
             verify( c->more() );
             while( c->more() ) {
                 check( o, c->next() );
@@ -718,7 +714,7 @@ namespace ReplTests {
 
             string s() const {
                 stringstream ss;
-                auto_ptr<DBClientCursor> cc = _client.query( ns() , Query().sort( BSON( "_id" << 1 ) ) );
+                unique_ptr<DBClientCursor> cc = _client.query( ns() , Query().sort( BSON( "_id" << 1 ) ) );
                 bool first = true;
                 while ( cc->more() ) {
                     if ( first ) first = false;

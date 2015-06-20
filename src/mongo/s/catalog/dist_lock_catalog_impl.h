@@ -40,7 +40,7 @@ namespace mongo {
     class RemoteCommandRunner;
     class RemoteCommandTargeter;
 
-    class DistLockCatalogImpl: public DistLockCatalog {
+    class DistLockCatalogImpl final : public DistLockCatalog {
     public:
         DistLockCatalogImpl(RemoteCommandTargeter* targeter,
                             RemoteCommandRunner* executor,
@@ -72,6 +72,8 @@ namespace mongo {
         virtual StatusWith<ServerInfo> getServerInfo() override;
 
         virtual StatusWith<LocksType> getLockByTS(const OID& lockSessionID) override;
+
+        virtual StatusWith<LocksType> getLockByName(StringData name) override;
 
         virtual Status stopPing(StringData processId) override;
 

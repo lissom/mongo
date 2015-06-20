@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
 #include <string>
 
 #include "mongo/base/disallow_copying.h"
@@ -37,7 +36,6 @@
 namespace mongo {
 
     class BSONObj;
-    class RemoteCommandRunner;
     class RemoteCommandTargeter;
 
     using ShardId = std::string;
@@ -62,7 +60,7 @@ namespace mongo {
     };
 
     class Shard;
-    using ShardPtr = boost::shared_ptr<Shard>;
+    using ShardPtr = std::shared_ptr<Shard>;
 
     /*
      * Maintains the targeting and command execution logic for a single shard. Performs polling of
@@ -72,23 +70,19 @@ namespace mongo {
         MONGO_DISALLOW_COPYING(Shard);
     public:
         /**
-         * Instantiates a new shard connection management object for the specified shard and
-         * connection string.
+         * Instantiates a new shard connection management object for the specified shard.
          */
-        Shard(const ShardId& id, const ConnectionString& connStr);
+        Shard(const ShardId& id,
+              const ConnectionString& connStr,
+              std::unique_ptr<RemoteCommandTargeter> targeter);
+
         ~Shard();
 
         const ShardId& getId() const { return _id; }
 
         const ConnectionString& getConnString() const { return _cs; }
 
-        RemoteCommandTargeter* getTargeter() const;
-
-        RemoteCommandRunner* getCommandRunner() const;
-
-        std::string toString() const {
-            return _id + ":" + _cs.toString();
-        }
+        RemoteCommandTargeter* getTargeter() const { return _targeter.get(); }
 
         BSONObj runCommand(const std::string& db, const std::string& simple) const;
         BSONObj runCommand(const std::string& db, const BSONObj& cmd) const;
@@ -101,6 +95,11 @@ namespace mongo {
          */
         ShardStatus getStatus() const;
 
+        /**
+         * Returns a string description of this shard entry.
+         */
+        std::string toString() const;
+
         static ShardPtr lookupRSName(const std::string& name);
         
         /**
@@ -112,12 +111,22 @@ namespace mongo {
         static void reloadShardInfo();
 
         static void removeShard(const ShardId& id);
-        
-        static void installShard(const ShardId& id, const Shard& shard);
 
     private:
+        /**
+         * Identifier of the shard as obtained from the configuration data (i.e. shard0000).
+         */
         const ShardId _id;
+
+        /**
+         * Connection string for the shard.
+         */
         const ConnectionString _cs;
+
+        /**
+         * Targeter for obtaining hosts from which to read or to which to write.
+         */
+        const std::unique_ptr<RemoteCommandTargeter> _targeter;
     };
 
 } // namespace mongo

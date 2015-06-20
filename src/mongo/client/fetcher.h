@@ -37,15 +37,13 @@
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/namespace_string.h"
-#include "mongo/db/repl/replication_executor.h"
+#include "mongo/executor/task_executor.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/net/hostandport.h"
 
 namespace mongo {
-namespace repl {
-
     class Fetcher {
         MONGO_DISALLOW_COPYING(Fetcher);
     public:
@@ -56,16 +54,24 @@ namespace repl {
         typedef std::vector<BSONObj> Documents;
 
         /**
-         * Documents in current batch with cursor ID and associated namespace name.
+         * Documents in current query response with cursor ID and associated namespace name.
          * If cursor ID is zero, there are no additional batches.
          */
-        struct BatchData {
-            BatchData() = default;
-            BatchData(CursorId theCursorId, const NamespaceString& theNss, Documents theDocuments);
+        struct QueryResponse {
+            QueryResponse() = default;
+            QueryResponse(CursorId theCursorId,
+                          const NamespaceString& theNss,
+                          Documents theDocuments);
             CursorId cursorId = 0;
             NamespaceString nss;
             Documents documents;
+            // TODO: fill in with replication metadata.
+            struct OtherFields {
+                BSONObj metadata;
+            } otherFields;
         };
+
+        using QueryResponseStatus = StatusWith<Fetcher::QueryResponse>;
 
         /**
          * Represents next steps of fetcher.
@@ -79,7 +85,7 @@ namespace repl {
         /**
          * Type of a fetcher callback function.
          */
-        typedef stdx::function<void (const StatusWith<BatchData>&,
+        typedef stdx::function<void (const StatusWith<QueryResponse>&,
                                      NextAction*,
                                      BSONObjBuilder*)> CallbackFn;
 
@@ -104,15 +110,18 @@ namespace repl {
          * If the fetcher is canceled (either by calling cancel() or shutting down the executor),
          * 'work' will not be invoked.
          *
-         * Fetcher uses the NextAction argument to inform client via callback if a getMore command
-         * will be scheduled to be run by the executor to retrieve additional results.
+         * Fetcher uses the NextAction and BSONObjBuilder arguments to inform client via callback
+         * if a follow-up (like getMore) command will be scheduled to be run by the executor to
+         * retrieve additional results. The BSONObjBuilder pointer will be valid only if NextAction
+         * is kGetMore.
+         * Otherwise, the BSONObjBuilder pointer will be null.
          * Also, note that the NextAction is both an input and output argument to allow
          * the client to suggest a different action for the fetcher to take post-callback.
          *
          * The callback function 'work' is not allowed to call into the Fetcher instance. This
          * behavior is undefined and may result in a deadlock.
          */
-        Fetcher(ReplicationExecutor* executor,
+        Fetcher(executor::TaskExecutor* executor,
                 const HostAndPort& source,
                 const std::string& dbname,
                 const BSONObj& cmdObj,
@@ -158,7 +167,7 @@ namespace repl {
         /**
          * Callback for remote command.
          */
-        void _callback(const ReplicationExecutor::RemoteCommandCallbackData& rcbd,
+        void _callback(const executor::TaskExecutor::RemoteCommandCallbackArgs& rcbd,
                        const char* batchFieldName);
 
         /**
@@ -167,7 +176,7 @@ namespace repl {
         void _finishCallback();
 
         // Not owned by us.
-        ReplicationExecutor* _executor;
+        executor::TaskExecutor* _executor;
 
         HostAndPort _source;
         std::string _dbname;
@@ -182,8 +191,7 @@ namespace repl {
         // _active is true when Fetcher is scheduled to be run by the executor.
         bool _active;
         // Callback handle to the scheduled remote command.
-        ReplicationExecutor::CallbackHandle _remoteCommandCallbackHandle;
+        executor::TaskExecutor::CallbackHandle _remoteCommandCallbackHandle;
     };
 
-} // namespace repl
 } // namespace mongo

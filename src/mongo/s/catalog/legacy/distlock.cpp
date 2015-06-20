@@ -31,7 +31,6 @@
 
 #include "mongo/s/catalog/legacy/distlock.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/server_options.h"
 #include "mongo/client/dbclientcursor.h"
@@ -44,13 +43,12 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
     using std::endl;
     using std::list;
     using std::set;
     using std::string;
     using std::stringstream;
+    using std::unique_ptr;
     using std::vector;
 
     LabeledLevel DistributedLock::logLvl( 1 );
@@ -130,14 +128,14 @@ namespace mongo {
 
     DistLockPingInfo DistributedLock::LastPings::getLastPing(const ConnectionString& conn,
                                                              const string& lockName) {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         return _lastPings[std::make_pair(conn.toString(), lockName)];
     }
 
     void DistributedLock::LastPings::setLastPing(const ConnectionString& conn,
                                                  const string& lockName,
                                                  const DistLockPingInfo& pd) {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         _lastPings[std::make_pair(conn.toString(), lockName)] = pd;
     }
 
@@ -174,7 +172,7 @@ namespace mongo {
         string errMsg;
         Milliseconds delay{0};
 
-        scoped_ptr<ScopedDbConnection> connPtr;
+        unique_ptr<ScopedDbConnection> connPtr;
         try {
             connPtr.reset( new ScopedDbConnection( server.toString() ) );
             ScopedDbConnection& conn = *connPtr;
@@ -791,7 +789,7 @@ namespace mongo {
         while ( ++attempted <= maxAttempts ) {
 
             // Awkward, but necessary since the constructor itself throws exceptions
-            scoped_ptr<ScopedDbConnection> connPtr;
+            unique_ptr<ScopedDbConnection> connPtr;
 
             try {
 

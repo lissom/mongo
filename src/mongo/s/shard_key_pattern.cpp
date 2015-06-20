@@ -28,8 +28,6 @@
 
 #include "mongo/s/shard_key_pattern.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 #include <vector>
 
 #include "mongo/db/field_ref.h"
@@ -42,13 +40,12 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
-    using std::auto_ptr;
-    using std::pair;
     using std::make_pair;
-    using std::vector;
+    using std::pair;
+    using std::shared_ptr;
     using std::string;
+    using std::unique_ptr;
+    using std::vector;
 
     using pathsupport::EqualityMatches;
     using mongoutils::str::stream;
@@ -289,7 +286,7 @@ namespace mongo {
             CanonicalQuery::canonicalize("", basicQuery, &rawQuery, WhereCallbackNoop());
         if (!queryStatus.isOK())
             return StatusWith<BSONObj>(queryStatus);
-        scoped_ptr<CanonicalQuery> query(rawQuery);
+        unique_ptr<CanonicalQuery> query(rawQuery);
 
         EqualityMatches equalities;
         // TODO: Build the path set initially?

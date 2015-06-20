@@ -376,7 +376,7 @@ namespace {
         _distLockManager->startUp();
 
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             _inShutdown = false;
             _consistentFromLastCheck = true;
         }
@@ -384,7 +384,17 @@ namespace {
         return Status::OK();
     }
 
-    Status CatalogManagerLegacy::checkAndUpgradeConfigMetadata(bool doUpgrade) {
+    Status CatalogManagerLegacy::startup(bool upgrade) {
+        Status status = _startConfigServerChecker();
+        if (!status.isOK()) {
+            return status;
+        }
+
+        status = _checkAndUpgradeConfigMetadata(upgrade);
+        return status;
+    }
+
+    Status CatalogManagerLegacy::_checkAndUpgradeConfigMetadata(bool doUpgrade) {
         VersionType initVersionInfo;
         VersionType versionInfo;
         string errMsg;
@@ -403,13 +413,13 @@ namespace {
         return Status::OK();
     }
 
-    Status CatalogManagerLegacy::startConfigServerChecker() {
+    Status CatalogManagerLegacy::_startConfigServerChecker() {
         if (!_checkConfigServersConsistent()) {
-            return Status(ErrorCodes::IncompatibleShardingMetadata,
+            return Status(ErrorCodes::ConfigServersInconsistent,
                           "Data inconsistency detected amongst config servers");
         }
 
-        boost::thread t(stdx::bind(&CatalogManagerLegacy::_consistencyChecker, this));
+        stdx::thread t(stdx::bind(&CatalogManagerLegacy::_consistencyChecker, this));
         _consistencyCheckerThread.swap(t);
 
         return Status::OK();
@@ -422,7 +432,7 @@ namespace {
     void CatalogManagerLegacy::shutDown() {
         LOG(1) << "CatalogManagerLegacy::shutDown() called.";
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             _inShutdown = true;
             _consistencyCheckerCV.notify_one();
         }
@@ -512,7 +522,7 @@ namespace {
         collectionDetail.append("collection", ns);
         string dbPrimaryShardStr;
         {
-            const auto& shard = grid.shardRegistry()->findIfExists(dbPrimaryShardId);
+            const auto shard = grid.shardRegistry()->getShard(dbPrimaryShardId);
             dbPrimaryShardStr = shard->toString();
         }
         collectionDetail.append("primary", dbPrimaryShardStr);
@@ -556,7 +566,7 @@ namespace {
             }
 
             try {
-                const auto& shard = grid.shardRegistry()->findIfExists(dbPrimaryShardId);
+                const auto shard = grid.shardRegistry()->getShard(dbPrimaryShardId);
                 ShardConnection conn(shard->getConnString(), ns);
                 bool isVersionSet = conn.setVersion();
                 conn.done();
@@ -711,7 +721,7 @@ namespace {
         b.append(ShardType::host(),
                  rsMonitor ? rsMonitor->getServerAddress() : shardConnectionString.toString());
         if (maxSize > 0) {
-            b.append(ShardType::maxSize(), maxSize);
+            b.append(ShardType::maxSizeMB(), maxSize);
         }
         BSONObj shardDoc = b.obj();
 
@@ -829,7 +839,7 @@ namespace {
                 return status;
             }
 
-            Shard::removeShard(name);
+            grid.shardRegistry()->remove(name);
 
             shardConnectionPool.removeHost(name);
             ReplicaSetMonitor::remove(name);
@@ -982,7 +992,7 @@ namespace {
 
         // Delete data from all mongods
         for (vector<ShardType>::const_iterator i = allShards.begin(); i != allShards.end(); i++) {
-            const auto& shard = grid.shardRegistry()->findIfExists(i->getName());
+            const auto shard = grid.shardRegistry()->getShard(i->getName());
             ScopedDbConnection conn(shard->getConnString());
 
             BSONObj info;
@@ -1032,7 +1042,7 @@ namespace {
         LOG(1) << "dropCollection " << collectionNs << " chunk data deleted";
 
         for (vector<ShardType>::const_iterator i = allShards.begin(); i != allShards.end(); i++) {
-            const auto& shard = grid.shardRegistry()->findIfExists(i->getName());
+            const auto shard = grid.shardRegistry()->getShard(i->getName());
             ScopedDbConnection conn(shard->getConnString());
 
             BSONObj res;
@@ -1151,11 +1161,19 @@ namespace {
             ScopedDbConnection conn(_configServerConnectionString, 30);
             BSONObj settingsDoc = conn->findOne(SettingsType::ConfigNS,
                                                 BSON(SettingsType::key(key)));
-            StatusWith<SettingsType> settingsResult = SettingsType::fromBSON(settingsDoc);
             conn.done();
 
+            if (settingsDoc.isEmpty()) {
+                return Status(ErrorCodes::NoMatchingDocument,
+                              str::stream() << "can't find settings document with key: " << key);
+            }
+
+            StatusWith<SettingsType> settingsResult = SettingsType::fromBSON(settingsDoc);
             if (!settingsResult.isOK()) {
-                return settingsResult.getStatus();
+                return Status(ErrorCodes::FailedToParse,
+                              str::stream() << "error while parsing settings document: "
+                                            << settingsDoc
+                                            << " : " << settingsResult.getStatus().toString());
             }
 
             const SettingsType& settings = settingsResult.getValue();
@@ -1223,9 +1241,11 @@ namespace {
                 StatusWith<ChunkType> chunkRes = ChunkType::fromBSON(chunkObj);
                 if (!chunkRes.isOK()) {
                     conn.done();
-                    return Status(ErrorCodes::FailedToParse,
-                                  str::stream() << "Failed to parse chunk BSONObj: "
-                                                << chunkRes.getStatus().reason());
+                    chunks->clear();
+                    return {ErrorCodes::FailedToParse,
+                            stream() << "Failed to parse chunk with id ("
+                                     << chunkObj[ChunkType::name()].toString() << "): "
+                                     << chunkRes.getStatus().reason()};
                 }
 
                 chunks->push_back(chunkRes.getValue());
@@ -1317,14 +1337,15 @@ namespace {
 
             StatusWith<ShardType> shardRes = ShardType::fromBSON(shardObj);
             if (!shardRes.isOK()) {
+                shards->clear();
                 conn.done();
                 return Status(ErrorCodes::FailedToParse,
-                              str::stream() << "Failed to parse chunk BSONObj: "
+                              str::stream() << "Failed to parse shard with id ("
+                                            <<  shardObj[ShardType::name()].toString() << "): "
                                             << shardRes.getStatus().reason());
             }
 
-            ShardType shard = shardRes.getValue();
-            shards->push_back(shard);
+            shards->push_back(shardRes.getValue());
         }
         conn.done();
 
@@ -1333,10 +1354,6 @@ namespace {
 
     bool CatalogManagerLegacy::isShardHost(const ConnectionString& connectionString) {
         return _getShardCount(BSON(ShardType::host(connectionString.toString())));
-    }
-
-    bool CatalogManagerLegacy::doShardsExist() {
-        return _getShardCount() > 0;
     }
 
     bool CatalogManagerLegacy::runUserManagementWriteCommand(const string& commandName,
@@ -1471,7 +1488,7 @@ namespace {
         // check if config servers are consistent
         if (!_isConsistentFromLastCheck()) {
             toBatchError(
-                Status(ErrorCodes::IncompatibleShardingMetadata,
+                Status(ErrorCodes::ConfigServersInconsistent,
                        "Data inconsistency detected amongst config servers"),
                 response);
             return;
@@ -1511,7 +1528,7 @@ namespace {
             }
         }
 
-        ConfigCoordinator exec(&dispatcher, _configServers);
+        ConfigCoordinator exec(&dispatcher, _configServerConnectionString);
         exec.executeBatch(request, response);
     }
 
@@ -1698,7 +1715,7 @@ namespace {
     }
 
     void CatalogManagerLegacy::_consistencyChecker() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         while (!_inShutdown) {
             lk.unlock();
             const bool isConsistent = _checkConfigServersConsistent();
@@ -1712,7 +1729,7 @@ namespace {
     }
 
     bool CatalogManagerLegacy::_isConsistentFromLastCheck() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         return _consistentFromLastCheck;
     }
 

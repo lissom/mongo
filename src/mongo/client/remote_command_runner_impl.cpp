@@ -95,22 +95,22 @@ namespace {
                                        BSONObj* output) {
 
         const NamespaceString nss(dbname, cmdObj.firstElement().String());
+        if (!nss.isValid()) {
+            return {ErrorCodes::InvalidNamespace,
+                    str::stream() << "Invalid collection name: " << nss.ns()};
+        }
         const std::string& ns = nss.ns();
 
-        std::unique_ptr<LiteParsedQuery> lpq;
-        {
-            LiteParsedQuery* lpqRaw;
-            // It is a little heavy handed to use LiteParsedQuery to convert the command object to
-            // query() arguments but we get validation and consistent behavior with the find
-            // command implementation on the remote server.
-            Status status = LiteParsedQuery::make(ns, cmdObj, false, &lpqRaw);
-            if (!status.isOK()) {
-                *output = getCommandResultFromStatus(status);
-                return status;
-            }
-
-            lpq.reset(lpqRaw);
+        // It is a little heavy handed to use LiteParsedQuery to convert the command object to
+        // query() arguments but we get validation and consistent behavior with the find
+        // command implementation on the remote server.
+        auto lpqStatus = LiteParsedQuery::makeFromFindCommand(nss, cmdObj, false);
+        if (!lpqStatus.isOK()) {
+            *output = getCommandResultFromStatus(lpqStatus.getStatus());
+            return lpqStatus.getStatus();
         }
+
+        auto& lpq = lpqStatus.getValue();
 
         Query query(lpq->getFilter());
         if (!lpq->getSort().isEmpty()) { query.sort(lpq->getSort()); }
