@@ -125,10 +125,10 @@ namespace {
             bool hasValidFlagsForCommand = !(opts & mongo::QueryOption_Exhaust);
 
             if (nss.isCommand() && hasValidNToReturnForCommand && hasValidFlagsForCommand) {
-                /*toSend = *assembleCommandRequest(_client,
+                toSend = std::move(*assembleCommandRequest(_client,
                                                  nss.db(),
                                                  opts,
-                                                 query);*/
+                                                 query));
                 return;
             }
             assembleQueryRequest(ns,
