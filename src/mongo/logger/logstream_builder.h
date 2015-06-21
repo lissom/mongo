@@ -32,11 +32,12 @@
 #include <string>
 #include <system_error>
 
-#include "mongo/base/object_has_func.h"
 #include "mongo/logger/labeled_level.h"
 #include "mongo/logger/log_component.h"
 #include "mongo/logger/log_severity.h"
 #include "mongo/logger/message_log_domain.h"
+
+#include "mongo/base/function_signature_detection.h"
 #include "mongo/stdx/chrono.h"
 #include "mongo/util/exit_code.h"
 
@@ -115,30 +116,28 @@ namespace logger {
 
         std::ostream& stream() { if (!_os) makeStream(); return *_os; }
 
-        OBJECT_HAS_FUNCTION_SIGNATURE(HasToString, toString, void, void)
+        OBJECT_HAS_FUNCTION(HasToStringFunc, toString);
 
-        template<typename T, bool hasStreamOperator>
-        struct StreamVariable { };
+        template<typename T, bool hasToString>
+        struct SendToStream { };
 
         template<typename T>
-        struct StreamVariable<T, false> {
-            static LogstreamBuilder& print(LogstreamBuilder& stream, const T& t) {
+        struct SendToStream<T, false> {
+            static void print(std::ostream& stream, const T& t) {
                 stream << t;
-                return stream;
             }
         };
 
         template<typename T>
-        struct StreamVariable<T, true> {
-            static LogstreamBuilder& print(LogstreamBuilder& stream, const T& t) {
+        struct SendToStream<T, true> {
+        static void print(std::ostream& stream, const T& t) {
                 stream << t.toString();
-                return stream;
             }
         };
 
         template <typename T>
         LogstreamBuilder& operator<<(const T& x) {
-            StreamVariable<T, HasToString<T>::value>::print(*this, x);
+            SendToStream<T, HasToStringFunc<T>::value>::print(stream(), x);
             return *this;
         }
 

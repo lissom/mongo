@@ -36,11 +36,11 @@ namespace mongo {
 
     ScopedTimer::ScopedTimer(long long* counter) :
         _counter(counter),
-        _start(clock::getElapsedTimeMillis()) {
+        _start(Listener::getElapsedTimeMillis()) {
     }
 
     ScopedTimer::~ScopedTimer() {
-        long long elapsed = clock::getElapsedTimeMillis() - _start;
+        long long elapsed = Listener::getElapsedTimeMillis() - _start;
         *_counter += elapsed;
     }
 

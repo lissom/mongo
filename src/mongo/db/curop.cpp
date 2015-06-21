@@ -322,13 +322,13 @@ namespace mongo {
         // If our accurate time source thinks time is not up yet, calculate the next target for
         // our approximate time source.
         if (_targetEpochMicros > now) {
-            _approxTargetServerMillis = clock::getElapsedTimeMillis() +
+            _approxTargetServerMillis = Listener::getElapsedTimeMillis() +
                                         static_cast<int64_t>((_targetEpochMicros - now) / 1000);
         }
         // Otherwise, set our approximate time source target such that it thinks time is already
         // up.
         else {
-            _approxTargetServerMillis = clock::getElapsedTimeMillis();
+            _approxTargetServerMillis = Listener::getElapsedTimeMillis();
         }
     }
 
@@ -338,7 +338,7 @@ namespace mongo {
         }
 
         // Does our approximate time source think time is not up yet?  If so, return early.
-        if (_approxTargetServerMillis > clock::getElapsedTimeMillis()) {
+        if (_approxTargetServerMillis > Listener::getElapsedTimeMillis()) {
             return false;
         }
 
@@ -346,7 +346,7 @@ namespace mongo {
         // Does our accurate time source think time is not up yet?  If so, readjust the target for
         // our approximate time source and return early.
         if (_targetEpochMicros > now) {
-            _approxTargetServerMillis = clock::getElapsedTimeMillis() +
+            _approxTargetServerMillis = Listener::getElapsedTimeMillis() +
                                         static_cast<int64_t>((_targetEpochMicros - now) / 1000);
             return false;
         }

@@ -1,7 +1,4 @@
-// @file elapsed_tracker.cpp
-
-/**
- *    Copyright (C) 2009 10gen Inc.
+/*    Copyright 2015 10gen Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -28,41 +25,27 @@
  *    then also delete it in the license file.
  */
 
-#include "mongo/platform/basic.h"
+#pragma once
 
-#include "mongo/util/elapsed_tracker.h"
+#include <type_traits>
 
-#include "mongo/util/net/listen.h"
+/*
+ * Will detect normal or static functions because it doesn't check function signature
+ * This should be used to detect functions that might be void or have default arguements = void
+ */
+#define OBJECT_HAS_FUNCTION(traitName, funcName) \
+template<typename T> \
+class traitName { \
+    template<typename U> static std::true_type check(decltype(&U::funcName)); \
+    template<typename U> static std::false_type check(...); \
+public: \
+    static constexpr bool value = decltype(check<T>(0))::value; \
+};
 
-namespace mongo {
-
-    ElapsedTracker::ElapsedTracker( int32_t hitsBetweenMarks, int32_t msBetweenMarks ) :
-        _hitsBetweenMarks( hitsBetweenMarks ),
-        _msBetweenMarks( msBetweenMarks ),
-        _pings( 0 ),
-        _last( Listener::getElapsedTimeMillis() ) {
-    }
-
-    bool ElapsedTracker::intervalHasElapsed() {
-        if ( ++_pings >= _hitsBetweenMarks ) {
-            _pings = 0;
-            _last = Listener::getElapsedTimeMillis();
-            return true;
-        }
-
-        long long now = Listener::getElapsedTimeMillis();
-        if ( now - _last > _msBetweenMarks ) {
-            _pings = 0;
-            _last = now;
-            return true;
-        }
-
-        return false;
-    }
-
-    void ElapsedTracker::resetLastTime() {
-        _pings = 0;
-        _last = Listener::getElapsedTimeMillis();
-    }
-
-} // namespace mongo
+OBJECT_HAS_FUNCTION(HasAnyFooFunc, foo)
+struct HasFoo { void foo(int, int); };
+struct StaticHasFoo { static void foo(int, int); };
+struct NoFoo { };
+static_assert(HasAnyFooFunc<HasFoo>::value, "Helper failed to detect foo() exists");
+static_assert(HasAnyFooFunc<StaticHasFoo>::value, "Helper failed to detect static foo() exist");
+static_assert(!HasAnyFooFunc<NoFoo>::value, "Helper failed to detect foo() doesn't exist");

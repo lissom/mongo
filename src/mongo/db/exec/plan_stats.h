@@ -37,7 +37,7 @@
 #include "mongo/db/query/stage_types.h"
 #include "mongo/platform/cstdint.h"
 #include "mongo/util/time_support.h"
-#include "mongo/util/net/listen.h" // for clock::getElapsedTimeMillis()
+#include "mongo/util/net/listen.h" // for Listener::getElapsedTimeMillis()
 
 namespace mongo {
 

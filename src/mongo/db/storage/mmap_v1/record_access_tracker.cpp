@@ -95,11 +95,11 @@ namespace mongo {
 
             void reset(Data* data) {
                 memset(data->_table, 0, sizeof(data->_table));
-                data->_lastReset = clock::getElapsedTimeMillis();
+                data->_lastReset = Listener::getElapsedTimeMillis();
             }
 
             inline void resetIfNeeded( Data* data ) {
-                const long long now = clock::getElapsedTimeMillis();
+                const long long now = Listener::getElapsedTimeMillis();
                 if (MONGO_unlikely((now - data->_lastReset) >
                                    RecordAccessTracker::RotateTimeSecs*1000)) {
                     reset(data);
@@ -230,7 +230,7 @@ namespace mongo {
     RecordAccessTracker::Rolling::Rolling()
         : _lock( "ps::Rolling" ){
         _curSlice = 0;
-        _lastRotate = clock::getElapsedTimeMillis();
+        _lastRotate = Listener::getElapsedTimeMillis();
     }
 
     bool RecordAccessTracker::Rolling::access(size_t region, short offset, bool doHalf) {
@@ -240,7 +240,7 @@ namespace mongo {
 
         static int rarelyCount = 0;
         if (rarelyCount++ % (2048 / BigHashSize) == 0) {
-            long long now = clock::getElapsedTimeMillis();
+            long long now = Listener::getElapsedTimeMillis();
 
             if (now - _lastRotate > (1000 * RotateTimeSecs)) {
                 _rotate();
@@ -272,7 +272,7 @@ namespace mongo {
     void RecordAccessTracker::Rolling::_rotate() {
         _curSlice = (_curSlice + 1) % NumSlices;
         _slices[_curSlice].reset();
-        _lastRotate = clock::getElapsedTimeMillis();
+        _lastRotate = Listener::getElapsedTimeMillis();
     }
 
     // These need to be outside the ps namespace due to the way they are defined

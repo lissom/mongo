@@ -67,7 +67,7 @@ namespace mongo {
             stdx::thread t(timeTrackerSetup);
 
             // Wait for listener thread to start tracking time.
-            while (clock::getElapsedTimeMillis() == 0) {
+            while (Listener::getElapsedTimeMillis() == 0) {
                 sleepmillis(10);
             }
             return Status::OK();

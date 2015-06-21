@@ -105,7 +105,7 @@ namespace mongo {
             _lastAccessMillis = 0;
         }
         else
-            _lastAccessMillis = clock::getElapsedTimeMillis();
+            _lastAccessMillis = Listener::getElapsedTimeMillis();
 
         cursorStatsMultiTarget.increment();
     }
@@ -131,7 +131,7 @@ namespace mongo {
 
     void ShardedClientCursor::accessed() {
         if ( _lastAccessMillis > 0 )
-            _lastAccessMillis = clock::getElapsedTimeMillis();
+            _lastAccessMillis = Listener::getElapsedTimeMillis();
     }
 
     long long ShardedClientCursor::idleTime( long long now ) {
@@ -345,7 +345,7 @@ namespace mongo {
         while ( true ) {
             stdx::lock_guard<stdx::mutex> lk( _mutex );
 
-            long long x = clock::getElapsedTimeMillis() << 32;
+            long long x = Listener::getElapsedTimeMillis() << 32;
             x |= _random.nextInt32();
 
             if ( x == 0 )
@@ -455,7 +455,7 @@ namespace mongo {
     }
 
     void CursorCache::doTimeouts() {
-        long long now = clock::getElapsedTimeMillis();
+        long long now = Listener::getElapsedTimeMillis();
         stdx::lock_guard<stdx::mutex> lk( _mutex );
         for ( MapSharded::iterator i=_cursors.begin(); i!=_cursors.end(); ++i ) {
             // Note: cursors with no timeout will always have an idleTime of 0

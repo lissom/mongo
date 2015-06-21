@@ -648,7 +648,7 @@ namespace mongo {
         }
 
         void Journal::preFlush() {
-            j._preFlushTime = clock::getElapsedTimeMillis();
+            j._preFlushTime = Listener::getElapsedTimeMillis();
         }
 
         void Journal::postFlush() {
@@ -663,7 +663,7 @@ namespace mongo {
 
             JFile jf;
             jf.filename = _curLogFile->_name;
-            jf.lastEventTimeMs = clock::getElapsedTimeMillis();
+            jf.lastEventTimeMs = Listener::getElapsedTimeMillis();
             _oldJournalFiles.push_back(jf);
 
             delete _curLogFile; // close
