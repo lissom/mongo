@@ -56,11 +56,11 @@ class PiggyBackData;
 typedef uint32_t MSGID;
 
 enum Operations {
-    opReply = 1, /* reply. responseTo is set. */
-    dbMsg = 1000, /* generic msg command followed by a std::string */
+    opReply = 1,     /* reply. responseTo is set. */
+    dbMsg = 1000,    /* generic msg command followed by a std::string */
     dbUpdate = 2001, /* update object */
     dbInsert = 2002,
-    //dbGetByOID = 2003,
+    // dbGetByOID = 2003,
     dbQuery = 2004,
     dbGetMore = 2005,
     dbDelete = 2006,
@@ -71,68 +71,66 @@ enum Operations {
 
 bool doesOpGetAResponse(int op);
 
-inline const char * opToString(int op) {
+inline const char* opToString(int op) {
     switch (op) {
-    case 0:
-        return "none";
-    case opReply:
-        return "reply";
-    case dbMsg:
-        return "msg";
-    case dbUpdate:
-        return "update";
-    case dbInsert:
-        return "insert";
-    case dbQuery:
-        return "query";
-    case dbGetMore:
-        return "getmore";
-    case dbDelete:
-        return "remove";
-    case dbKillCursors:
-        return "killcursors";
-    case dbCommand:
-        return "command";
-    case dbCommandReply:
-        return "commandReply";
-    default:
-        massert(16141, str::stream() << "cannot translate opcode " << op, !op);
-        return "";
+        case 0:
+            return "none";
+        case opReply:
+            return "reply";
+        case dbMsg:
+            return "msg";
+        case dbUpdate:
+            return "update";
+        case dbInsert:
+            return "insert";
+        case dbQuery:
+            return "query";
+        case dbGetMore:
+            return "getmore";
+        case dbDelete:
+            return "remove";
+        case dbKillCursors:
+            return "killcursors";
+        case dbCommand:
+            return "command";
+        case dbCommandReply:
+            return "commandReply";
+        default:
+            massert(16141, str::stream() << "cannot translate opcode " << op, !op);
+            return "";
     }
 }
 
 inline bool opIsWrite(int op) {
     switch (op) {
+        case 0:
+        case opReply:
+        case dbMsg:
+        case dbQuery:
+        case dbGetMore:
+        case dbKillCursors:
+            return false;
 
-    case 0:
-    case opReply:
-    case dbMsg:
-    case dbQuery:
-    case dbGetMore:
-    case dbKillCursors:
-        return false;
+        case dbUpdate:
+        case dbInsert:
+        case dbDelete:
+            return true;
 
-    case dbUpdate:
-    case dbInsert:
-    case dbDelete:
-        return true;
-
-    default:
-        PRINT(op);
-        verify(0);
-        return "";
+        default:
+            PRINT(op);
+            verify(0);
+            return "";
     }
-
 }
 
 namespace MSGHEADER {
 #pragma pack(1)
 /* see http://dochub.mongodb.org/core/mongowireprotocol
- */
+*/
 struct Layout {
-    int32_t messageLength; // total message size, including this
-    int32_t requestID;     // identifier for this message
-    int32_t responseTo;    // requestID from the original request
+    int32_t messageLength;  // total message size, including this
+    int32_t requestID;      // identifier for this message
+    int32_t responseTo;     // requestID from the original request
     //   (used in responses from db)
     int32_t opCode;
 };
@@ -142,17 +140,14 @@ class ConstView {
 public:
     typedef ConstDataView view_type;
 
-    ConstView(const char* data) :
-            _data(data) {
-    }
+    ConstView(const char* data) : _data(data) {}
 
     const char* view2ptr() const {
         return data().view();
     }
 
     int32_t getMessageLength() const {
-        return data().read<LittleEndian<int32_t>>(
-                offsetof(Layout, messageLength));
+        return data().read<LittleEndian<int32_t>>(offsetof(Layout, messageLength));
     }
 
     int32_t getRequestID() const {
@@ -176,13 +171,11 @@ private:
     view_type _data;
 };
 
-class View: public ConstView {
+class View : public ConstView {
 public:
     typedef DataView view_type;
 
-    View(char* data) :
-            ConstView(data) {
-    }
+    View(char* data) : ConstView(data) {}
 
     using ConstView::view2ptr;
     char* view2ptr() {
@@ -207,22 +200,20 @@ public:
 
 private:
     view_type data() const {
-        return const_cast<char *>(ConstView::view2ptr());
+        return const_cast<char*>(ConstView::view2ptr());
     }
 };
 
-class Value: public EncodedValueStorage<Layout, ConstView, View> {
+class Value : public EncodedValueStorage<Layout, ConstView, View> {
 public:
     Value() {
         BOOST_STATIC_ASSERT(sizeof(Value) == sizeof(Layout));
     }
 
-    Value(ZeroInitTag_t zit) :
-            EncodedValueStorage<Layout, ConstView, View>(zit) {
-    }
+    Value(ZeroInitTag_t zit) : EncodedValueStorage<Layout, ConstView, View>(zit) {}
 };
 
-} // namespace MSGHEADER
+}  // namespace MSGHEADER
 
 namespace MsgData {
 #pragma pack(1)
@@ -234,9 +225,7 @@ struct Layout {
 
 class ConstView {
 public:
-    ConstView(const char* storage) :
-            _storage(storage) {
-    }
+    ConstView(const char* storage) : _storage(storage) {}
 
     const char* view2ptr() const {
         return storage().view();
@@ -273,11 +262,10 @@ public:
     int64_t getCursor() const {
         verify(getResponseTo() > 0);
         verify(getOperation() == opReply);
-        return ConstDataView(data() + sizeof(int32_t)).read<
-                LittleEndian<int64_t>>();
+        return ConstDataView(data() + sizeof(int32_t)).read<LittleEndian<int64_t>>();
     }
 
-    int dataLen() const; // len without header
+    int dataLen() const;  // len without header
 
 protected:
     const ConstDataView& storage() const {
@@ -292,11 +280,9 @@ private:
     ConstDataView _storage;
 };
 
-class View: public ConstView {
+class View : public ConstView {
 public:
-    View(char* storage) :
-            ConstView(storage) {
-    }
+    View(char* storage) : ConstView(storage) {}
 
     using ConstView::view2ptr;
     char* view2ptr() {
@@ -326,7 +312,7 @@ public:
 
 private:
     DataView storage() const {
-        return const_cast<char *>(ConstView::view2ptr());
+        return const_cast<char*>(ConstView::view2ptr());
     }
 
     MSGHEADER::View header() const {
@@ -334,64 +320,37 @@ private:
     }
 };
 
-class Value: public EncodedValueStorage<Layout, ConstView, View> {
+class Value : public EncodedValueStorage<Layout, ConstView, View> {
 public:
     Value() {
         BOOST_STATIC_ASSERT(sizeof(Value) == sizeof(Layout));
     }
 
-    Value(ZeroInitTag_t zit) :
-            EncodedValueStorage<Layout, ConstView, View>(zit) {
-    }
+    Value(ZeroInitTag_t zit) : EncodedValueStorage<Layout, ConstView, View>(zit) {}
 };
 
 const int MsgDataHeaderSize = sizeof(Value) - 4;
 inline int ConstView::dataLen() const {
     return getLen() - MsgDataHeaderSize;
 }
-} // namespace MsgData
+}  // namespace MsgData
 
 class Message {
-    //This isn't copied anywhere and copying is non-trivial
-MONGO_DISALLOW_COPYING(Message);
 public:
-    typedef std::vector<std::pair<char*, int> > MsgVec;
-
-    // we assume here that a vector with initial size 0 does no allocation (0 is the default, but wanted to make it explicit).
-    Message() :
-            _buf(0), _data(0), _freeIt( false) {
-    }
-    Message(void * data, bool freeIt) :
-            _buf(0), _data(0), _freeIt( false) {
+    // we assume here that a vector with initial size 0 does no allocation (0 is the default, but
+    // wanted to make it explicit).
+    Message() : _buf(0), _data(0), _freeIt(false) {}
+    Message(void* data, bool freeIt) : _buf(0), _data(0), _freeIt(false) {
         _setData(reinterpret_cast<char*>(data), freeIt);
+    };
+    Message(Message& r) : _buf(0), _data(0), _freeIt(false) {
+        *this = r;
     }
-    ;
-
-    Message(Message&& rhs) :
-            _buf(rhs._buf), _data(std::move(rhs._data)), _freeIt(rhs._freeIt) {
-        rhs._buf = nullptr;
-        rhs._freeIt = false;
-    }
-
-    Message& operator=(Message&& r) {
-        //we could get tricky, but it appears _freeIt is always is false in the code
-        if (_freeIt)
-            reset();
-        _data = std::move(r._data);
-        _buf = r._buf;
-        _freeIt = r._freeIt;
-        r._buf = nullptr;
-        r._freeIt = false;
-        return *this;
-    }
-
     ~Message() {
         reset();
     }
 
-    bool isSingleData() const {
-        return _buf != nullptr;
-    }
+    SockAddr _from;
 
     MsgData::View header() const {
         verify(!empty());
@@ -403,13 +362,8 @@ public:
     }
 
     MsgData::View singleData() const {
-        massert(13273, "single data buffer expected", isSingleData());
+        massert(13273, "single data buffer expected", _buf);
         return header();
-    }
-
-    const MsgVec& multiData() const {
-        verify(!isSingleData());
-        return _data;
     }
 
     bool empty() const {
@@ -418,11 +372,10 @@ public:
 
     int size() const {
         int res = 0;
-        if (isSingleData()) {
+        if (_buf) {
             res = MsgData::ConstView(_buf).getLen();
         } else {
-            for (MsgVec::const_iterator it = _data.begin(); it != _data.end();
-                    ++it) {
+            for (MsgVec::const_iterator it = _data.begin(); it != _data.end(); ++it) {
                 res += it->second;
             }
         }
@@ -442,14 +395,14 @@ public:
 
         verify(_freeIt);
         int totalSize = 0;
-        for (std::vector<std::pair<char *, int> >::const_iterator i =
-                _data.begin(); i != _data.end(); ++i) {
+        for (std::vector<std::pair<char*, int>>::const_iterator i = _data.begin(); i != _data.end();
+             ++i) {
             totalSize += i->second;
         }
-        char *buf = (char*) mongoMalloc(totalSize);
-        char *p = buf;
-        for (std::vector<std::pair<char *, int> >::const_iterator i =
-                _data.begin(); i != _data.end(); ++i) {
+        char* buf = (char*)mongoMalloc(totalSize);
+        char* p = buf;
+        for (std::vector<std::pair<char*, int>>::const_iterator i = _data.begin(); i != _data.end();
+             ++i) {
             memcpy(p, i->first, i->second);
             p += i->second;
         }
@@ -457,13 +410,28 @@ public:
         _setData(buf, true);
     }
 
+    // vector swap() so this is fast
+    Message& operator=(Message& r) {
+        verify(empty());
+        verify(r._freeIt);
+        _buf = r._buf;
+        r._buf = 0;
+        if (r._data.size() > 0) {
+            _data.swap(r._data);
+        }
+        r._freeIt = false;
+        _freeIt = true;
+        return *this;
+    }
+
     void reset() {
         if (_freeIt) {
             if (_buf) {
                 free(_buf);
             }
-            for (std::vector<std::pair<char *, int> >::const_iterator i =
-                    _data.begin(); i != _data.end(); ++i) {
+            for (std::vector<std::pair<char*, int>>::const_iterator i = _data.begin();
+                 i != _data.end();
+                 ++i) {
                 free(i->first);
             }
         }
@@ -474,20 +442,19 @@ public:
 
     // use to add a buffer
     // assumes message will free everything
-    void appendData(char *d, int size) {
+    void appendData(char* d, int size) {
         if (size <= 0) {
             return;
         }
         if (empty()) {
             MsgData::View md = d;
-            md.setLen(size); // can be updated later if more buffers added
+            md.setLen(size);  // can be updated later if more buffers added
             _setData(md.view2ptr(), true);
             return;
         }
         verify(_freeIt);
         if (_buf) {
-            _data.push_back(
-                    std::make_pair(_buf, MsgData::ConstView(_buf).getLen()));
+            _data.push_back(std::make_pair(_buf, MsgData::ConstView(_buf).getLen()));
             _buf = 0;
         }
         _data.push_back(std::make_pair(d, size));
@@ -499,13 +466,13 @@ public:
         verify(empty());
         _setData(d, freeIt);
     }
-    void setData(int operation, const char *msgtxt) {
+    void setData(int operation, const char* msgtxt) {
         setData(operation, msgtxt, strlen(msgtxt) + 1);
     }
-    void setData(int operation, const char *msgdata, size_t len) {
+    void setData(int operation, const char* msgdata, size_t len) {
         verify(empty());
         size_t dataLen = len + sizeof(MsgData::Value) - 4;
-        MsgData::View d = reinterpret_cast<char *>(mongoMalloc(dataLen));
+        MsgData::View d = reinterpret_cast<char*>(mongoMalloc(dataLen));
         memcpy(d.data(), msgdata, len);
         d.setLen(dataLen);
         d.setOperation(operation);
@@ -516,7 +483,7 @@ public:
         return _freeIt;
     }
 
-    void send(MessagingPort &p, const char *context);
+    void send(MessagingPort& p, const char* context);
 
     std::string toString() const;
 
@@ -527,10 +494,15 @@ private:
     }
     // if just one buffer, keep it in _buf, otherwise keep a sequence of buffers in _data
     char* _buf;
-    // byte buffer(s) - the first must contain at least a full MsgData unless using _buf for storage instead
-    MsgVec _data;bool _freeIt;
+    // byte buffer(s) - the first must contain at least a full MsgData unless using _buf for storage
+    // instead
+    typedef std::vector<std::pair<char*, int>> MsgVec;
+    MsgVec _data;
+    bool _freeIt;
 };
+
 
 MSGID nextMessageId();
 
-} // namespace mongo
+
+}  // namespace mongo

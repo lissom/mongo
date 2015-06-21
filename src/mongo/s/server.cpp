@@ -85,6 +85,7 @@
 #include "mongo/util/quick_exit.h"
 #include "mongo/util/signal_handlers.h"
 #include "mongo/util/stacktrace.h"
+#include "mongo/util/static_observer.h"
 #include "mongo/util/stringutils.h"
 #include "mongo/util/text.h"
 #include "mongo/util/version.h"
@@ -98,10 +99,7 @@ using logger::LogComponent;
 
 #if defined(_WIN32)
 ntservice::NtServiceDefaultStrings defaultServiceStrings = {
-    L"MongoS",
-    L"MongoDB Router",
-    L"MongoDB Sharding Router"
-};
+    L"MongoS", L"MongoDB Router", L"MongoDB Sharding Router"};
 static ExitCode initService();
 #endif
 
@@ -126,10 +124,9 @@ static BSONObj buildErrReply(const DBException& ex) {
     return errB.obj();
 }
 
-class ShardedMessageHandler: public MessageHandler {
+class ShardedMessageHandler : public MessageHandler {
 public:
-    virtual ~ShardedMessageHandler() {
-    }
+    virtual ~ShardedMessageHandler() {}
 
     virtual void connected(AbstractMessagingPort* p) {
         Client::initThread("conn", getGlobalServiceContext(), p);
@@ -140,12 +137,13 @@ public:
         Request r(m, p);
 
         try {
+            r.init();
             r.process();
         } catch (const AssertionException& ex) {
-
-            LOG( ex.isUserAssertion() ? 1 : 0 ) << "Assertion failed"
-                    << " while processing " << opToString(m.operation())
-                    << " op" << " for " << r.getns() << causedBy(ex);
+            LOG(ex.isUserAssertion() ? 1 : 0) << "Assertion failed"
+                                              << " while processing " << opToString(m.operation())
+                                              << " op"
+                                              << " for " << r.getns() << causedBy(ex);
 
             if (r.expectResponse()) {
                 m.header().setId(r.id());
@@ -155,10 +153,9 @@ public:
             // We *always* populate the last error for now
             LastError::get(cc()).setLastError(ex.getCode(), ex.what());
         } catch (const DBException& ex) {
-
-            log() << "Exception thrown" << " while processing "
-                    << opToString(m.operation()) << " op" << " for "
-                    << r.getns() << causedBy(ex);
+            log() << "Exception thrown"
+                  << " while processing " << opToString(m.operation()) << " op"
+                  << " for " << r.getns() << causedBy(ex);
 
             if (r.expectResponse()) {
                 m.header().setId(r.id());
@@ -177,14 +174,13 @@ public:
 void start(const MessageServer::Options& opts) {
     balancer.go();
     cursorCache.startTimeoutThread();
-    UserCacheInvalidator cacheInvalidatorThread(
-            getGlobalAuthorizationManager());
+    UserCacheInvalidator cacheInvalidatorThread(getGlobalAuthorizationManager());
     cacheInvalidatorThread.go();
 
     PeriodicTask::startRunningPeriodicTasks();
 
     ShardedMessageHandler handler;
-    MessageServer * server = createServer(opts, &handler);
+    MessageServer* server = createServer(opts, &handler);
     server->setAsTimeTracker();
     server->setupSockets();
     server->run();
@@ -195,20 +191,20 @@ DBClientBase* createDirectClient(OperationContext* txn) {
     return 0;
 }
 
-} // namespace mongo
+}  // namespace mongo
 
 using namespace mongo;
 
-static ExitCode runMongosServer( bool doUpgrade) {
+static ExitCode runMongosServer(bool doUpgrade) {
     setThreadName("mongosMain");
-    printShardingVersionInfo( false);
+    printShardingVersionInfo(false);
 
     // Add sharding hooks to both connection pools - ShardingConnectionHook includes auth hooks
     globalConnPool.addHook(new ShardingConnectionHook(false));
     shardConnectionPool.addHook(new ShardingConnectionHook(true));
 
     // Mongos shouldn't lazily kill cursors, otherwise we can end up with extras from migration
-    DBClientConnection::setLazyKillCursor( false);
+    DBClientConnection::setLazyKillCursor(false);
 
     ReplicaSetMonitor::setConfigChangeHook(&ConfigServer::replicaSetChange);
 
@@ -223,28 +219,25 @@ static ExitCode runMongosServer( bool doUpgrade) {
     auto catalogManager = stdx::make_unique<CatalogManagerLegacy>();
 
     {
-        Status statusCatalogManagerInit = catalogManager->init(
-                mongosGlobalParams.configdbs);
+        Status statusCatalogManagerInit = catalogManager->init(mongosGlobalParams.configdbs);
         if (!statusCatalogManagerInit.isOK()) {
-            error() << "couldn't initialize catalog manager "
-                    << statusCatalogManagerInit;
+            error() << "couldn't initialize catalog manager " << statusCatalogManagerInit;
             return EXIT_SHARDING_ERROR;
         }
     }
 
-    auto shardRegistry = stdx::make_unique<ShardRegistry>(
-            stdx::make_unique<RemoteCommandTargeterFactoryImpl>(),
-            stdx::make_unique<RemoteCommandRunnerImpl>(0),
-            std::unique_ptr<executor::TaskExecutor> { nullptr },
-            catalogManager.get());
+    auto shardRegistry =
+        stdx::make_unique<ShardRegistry>(stdx::make_unique<RemoteCommandTargeterFactoryImpl>(),
+                                         stdx::make_unique<RemoteCommandRunnerImpl>(0),
+                                         std::unique_ptr<executor::TaskExecutor>{nullptr},
+                                         catalogManager.get());
 
     grid.init(std::move(catalogManager), std::move(shardRegistry));
 
     {
         Status startupStatus = grid.catalogManager()->startup(doUpgrade);
         if (!startupStatus.isOK()) {
-            error() << "Mongos catalog manager startup failed: "
-                    << startupStatus;
+            error() << "Mongos catalog manager startup failed: " << startupStatus;
             return EXIT_SHARDING_ERROR;
         }
 
@@ -260,9 +253,8 @@ static ExitCode runMongosServer( bool doUpgrade) {
 #endif
 
     if (serverGlobalParams.isHttpInterfaceEnabled) {
-        std::shared_ptr<DbWebServer> dbWebServer(
-                new DbWebServer(serverGlobalParams.bind_ip,
-                        serverGlobalParams.port + 1000, new NoAdminAccess()));
+        std::shared_ptr<DbWebServer> dbWebServer(new DbWebServer(
+            serverGlobalParams.bind_ip, serverGlobalParams.port + 1000, new NoAdminAccess()));
         dbWebServer->setupSockets();
 
         stdx::thread web(stdx::bind(&webServerListenThread, dbWebServer));
@@ -285,8 +277,8 @@ static ExitCode runMongosServer( bool doUpgrade) {
 }
 
 MONGO_INITIALIZER_GENERAL(ForkServer,
-        ("EndStartupOptionHandling"),
-        ("default"))(InitializerContext* context) {
+                          ("EndStartupOptionHandling"),
+                          ("default"))(InitializerContext* context) {
     mongo::forkServerOrDie();
     return Status::OK();
 }
@@ -298,12 +290,9 @@ MONGO_INITIALIZER_GENERAL(ForkServer,
 static void startupConfigActions(const std::vector<std::string>& argv) {
 #if defined(_WIN32)
     vector<string> disallowedOptions;
-    disallowedOptions.push_back( "upgrade" );
-    ntservice::configureService(initService,
-            moe::startupOptionsParsed,
-            defaultServiceStrings,
-            disallowedOptions,
-            argv);
+    disallowedOptions.push_back("upgrade");
+    ntservice::configureService(
+        initService, moe::startupOptionsParsed, defaultServiceStrings, disallowedOptions, argv);
 #endif
 }
 
@@ -314,11 +303,10 @@ static int _main() {
     startSignalProcessingThread();
 
     // we either have a setting where all processes are in localhost or none are
-    std::vector<HostAndPort> configServers =
-            mongosGlobalParams.configdbs.getServers();
+    std::vector<HostAndPort> configServers = mongosGlobalParams.configdbs.getServers();
     for (std::vector<HostAndPort>::const_iterator it = configServers.begin();
-            it != configServers.end(); ++it) {
-
+         it != configServers.end();
+         ++it) {
         const HostAndPort& configAddr = *it;
 
         if (it == configServers.begin()) {
@@ -327,7 +315,7 @@ static int _main() {
 
         if (configAddr.isLocalHost() != grid.allowLocalHost()) {
             mongo::log(LogComponent::kDefault)
-                    << "cannot mix localhost and ip addresses in configdbs";
+                << "cannot mix localhost and ip addresses in configdbs";
             return 10;
         }
     }
@@ -342,7 +330,8 @@ static int _main() {
 
     ExitCode exitCode = runMongosServer(mongosGlobalParams.upgrade);
 
-    // To maintain backwards compatibility, we exit with EXIT_NET_ERROR if the listener loop returns.
+    // To maintain backwards compatibility, we exit with EXIT_NET_ERROR if the listener loop
+    // returns.
     if (exitCode == EXIT_NET_ERROR) {
         dbexit(EXIT_NET_ERROR);
     }
@@ -352,16 +341,16 @@ static int _main() {
 
 #if defined(_WIN32)
 namespace mongo {
-    static ExitCode initService() {
-        ntservice::reportStatus( SERVICE_RUNNING );
-        log() << "Service running";
+static ExitCode initService() {
+    ntservice::reportStatus(SERVICE_RUNNING);
+    log() << "Service running";
 
-        ExitCode exitCode = runMongosServer(mongosGlobalParams.upgrade);
+    ExitCode exitCode = runMongosServer(mongosGlobalParams.upgrade);
 
-        // ignore EXIT_NET_ERROR on clean shutdown since we return this when the listening socket
-        // is closed
-        return (exitCode == EXIT_NET_ERROR && inShutdown()) ? EXIT_CLEAN : exitCode;
-    }
+    // ignore EXIT_NET_ERROR on clean shutdown since we return this when the listening socket
+    // is closed
+    return (exitCode == EXIT_NET_ERROR && inShutdown()) ? EXIT_CLEAN : exitCode;
+}
 }  // namespace mongo
 #endif
 
@@ -382,48 +371,46 @@ MONGO_INITIALIZER(SetGlobalEnvironment)(InitializerContext* context) {
 
 #ifdef MONGO_CONFIG_SSL
 MONGO_INITIALIZER_GENERAL(setSSLManagerType,
-MONGO_NO_PREREQUISITES,
-("SSLManager"))(InitializerContext* context) {
+                          MONGO_NO_PREREQUISITES,
+                          ("SSLManager"))(InitializerContext* context) {
     isSSLServer = true;
     return Status::OK();
 }
 #endif
-}
-  // namespace
+}  // namespace
 
 int mongoSMain(int argc, char* argv[], char** envp) {
-static StaticObserver staticObserver;
-if (argc < 1)
-    return EXIT_FAILURE;
+    static StaticObserver staticObserver;
+    if (argc < 1)
+        return EXIT_FAILURE;
 
-setupSignalHandlers(false);
+    setupSignalHandlers(false);
 
-Status status = mongo::runGlobalInitializers(argc, argv, envp);
-if (!status.isOK()) {
-    severe(LogComponent::kDefault) << "Failed global initialization: "
-            << status;
-    quickExit(EXIT_FAILURE);
-}
+    Status status = mongo::runGlobalInitializers(argc, argv, envp);
+    if (!status.isOK()) {
+        severe(LogComponent::kDefault) << "Failed global initialization: " << status;
+        quickExit(EXIT_FAILURE);
+    }
 
-startupConfigActions(std::vector<std::string>(argv, argv + argc));
-cmdline_utils::censorArgvArray(argc, argv);
+    startupConfigActions(std::vector<std::string>(argv, argv + argc));
+    cmdline_utils::censorArgvArray(argc, argv);
 
-mongo::logCommonStartupWarnings();
+    mongo::logCommonStartupWarnings();
 
-try {
-    int exitCode = _main();
-    return exitCode;
-} catch (const SocketException& e) {
-    error() << "uncaught SocketException in mongos main: " << e.toString();
-} catch (const DBException& e) {
-    error() << "uncaught DBException in mongos main: " << e.toString();
-} catch (const std::exception& e) {
-    error() << "uncaught std::exception in mongos main:" << e.what();
-} catch (...) {
-    error() << "uncaught unknown exception in mongos main";
-}
+    try {
+        int exitCode = _main();
+        return exitCode;
+    } catch (const SocketException& e) {
+        error() << "uncaught SocketException in mongos main: " << e.toString();
+    } catch (const DBException& e) {
+        error() << "uncaught DBException in mongos main: " << e.toString();
+    } catch (const std::exception& e) {
+        error() << "uncaught std::exception in mongos main:" << e.what();
+    } catch (...) {
+        error() << "uncaught unknown exception in mongos main";
+    }
 
-return 20;
+    return 20;
 }
 
 #if defined(_WIN32)
@@ -433,42 +420,42 @@ return 20;
 // and makes them available through the argv() and envp() members.  This enables mongoSMain()
 // to process UTF-8 encoded arguments and environment variables without regard to platform.
 int wmain(int argc, wchar_t* argvW[], wchar_t* envpW[]) {
-WindowsCommandLine wcl(argc, argvW, envpW);
-int exitCode = mongoSMain(argc, wcl.argv(), wcl.envp());
-quickExit(exitCode);
+    WindowsCommandLine wcl(argc, argvW, envpW);
+    int exitCode = mongoSMain(argc, wcl.argv(), wcl.envp());
+    quickExit(exitCode);
 }
 #else
 int main(int argc, char* argv[], char** envp) {
-int exitCode = mongoSMain(argc, argv, envp);
-quickExit(exitCode);
+    int exitCode = mongoSMain(argc, argv, envp);
+    quickExit(exitCode);
 }
 #endif
 
 void mongo::signalShutdown() {
-// Notify all threads shutdown has started
-dbexitCalled = true;
+    // Notify all threads shutdown has started
+    dbexitCalled = true;
 }
 
 void mongo::exitCleanly(ExitCode code) {
-// TODO: do we need to add anything?
-grid.catalogManager()->shutDown();
-mongo::dbexit(code);
+    // TODO: do we need to add anything?
+    grid.catalogManager()->shutDown();
+    mongo::dbexit(code);
 }
 
-void mongo::dbexit(ExitCode rc, const char *why) {
-dbexitCalled = true;
-audit::logShutdown(ClientBasic::getCurrent());
+void mongo::dbexit(ExitCode rc, const char* why) {
+    dbexitCalled = true;
+    audit::logShutdown(ClientBasic::getCurrent());
 
 #if defined(_WIN32)
-// Windows Service Controller wants to be told when we are done shutting down
-// and call quickExit itself.
-//
-if (rc == EXIT_WINDOWS_SERVICE_STOP) {
-    log() << "dbexit: exiting because Windows service was stopped";
-    return;
-}
+    // Windows Service Controller wants to be told when we are done shutting down
+    // and call quickExit itself.
+    //
+    if (rc == EXIT_WINDOWS_SERVICE_STOP) {
+        log() << "dbexit: exiting because Windows service was stopped";
+        return;
+    }
 #endif
 
-log() << "dbexit: " << why << " rc:" << rc;
-quickExit(rc);
+    log() << "dbexit: " << why << " rc:" << rc;
+    quickExit(rc);
 }

@@ -41,19 +41,19 @@ class MessagingPort;
 class PiggyBackData;
 
 class AbstractMessagingPort {
-MONGO_DISALLOW_COPYING(AbstractMessagingPort);
+    MONGO_DISALLOW_COPYING(AbstractMessagingPort);
+
 public:
-    AbstractMessagingPort() :
-            tag(0), _connectionId(0) {
-    }
-    virtual ~AbstractMessagingPort() {
-    }
-    virtual void reply(Message& received, Message& response,
-            MSGID responseTo) = 0; // like the reply below, but doesn't rely on received.data still being available
+    AbstractMessagingPort() : tag(0), _connectionId(0) {}
+    virtual ~AbstractMessagingPort() {}
+    // like the reply below, but doesn't rely on received.data still being available
+    virtual void reply(Message& received, Message& response, MSGID responseTo) = 0;
     virtual void reply(Message& received, Message& response) = 0;
 
     virtual HostAndPort remote() const = 0;
-    virtual std::string localAddrString() const = 0;
+    virtual unsigned remotePort() const = 0;
+    virtual SockAddr remoteAddr() const = 0;
+    virtual SockAddr localAddr() const = 0;
 
     void setX509SubjectName(const std::string& x509SubjectName) {
         _x509SubjectName = x509SubjectName;
@@ -79,15 +79,14 @@ private:
     std::string _x509SubjectName;
 };
 
-class MessagingPort: public AbstractMessagingPort {
+class MessagingPort : public AbstractMessagingPort {
 public:
     MessagingPort(int fd, const SockAddr& remote);
 
     // in some cases the timeout will actually be 2x this value - eg we do a partial send,
     // then the timeout fires, then we try to send again, then the timeout fires again with
     // no data sent, then we detect that the other side is down
-    MessagingPort(double so_timeout = 0, logger::LogSeverity logLevel =
-            logger::LogSeverity::Log());
+    MessagingPort(double so_timeout = 0, logger::LogSeverity logLevel = logger::LogSeverity::Log());
 
     MessagingPort(std::shared_ptr<Socket> socket);
 
@@ -98,12 +97,12 @@ public:
     void shutdown();
 
     /* it's assumed if you reuse a message object, that it doesn't cross MessagingPort's.
-     also, the Message data will go out of scope on the subsequent recv call.
-     */
+       also, the Message data will go out of scope on the subsequent recv call.
+    */
     bool recv(Message& m);
     void reply(Message& received, Message& response, MSGID responseTo);
-    void reply(Message& received, Message& response);bool call(Message& toSend,
-            Message& response);
+    void reply(Message& received, Message& response);
+    bool call(Message& toSend, Message& response);
 
     void say(Message& toSend, int responseTo = 0);
 
@@ -120,16 +119,19 @@ public:
 
     void piggyBack(Message& toSend, int responseTo = 0);
 
+    unsigned remotePort() const {
+        return psock->remotePort();
+    }
     virtual HostAndPort remote() const;
-    virtual std::string localAddrString() const;
+    virtual SockAddr remoteAddr() const;
+    virtual SockAddr localAddr() const;
 
     std::shared_ptr<Socket> psock;
 
-    void send(const char * data, int len, const char *context) {
+    void send(const char* data, int len, const char* context) {
         psock->send(data, len, context);
     }
-    void send(const std::vector<std::pair<char *, int> > &data,
-            const char *context) {
+    void send(const std::vector<std::pair<char*, int>>& data, const char* context) {
         psock->send(data, context);
     }
     bool connect(SockAddr& farEnd) {
@@ -143,8 +145,8 @@ public:
      * ssl - Pointer to the global SSLManager.
      * remoteHost - The hostname of the remote server.
      */
-    bool secure( SSLManagerInterface* ssl, const std::string& remoteHost ) {
-        return psock->secure( ssl, remoteHost );
+    bool secure(SSLManagerInterface* ssl, const std::string& remoteHost) {
+        return psock->secure(ssl, remoteHost);
     }
 #endif
 
@@ -157,8 +159,7 @@ public:
     }
 
 private:
-
-    PiggyBackData * piggyBackData;
+    PiggyBackData* piggyBackData;
 
     // this is the parsed version of remote
     // mutable because its initialized only on call to remote()
@@ -170,4 +171,5 @@ public:
     friend class PiggyBackData;
 };
 
-} // namespace mongo
+
+}  // namespace mongo

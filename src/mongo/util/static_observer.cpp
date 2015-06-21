@@ -28,10 +28,10 @@
 
 #include "mongo/platform/basic.h"
 
-#include "mongo/util/concurrency/mutex.h"
+#include "mongo/util/static_observer.h"
 
 namespace mongo {
 
-    bool StaticObserver::_destroyingStatics = false;
+bool StaticObserver::_destroyingStatics = false;
 
-} // namespace mongo
+}  // namespace mongo

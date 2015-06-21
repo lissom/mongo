@@ -51,10 +51,11 @@ DBClientBase* createDirectClient(OperationContext* txn) {
 namespace {
 
 class DirectClientScope {
-MONGO_DISALLOW_COPYING(DirectClientScope);
+    MONGO_DISALLOW_COPYING(DirectClientScope);
+
 public:
-    explicit DirectClientScope(OperationContext* txn) :
-            _txn(txn), _prev(_txn->getClient()->isInDirectClient()) {
+    explicit DirectClientScope(OperationContext* txn)
+        : _txn(txn), _prev(_txn->getClient()->isInDirectClient()) {
         _txn->getClient()->setInDirectClient(true);
     }
 
@@ -69,9 +70,8 @@ private:
 
 }  // namespace
 
-DBDirectClient::DBDirectClient(OperationContext* txn) :
-        _txn(txn) {
-}
+
+DBDirectClient::DBDirectClient(OperationContext* txn) : _txn(txn) {}
 
 bool DBDirectClient::isFailed() const {
     return false;
@@ -86,7 +86,7 @@ std::string DBDirectClient::toString() const {
 }
 
 std::string DBDirectClient::getServerAddress() const {
-    return "localhost"; // TODO: should this have the port?
+    return "localhost";  // TODO: should this have the port?
 }
 
 void DBDirectClient::sayPiggyBack(Message& toSend) {
@@ -116,12 +116,10 @@ void DBDirectClient::setOpCtx(OperationContext* txn) {
 
 QueryOptions DBDirectClient::_lookupAvailableOptions() {
     // Exhaust mode is not available in DBDirectClient.
-    return QueryOptions(
-            DBClientBase::_lookupAvailableOptions() & ~QueryOption_Exhaust);
+    return QueryOptions(DBClientBase::_lookupAvailableOptions() & ~QueryOption_Exhaust);
 }
 
-bool DBDirectClient::call(Message& toSend, Message& response,
-bool assertOk, string* actualServer) {
+bool DBDirectClient::call(Message& toSend, Message& response, bool assertOk, string* actualServer) {
     DirectClientScope directClientScope(_txn);
     LastError::get(_txn->getClient()).startRequest();
 
@@ -132,7 +130,7 @@ bool assertOk, string* actualServer) {
 
     // can get rid of this if we make response handling smarter
     dbResponse.response->concat();
-    response = std::move(*dbResponse.response);
+    response = *dbResponse.response;
 
     return true;
 }
@@ -146,12 +144,15 @@ void DBDirectClient::say(Message& toSend, bool isRetry, string* actualServer) {
     assembleResponse(_txn, toSend, dbResponse, dummyHost);
 }
 
-unique_ptr<DBClientCursor> DBDirectClient::query(const string& ns, Query query,
-        int nToReturn, int nToSkip, const BSONObj* fieldsToReturn,
-        int queryOptions, int batchSize) {
-
-    return DBClientBase::query(ns, query, nToReturn, nToSkip, fieldsToReturn,
-            queryOptions, batchSize);
+unique_ptr<DBClientCursor> DBDirectClient::query(const string& ns,
+                                                 Query query,
+                                                 int nToReturn,
+                                                 int nToSkip,
+                                                 const BSONObj* fieldsToReturn,
+                                                 int queryOptions,
+                                                 int batchSize) {
+    return DBClientBase::query(
+        ns, query, nToReturn, nToSkip, fieldsToReturn, queryOptions, batchSize);
 }
 
 void DBDirectClient::killCursor(long long id) {
@@ -162,8 +163,8 @@ void DBDirectClient::killCursor(long long id) {
 
 const HostAndPort DBDirectClient::dummyHost("0.0.0.0", 0);
 
-unsigned long long DBDirectClient::count(const string& ns, const BSONObj& query,
-        int options, int limit, int skip) {
+unsigned long long DBDirectClient::count(
+    const string& ns, const BSONObj& query, int options, int limit, int skip) {
     BSONObj cmdObj = _countCmd(ns, query, options, limit, skip);
 
     NamespaceString nsString(ns);
@@ -174,12 +175,10 @@ unsigned long long DBDirectClient::count(const string& ns, const BSONObj& query,
 
     std::string errmsg;
     BSONObjBuilder result;
-    bool runRetval = countCmd->run(_txn, dbname, cmdObj, options, errmsg,
-            result);
+    bool runRetval = countCmd->run(_txn, dbname, cmdObj, options, errmsg, result);
     if (!runRetval) {
         Command::appendCommandStatus(result, runRetval, errmsg);
-        Status commandStatus = Command::getStatusFromCommandResult(
-                result.obj());
+        Status commandStatus = Command::getStatusFromCommandResult(result.obj());
         invariant(!commandStatus.isOK());
         uassertStatusOK(commandStatus);
     }

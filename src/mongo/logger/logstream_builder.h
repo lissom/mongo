@@ -30,145 +30,150 @@
 #include <memory>
 #include <sstream>
 #include <string>
-#include <system_error>
 
+#include "mongo/base/function_signature_detection.h"
 #include "mongo/logger/labeled_level.h"
 #include "mongo/logger/log_component.h"
 #include "mongo/logger/log_severity.h"
 #include "mongo/logger/message_log_domain.h"
-
-#include "mongo/base/function_signature_detection.h"
 #include "mongo/stdx/chrono.h"
 #include "mongo/util/exit_code.h"
 
 namespace mongo {
 namespace logger {
 
-    class Tee;
+class Tee;
+
+/**
+ * Stream-ish object used to build and append log messages.
+ */
+class LogstreamBuilder {
+public:
+    static LogSeverity severityCast(int ll) {
+        return LogSeverity::cast(ll);
+    }
+    static LogSeverity severityCast(LogSeverity ls) {
+        return ls;
+    }
+    static LabeledLevel severityCast(const LabeledLevel& labeled) {
+        return labeled;
+    }
 
     /**
-     * Stream-ish object used to build and append log messages.
+     * Construct a LogstreamBuilder that writes to "domain" on destruction.
+     *
+     * "contextName" is a short name of the thread or other context.
+     * "severity" is the logging severity of the message.
      */
-    class LogstreamBuilder {
-    public:
-        static LogSeverity severityCast(int ll) { return LogSeverity::cast(ll); }
-        static LogSeverity severityCast(LogSeverity ls) { return ls; }
-        static LabeledLevel severityCast(const LabeledLevel &labeled) { return labeled; }
+    LogstreamBuilder(MessageLogDomain* domain, std::string contextName, LogSeverity severity);
 
-        /**
-         * Construct a LogstreamBuilder that writes to "domain" on destruction.
-         *
-         * "contextName" is a short name of the thread or other context.
-         * "severity" is the logging severity of the message.
-         */
-        LogstreamBuilder(MessageLogDomain* domain,
-                         std::string contextName,
-                         LogSeverity severity);
+    /**
+     * Construct a LogstreamBuilder that writes to "domain" on destruction.
+     *
+     * "contextName" is a short name of the thread or other context.
+     * "severity" is the logging severity of the message.
+     * "component" is the primary log component of the message.
+     */
+    LogstreamBuilder(MessageLogDomain* domain,
+                     std::string contextName,
+                     LogSeverity severity,
+                     LogComponent component);
 
-        /**
-         * Construct a LogstreamBuilder that writes to "domain" on destruction.
-         *
-         * "contextName" is a short name of the thread or other context.
-         * "severity" is the logging severity of the message.
-         * "component" is the primary log component of the message.
-         */
-        LogstreamBuilder(MessageLogDomain* domain,
-                         std::string contextName,
-                         LogSeverity severity,
-                         LogComponent component);
+    /**
+     * Deprecated.
+     */
+    LogstreamBuilder(MessageLogDomain* domain,
+                     const std::string& contextName,
+                     LabeledLevel labeledLevel);
 
-        /**
-         * Deprecated.
-         */
-        LogstreamBuilder(MessageLogDomain* domain,
-                         const std::string& contextName,
-                         LabeledLevel labeledLevel);
+    /**
+     * Move constructor.
+     *
+     * TODO: Replace with = default implementation when minimum MSVC version is bumped to
+     * MSVC2015.
+     */
+    LogstreamBuilder(LogstreamBuilder&& other);
 
-        /**
-         * Move constructor.
-         *
-         * TODO: Replace with = default implementation when minimum MSVC version is bumped to
-         * MSVC2015.
-         */
-        LogstreamBuilder(LogstreamBuilder&& other);
+    /**
+     * Move assignment operator.
+     *
+     * TODO: Replace with =default implementation when minimum MSVC version is bumped to VS2015.
+     */
+    LogstreamBuilder& operator=(LogstreamBuilder&& other);
 
-        /**
-         * Move assignment operator.
-         *
-         * TODO: Replace with =default implementation when minimum MSVC version is bumped to VS2015.
-         */
-        LogstreamBuilder& operator=(LogstreamBuilder&& other);
-
-        /**
-         * Destroys a LogstreamBuilder().  If anything was written to it via stream() or operator<<,
-         * constructs a MessageLogDomain::Event and appends it to the associated domain.
-         */
-        ~LogstreamBuilder();
+    /**
+     * Destroys a LogstreamBuilder().  If anything was written to it via stream() or operator<<,
+     * constructs a MessageLogDomain::Event and appends it to the associated domain.
+     */
+    ~LogstreamBuilder();
 
 
-        /**
-         * Sets an optional prefix for the message.
-         */
-        LogstreamBuilder& setBaseMessage(const std::string& baseMessage) {
-            _baseMessage = baseMessage;
-            return *this;
+    /**
+     * Sets an optional prefix for the message.
+     */
+    LogstreamBuilder& setBaseMessage(const std::string& baseMessage) {
+        _baseMessage = baseMessage;
+        return *this;
+    }
+
+    std::ostream& stream() {
+        if (!_os)
+            makeStream();
+        return *_os;
+    }
+
+    OBJECT_HAS_FUNCTION(HasToStringFunc, toString);
+
+    template<typename T, bool hasToString>
+    struct SendToStream { };
+
+    template<typename T>
+    struct SendToStream<T, false> {
+        static void print(std::ostream& stream, const T* t) {
+            stream << *t;
         }
-
-        std::ostream& stream() { if (!_os) makeStream(); return *_os; }
-
-        OBJECT_HAS_FUNCTION(HasToStringFunc, toString);
-
-        template<typename T, bool hasToString>
-        struct SendToStream { };
-
-        template<typename T>
-        struct SendToStream<T, false> {
-            static void print(std::ostream& stream, const T& t) {
-                stream << t;
-            }
-        };
-
-        template<typename T>
-        struct SendToStream<T, true> {
-        static void print(std::ostream& stream, const T& t) {
-                stream << t.toString();
-            }
-        };
-
-        template <typename T>
-        LogstreamBuilder& operator<<(const T& x) {
-            SendToStream<T, HasToStringFunc<T>::value>::print(stream(), x);
-            return *this;
-        }
-
-        LogstreamBuilder& operator<< (std::ostream& ( *manip )(std::ostream&)) {
-            stream() << manip;
-            return *this;
-        }
-        LogstreamBuilder& operator<< (std::ios_base& (*manip)(std::ios_base&)) {
-            stream() << manip;
-            return *this;
-        }
-
-        /**
-         * In addition to appending the message to _domain, write it to the given tee.  May only
-         * be called once per instance of LogstreamBuilder.
-         */
-        void operator<<(Tee* tee);
-
-    private:
-
-        void makeStream();
-
-        MessageLogDomain* _domain;
-        std::string _contextName;
-        LogSeverity _severity;
-        LogComponent _component;
-        std::string _baseMessage;
-        std::unique_ptr<std::ostringstream> _os;
-        Tee* _tee;
-
     };
+
+    template<typename T>
+    struct SendToStream<T, true> {
+        static void print(std::ostream& stream, const T* t) {
+            stream << t->toString();
+        }
+    };
+
+     template <typename T>
+     LogstreamBuilder& operator<<(const T& x) {
+        SendToStream<T, HasToStringFunc<T>::value>::print(stream(), &x);
+        return *this;
+    }
+
+
+    LogstreamBuilder& operator<<(std::ostream& (*manip)(std::ostream&)) {
+        stream() << manip;
+        return *this;
+    }
+    LogstreamBuilder& operator<<(std::ios_base& (*manip)(std::ios_base&)) {
+        stream() << manip;
+        return *this;
+    }
+
+    /**
+     * In addition to appending the message to _domain, write it to the given tee.  May only
+     * be called once per instance of LogstreamBuilder.
+     */
+    void operator<<(Tee* tee);
+
+private:
+    void makeStream();
+
+    MessageLogDomain* _domain;
+    std::string _contextName;
+    LogSeverity _severity;
+    LogComponent _component;
+    std::string _baseMessage;
+    std::unique_ptr<std::ostringstream> _os;
+    Tee* _tee;
+};
 
 
 }  // namespace logger

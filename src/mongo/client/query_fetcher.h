@@ -37,49 +37,65 @@
 
 namespace mongo {
 
-    struct HostAndPort;
-    class NamespaceString;
-    class BSONObj;
-    class BSONObjBuilder;
+struct HostAndPort;
+class NamespaceString;
+class BSONObj;
+class BSONObjBuilder;
+
+/**
+ * Follows the fetcher pattern for a find+getmore.
+ * QueryFetcher will continue to call getmore until an error or
+ * until the last batch of results.
+ */
+class QueryFetcher {
+    MONGO_DISALLOW_COPYING(QueryFetcher);
+
+public:
+    using CallbackFn =
+        stdx::function<void(const Fetcher::QueryResponseStatus&, Fetcher::NextAction*)>;
+
+    QueryFetcher(executor::TaskExecutor* exec,
+                 const HostAndPort& source,
+                 const NamespaceString& nss,
+                 const BSONObj& cmdBSON,
+                 const QueryFetcher::CallbackFn& onBatchAvailable);
+    virtual ~QueryFetcher() = default;
+
+    bool isActive() const {
+        return _fetcher.isActive();
+    }
+    Status schedule() {
+        return _fetcher.schedule();
+    }
+    void cancel() {
+        return _fetcher.cancel();
+    }
+    void wait() {
+        if (_fetcher.isActive())
+            _fetcher.wait();
+    }
+    std::string getDiagnosticString() const;
+
+protected:
+    int _getResponses() const;
+    void _onFetchCallback(const Fetcher::QueryResponseStatus& fetchResult,
+                          Fetcher::NextAction* nextAction,
+                          BSONObjBuilder* getMoreBob);
 
     /**
-     * Follows the fetcher pattern for a find+getmore.
-     * QueryFetcher will continue to call getmore until an error or
-     * until the last batch of results.
+     * Called by _delegateCallback() to forward query results to '_work'.
      */
-    class QueryFetcher {
-        MONGO_DISALLOW_COPYING(QueryFetcher);
-    public:
-        using BatchDataStatus = StatusWith<Fetcher::BatchData>;
-        using CallbackFn = stdx::function<void (const BatchDataStatus&, Fetcher::NextAction*)>;
+    void _onQueryResponse(const Fetcher::QueryResponseStatus& fetchResult,
+                          Fetcher::NextAction* nextAction);
 
-        QueryFetcher(executor::TaskExecutor* exec,
-                     const HostAndPort& source,
-                     const NamespaceString& nss,
-                     const BSONObj& cmdBSON,
-                     const QueryFetcher::CallbackFn& onBatchAvailable);
-        virtual ~QueryFetcher() = default;
+    virtual void _delegateCallback(const Fetcher::QueryResponseStatus& fetchResult,
+                                   Fetcher::NextAction* nextAction);
 
-        bool isActive() const { return _fetcher.isActive(); }
-        Status schedule() { return _fetcher.schedule(); }
-        void cancel() { return _fetcher.cancel(); }
-        void wait() { if (_fetcher.isActive()) _fetcher.wait(); }
-        std::string toString() const;
+private:
+    executor::TaskExecutor* _exec;
+    Fetcher _fetcher;
+    int _responses;
+    const QueryFetcher::CallbackFn _work;
+};
 
-    protected:
-        void _onFetchCallback(const BatchDataStatus& fetchResult,
-                              Fetcher::NextAction* nextAction,
-                              BSONObjBuilder* getMoreBob);
-
-        virtual void _delegateCallback(const BatchDataStatus& fetchResult,
-                                       Fetcher::NextAction* nextAction) {
-            _work(fetchResult, nextAction);
-        };
-
-        executor::TaskExecutor* _exec;
-        Fetcher _fetcher;
-        int _responses;
-        const QueryFetcher::CallbackFn _work;
-    };
-
-} // namespace mongo
+}  // namespace mongo
