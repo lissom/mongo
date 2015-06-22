@@ -341,12 +341,12 @@ HostAndPort MessagingPort::remote() const {
     return _remoteParsed;
 }
 
-SockAddr MessagingPort::remoteAddr() const {
-    return psock->remoteAddr();
+std::string MessagingPort::remoteAddrString() const {
+    return psock->remoteAddr().toString();
 }
 
-SockAddr MessagingPort::localAddr() const {
-    return psock->localAddr();
+std::string MessagingPort::localAddrString() const {
+    return psock->localAddr().toString();
 }
 
 }  // namespace mongo

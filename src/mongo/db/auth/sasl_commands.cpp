@@ -183,10 +183,10 @@ Status doSaslStep(const ClientBasic* client,
     status = session->step(payload, &responsePayload);
 
     if (!status.isOK()) {
-        const SockAddr clientAddr = client->port()->localAddr();
         log() << session->getMechanism() << " authentication failed for "
               << session->getPrincipalId() << " on " << session->getAuthenticationDatabase()
-              << " from client " << clientAddr.getAddr() << " ; " << status.toString() << std::endl;
+              << " from client " << client->port()->localAddrString()
+              << " ; " << status.toString() << std::endl;
         // All the client needs to know is that authentication has failed.
         return Status(ErrorCodes::AuthenticationFailed, "Authentication failed.");
     }

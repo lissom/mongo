@@ -170,7 +170,7 @@ public:
         return ss.str();
     }
 
-    std::string remoteAddrString() {
+    std::string remoteAddrString() const final {
         std::stringstream ss;
         ss << _socket.remote_endpoint();
         return ss.str();

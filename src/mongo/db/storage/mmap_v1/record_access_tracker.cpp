@@ -278,7 +278,7 @@ PointerTable::Data* PointerTable::getData() {
 #elif defined(MONGO_CONFIG_HAVE___DECLSPEC_THREAD)
 __declspec(thread) PointerTable::Data _pointerTableData;
 PointerTable::Data* PointerTable::getData() {
-    return &_pointerTableData;
+    return &_pointerTableData;TSP
 }
 #else
 TSP_DEFINE(PointerTable::Data, _pointerTableData);

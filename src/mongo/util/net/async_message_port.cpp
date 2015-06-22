@@ -108,7 +108,6 @@ void AsyncClientConnection::SendStart(Message& toSend, MSGID responseTo) {
     size_t size(toSend.header().getLen());
     _buf.resize(size);
     //mongoS should only need single view
-    fassert(-1, toSend.isSingleData() == true);
     memcpy(_buf.data(), toSend.singleData().data(), size);
     asyncSendMessage();
     //Now that we've copied the buffer, we can release the runner

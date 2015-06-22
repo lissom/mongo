@@ -165,4 +165,9 @@ private:
 Client& cc();
 
 bool haveClient();
-};
+
+namespace persist {
+ServiceContext::UniqueClient releaseClient();
+void setClient(ServiceContext::UniqueClient client);
+}
+}

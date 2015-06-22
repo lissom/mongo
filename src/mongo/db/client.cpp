@@ -149,4 +149,13 @@ bool haveClient() {
     return currentClient.getMake()->get();
 }
 
+namespace persist {
+ServiceContext::UniqueClient releaseClient() {
+    return std::move(*currentClient.get());
+}
+
+void setClient(ServiceContext::UniqueClient client) {
+    *currentClient.getMake() = std::move(client);
+}
+}
 }  // namespace mongo
