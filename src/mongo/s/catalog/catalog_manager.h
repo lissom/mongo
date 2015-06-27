@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <boost/optional.hpp>
 #include <set>
 #include <string>
 #include <vector>
@@ -49,7 +50,6 @@ class ConnectionString;
 class DatabaseType;
 class DistLockManager;
 class OperationContext;
-class Query;
 class SettingsType;
 class ShardKeyPattern;
 class ShardType;
@@ -174,7 +174,7 @@ public:
     /**
      * Updates or creates the metadata for a given database.
      */
-    virtual Status updateDatabase(const std::string& dbName, const DatabaseType& db) = 0;
+    virtual Status updateDatabase(const std::string& dbName, const DatabaseType& db);
 
     /**
      * Retrieves the metadata for a given database, if it exists.
@@ -190,7 +190,7 @@ public:
     /**
      * Updates or creates the metadata for a given collection.
      */
-    virtual Status updateCollection(const std::string& collNs, const CollectionType& coll) = 0;
+    virtual Status updateCollection(const std::string& collNs, const CollectionType& coll);
 
     /**
      * Retrieves the metadata for a given collection, if it exists.
@@ -235,13 +235,17 @@ public:
     /**
      * Gets the requested number of chunks (of type ChunkType) that satisfy a query.
      *
-     * @param query The query to filter out the results.
-     * @param nToReturn The number of chunk entries to return. 0 means all.
+     * @param filter The query to filter out the results.
+     * @param sort Fields to use for sorting the results. Pass empty BSON object for no sort.
+     * @param limit The number of chunk entries to return. Pass boost::none for no limit.
      * @param chunks Vector entry to receive the results
      *
      * Returns a !OK status if an error occurs.
      */
-    virtual Status getChunks(const Query& query, int nToReturn, std::vector<ChunkType>* chunks) = 0;
+    virtual Status getChunks(const BSONObj& filter,
+                             const BSONObj& sort,
+                             boost::optional<int> limit,
+                             std::vector<ChunkType>* chunks) = 0;
 
     /**
      * Retrieves all tags for the specified collection.
@@ -301,6 +305,8 @@ public:
     /**
      * Logs to the actionlog.
      * Used by the balancer to report the result of a balancing round.
+     *
+     * NOTE: This method is best effort so it should never throw.
      */
     virtual void logAction(const ActionLogType& actionLog) = 0;
 
@@ -343,7 +349,14 @@ public:
     virtual void writeConfigServerDirect(const BatchedCommandRequest& request,
                                          BatchedCommandResponse* response) = 0;
 
-    virtual DistLockManager* getDistLockManager() = 0;
+    /**
+     * Obtains a reference to the distributed lock manager instance to use for synchronizing
+     * system-wide changes.
+     *
+     * The returned reference is valid only as long as the catalog manager is valid and should not
+     * be cached.
+     */
+    virtual DistLockManager* getDistLockManager() const = 0;
 
     /**
      * Directly inserts a document in the specified namespace on the config server (only the

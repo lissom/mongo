@@ -33,7 +33,6 @@
 #include <chrono>
 #include <future>
 
-#include "mongo/client/dbclientinterface.h"
 #include "mongo/client/remote_command_targeter_mock.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/query/lite_parsed_query.h"
@@ -42,14 +41,17 @@
 #include "mongo/s/catalog/dist_lock_manager_mock.h"
 #include "mongo/s/catalog/replset/catalog_manager_replica_set.h"
 #include "mongo/s/catalog/replset/catalog_manager_replica_set_test_fixture.h"
+#include "mongo/s/catalog/type_actionlog.h"
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_collection.h"
 #include "mongo/s/catalog/type_database.h"
 #include "mongo/s/catalog/type_shard.h"
-#include "mongo/s/chunk_version.h"
 #include "mongo/s/catalog/type_settings.h"
+#include "mongo/s/catalog/type_tags.h"
+#include "mongo/s/chunk_version.h"
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/write_ops/batched_command_response.h"
+#include "mongo/s/write_ops/batched_insert_request.h"
 #include "mongo/s/write_ops/batched_update_request.h"
 #include "mongo/util/log.h"
 
@@ -91,6 +93,8 @@ TEST_F(CatalogManagerReplSetTestFixture, GetCollectionExisting) {
         // Ensure the query is correct
         ASSERT_EQ(query->ns(), CollectionType::ConfigNS);
         ASSERT_EQ(query->getFilter(), BSON(CollectionType::fullNs(expectedColl.getNs())));
+        ASSERT_EQ(query->getSort(), BSONObj());
+        ASSERT_EQ(query->getLimit().get(), 1);
 
         return vector<BSONObj>{expectedColl.toBSON()};
     });
@@ -140,6 +144,8 @@ TEST_F(CatalogManagerReplSetTestFixture, GetDatabaseExisting) {
 
         ASSERT_EQ(query->ns(), DatabaseType::ConfigNS);
         ASSERT_EQ(query->getFilter(), BSON(DatabaseType::name(expectedDb.getName())));
+        ASSERT_EQ(query->getSort(), BSONObj());
+        ASSERT_EQ(query->getLimit().get(), 1);
 
         return vector<BSONObj>{expectedDb.toBSON()};
     });
@@ -240,6 +246,29 @@ TEST_F(CatalogManagerReplSetTestFixture, UpdateCollectionNotMaster) {
             return response.toBSON();
         });
     }
+
+    // Now wait for the updateCollection call to return
+    future.wait_for(kFutureTimeout);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, UpdateCollectionNotMasterFromTargeter) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(Status(ErrorCodes::NotMaster, "not master"));
+
+    CollectionType collection;
+    collection.setNs(NamespaceString("db.coll"));
+    collection.setUpdatedAt(network()->now());
+    collection.setUnique(true);
+    collection.setEpoch(OID::gen());
+    collection.setKeyPattern(KeyPattern(BSON("_id" << 1)));
+
+    auto future = async(std::launch::async,
+                        [this, collection] {
+                            auto status = catalogManager()->updateCollection(
+                                collection.getNs().toString(), collection);
+                            ASSERT_EQUALS(ErrorCodes::NotMaster, status);
+                        });
 
     // Now wait for the updateCollection call to return
     future.wait_for(kFutureTimeout);
@@ -346,6 +375,8 @@ TEST_F(CatalogManagerReplSetTestFixture, GetAllShardsValid) {
 
         ASSERT_EQ(query->ns(), ShardType::ConfigNS);
         ASSERT_EQ(query->getFilter(), BSONObj());
+        ASSERT_EQ(query->getSort(), BSONObj());
+        ASSERT_FALSE(query->getLimit().is_initialized());
 
         return vector<BSONObj>{s1.toBSON(), s2.toBSON(), s3.toBSON()};
     });
@@ -368,20 +399,12 @@ TEST_F(CatalogManagerReplSetTestFixture, GetAllShardsWithInvalidShard) {
                             vector<ShardType> shards;
                             Status status = catalogManager()->getAllShards(&shards);
 
-                            ASSERT_NOT_OK(status);
+                            ASSERT_EQ(ErrorCodes::FailedToParse, status);
                             ASSERT_EQ(0U, shards.size());
                         });
 
     onFindCommand([](const RemoteCommandRequest& request) {
-        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
-        ASSERT_EQ(nss.toString(), ShardType::ConfigNS);
-
-        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
-
-        ASSERT_EQ(query->ns(), ShardType::ConfigNS);
-        ASSERT_EQ(query->getFilter(), BSONObj());
-
-        // valid ShardType
+        // Valid ShardType
         ShardType s1;
         s1.setName("shard0001");
         s1.setHost("ShardHost");
@@ -395,7 +418,7 @@ TEST_F(CatalogManagerReplSetTestFixture, GetAllShardsWithInvalidShard) {
     future.get();
 }
 
-TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNS) {
+TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNSWithSortAndLimit) {
     RemoteCommandTargeterMock* targeter =
         RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
     targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
@@ -420,7 +443,7 @@ TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNS) {
 
     ChunkVersion queryChunkVersion({1, 2, oid});
 
-    const Query chunksQuery(
+    const BSONObj chunksQuery(
         BSON(ChunkType::ns("TestDB.TestColl")
              << ChunkType::DEPRECATED_lastmod()
              << BSON("$gte" << static_cast<long long>(queryChunkVersion.toLong()))));
@@ -429,7 +452,8 @@ TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNS) {
                         [this, &chunksQuery] {
                             vector<ChunkType> chunks;
 
-                            ASSERT_OK(catalogManager()->getChunks(chunksQuery, 0, &chunks));
+                            ASSERT_OK(catalogManager()->getChunks(
+                                chunksQuery, BSON(ChunkType::version() << -1), 1, &chunks));
                             ASSERT_EQ(2U, chunks.size());
 
                             return chunks;
@@ -442,7 +466,9 @@ TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNS) {
         auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
 
         ASSERT_EQ(query->ns(), ChunkType::ConfigNS);
-        ASSERT_EQ(query->getFilter(), chunksQuery.getFilter());
+        ASSERT_EQ(query->getFilter(), chunksQuery);
+        ASSERT_EQ(query->getSort(), BSON(ChunkType::version() << -1));
+        ASSERT_EQ(query->getLimit().get(), 1);
 
         return vector<BSONObj>{chunkA.toBSON(), chunkB.toBSON()};
     });
@@ -452,25 +478,28 @@ TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNS) {
     ASSERT_EQ(chunkB.toBSON(), chunks[1].toBSON());
 }
 
-TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNSNoChunks) {
+TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNSNoSortNoLimit) {
     RemoteCommandTargeterMock* targeter =
         RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
     targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
 
     ChunkVersion queryChunkVersion({1, 2, OID::gen()});
 
-    const Query chunksQuery(
+    const BSONObj chunksQuery(
         BSON(ChunkType::ns("TestDB.TestColl")
              << ChunkType::DEPRECATED_lastmod()
              << BSON("$gte" << static_cast<long long>(queryChunkVersion.toLong()))));
 
-    auto future = async(std::launch::async,
-                        [this, &chunksQuery] {
-                            vector<ChunkType> chunks;
+    auto future = async(
+        std::launch::async,
+        [this, &chunksQuery] {
+            vector<ChunkType> chunks;
 
-                            ASSERT_OK(catalogManager()->getChunks(chunksQuery, 0, &chunks));
-                            ASSERT_EQ(0U, chunks.size());
-                        });
+            ASSERT_OK(catalogManager()->getChunks(chunksQuery, BSONObj(), boost::none, &chunks));
+            ASSERT_EQ(0U, chunks.size());
+
+            return chunks;
+        });
 
     onFindCommand([&chunksQuery](const RemoteCommandRequest& request) {
         const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
@@ -479,7 +508,9 @@ TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNSNoChunks) {
         auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
 
         ASSERT_EQ(query->ns(), ChunkType::ConfigNS);
-        ASSERT_EQ(query->getFilter(), chunksQuery.getFilter());
+        ASSERT_EQ(query->getFilter(), chunksQuery);
+        ASSERT_EQ(query->getSort(), BSONObj());
+        ASSERT_FALSE(query->getLimit().is_initialized());
 
         return vector<BSONObj>{};
     });
@@ -494,7 +525,7 @@ TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNSInvalidChunk) {
 
     ChunkVersion queryChunkVersion({1, 2, OID::gen()});
 
-    const Query chunksQuery(
+    const BSONObj chunksQuery(
         BSON(ChunkType::ns("TestDB.TestColl")
              << ChunkType::DEPRECATED_lastmod()
              << BSON("$gte" << static_cast<long long>(queryChunkVersion.toLong()))));
@@ -502,21 +533,14 @@ TEST_F(CatalogManagerReplSetTestFixture, GetChunksForNSInvalidChunk) {
     auto future = async(std::launch::async,
                         [this, &chunksQuery] {
                             vector<ChunkType> chunks;
-                            Status status = catalogManager()->getChunks(chunksQuery, 0, &chunks);
+                            Status status = catalogManager()->getChunks(
+                                chunksQuery, BSONObj(), boost::none, &chunks);
 
                             ASSERT_EQUALS(ErrorCodes::FailedToParse, status);
                             ASSERT_EQ(0U, chunks.size());
                         });
 
     onFindCommand([&chunksQuery](const RemoteCommandRequest& request) {
-        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
-        ASSERT_EQ(nss.toString(), ChunkType::ConfigNS);
-
-        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
-
-        ASSERT_EQ(query->ns(), ChunkType::ConfigNS);
-        ASSERT_EQ(query->getFilter(), chunksQuery.getFilter());
-
         ChunkType chunkA;
         chunkA.setName("chunk0000");
         chunkA.setNS("TestDB.TestColl");
@@ -878,6 +902,535 @@ TEST_F(CatalogManagerReplSetTestFixture, GetGlobalSettingsNonExistent) {
     });
 
     future.get();
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetCollectionsValidResultsNoDb) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    CollectionType coll1;
+    coll1.setNs(NamespaceString{"test.system.indexes"});
+    coll1.setUpdatedAt(network()->now());
+    coll1.setUnique(true);
+    coll1.setEpoch(OID::gen());
+    coll1.setKeyPattern(KeyPattern{BSON("_id" << 1)});
+    ASSERT_OK(coll1.validate());
+
+    CollectionType coll2;
+    coll2.setNs(NamespaceString{"test.coll1"});
+    coll2.setUpdatedAt(network()->now());
+    coll2.setUnique(false);
+    coll2.setEpoch(OID::gen());
+    coll2.setKeyPattern(KeyPattern{BSON("_id" << 1)});
+    ASSERT_OK(coll2.validate());
+
+    CollectionType coll3;
+    coll3.setNs(NamespaceString{"anotherdb.coll1"});
+    coll3.setUpdatedAt(network()->now());
+    coll3.setUnique(false);
+    coll3.setEpoch(OID::gen());
+    coll3.setKeyPattern(KeyPattern{BSON("_id" << 1)});
+    ASSERT_OK(coll3.validate());
+
+    auto future = async(std::launch::async,
+                        [this] {
+                            vector<CollectionType> collections;
+
+                            const auto status =
+                                catalogManager()->getCollections(nullptr, &collections);
+
+                            ASSERT_OK(status);
+                            return collections;
+                        });
+
+    onFindCommand([coll1, coll2, coll3](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(nss.toString(), CollectionType::ConfigNS);
+
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(query->ns(), CollectionType::ConfigNS);
+        ASSERT_EQ(query->getFilter(), BSONObj());
+        ASSERT_EQ(query->getSort(), BSONObj());
+
+        return vector<BSONObj>{coll1.toBSON(), coll2.toBSON(), coll3.toBSON()};
+    });
+
+    const auto& actualColls = future.get();
+    ASSERT_EQ(3U, actualColls.size());
+    ASSERT_EQ(coll1.toBSON(), actualColls[0].toBSON());
+    ASSERT_EQ(coll2.toBSON(), actualColls[1].toBSON());
+    ASSERT_EQ(coll3.toBSON(), actualColls[2].toBSON());
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetCollectionsValidResultsWithDb) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    CollectionType coll1;
+    coll1.setNs(NamespaceString{"test.system.indexes"});
+    coll1.setUpdatedAt(network()->now());
+    coll1.setUnique(true);
+    coll1.setEpoch(OID::gen());
+    coll1.setKeyPattern(KeyPattern{BSON("_id" << 1)});
+
+    CollectionType coll2;
+    coll2.setNs(NamespaceString{"test.coll1"});
+    coll2.setUpdatedAt(network()->now());
+    coll2.setUnique(false);
+    coll2.setEpoch(OID::gen());
+    coll2.setKeyPattern(KeyPattern{BSON("_id" << 1)});
+
+    auto future = async(std::launch::async,
+                        [this] {
+                            string dbName = "test";
+                            vector<CollectionType> collections;
+
+                            const auto status =
+                                catalogManager()->getCollections(&dbName, &collections);
+
+                            ASSERT_OK(status);
+                            return collections;
+                        });
+
+    onFindCommand([coll1, coll2](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(nss.toString(), CollectionType::ConfigNS);
+
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(query->ns(), CollectionType::ConfigNS);
+        {
+            BSONObjBuilder b;
+            b.appendRegex(CollectionType::fullNs(), "^test\\.");
+            ASSERT_EQ(query->getFilter(), b.obj());
+        }
+
+        return vector<BSONObj>{coll1.toBSON(), coll2.toBSON()};
+    });
+
+    const auto& actualColls = future.get();
+    ASSERT_EQ(2U, actualColls.size());
+    ASSERT_EQ(coll1.toBSON(), actualColls[0].toBSON());
+    ASSERT_EQ(coll2.toBSON(), actualColls[1].toBSON());
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetCollectionsInvalidCollectionType) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    auto future = async(std::launch::async,
+                        [this] {
+                            string dbName = "test";
+                            vector<CollectionType> collections;
+
+                            const auto status =
+                                catalogManager()->getCollections(&dbName, &collections);
+
+                            ASSERT_EQ(ErrorCodes::FailedToParse, status);
+                            ASSERT_EQ(0U, collections.size());
+                        });
+
+    CollectionType validColl;
+    validColl.setNs(NamespaceString{"test.system.indexes"});
+    validColl.setUpdatedAt(network()->now());
+    validColl.setUnique(true);
+    validColl.setEpoch(OID::gen());
+    validColl.setKeyPattern(KeyPattern{BSON("_id" << 1)});
+    ASSERT_OK(validColl.validate());
+
+    onFindCommand([validColl](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(nss.toString(), CollectionType::ConfigNS);
+
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(query->ns(), CollectionType::ConfigNS);
+        {
+            BSONObjBuilder b;
+            b.appendRegex(CollectionType::fullNs(), "^test\\.");
+            ASSERT_EQ(query->getFilter(), b.obj());
+        }
+
+        return vector<BSONObj>{
+            validColl.toBSON(),
+            BSONObj()  // empty document is invalid
+        };
+    });
+
+    future.get();
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetDatabasesForShardValid) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    DatabaseType dbt1;
+    dbt1.setName("db1");
+    dbt1.setPrimary("shard0000");
+
+    DatabaseType dbt2;
+    dbt2.setName("db2");
+    dbt2.setPrimary("shard0000");
+
+    auto future = async(std::launch::async,
+                        [this] {
+                            vector<string> dbs;
+                            const auto status =
+                                catalogManager()->getDatabasesForShard("shard0000", &dbs);
+
+                            ASSERT_OK(status);
+                            return dbs;
+                        });
+
+    onFindCommand([dbt1, dbt2](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(nss.toString(), DatabaseType::ConfigNS);
+
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(query->ns(), DatabaseType::ConfigNS);
+        ASSERT_EQ(query->getFilter(), BSON(DatabaseType::primary(dbt1.getPrimary())));
+        ASSERT_EQ(query->getSort(), BSONObj());
+
+        return vector<BSONObj>{dbt1.toBSON(), dbt2.toBSON()};
+    });
+
+    const auto& actualDbNames = future.get();
+    ASSERT_EQ(2U, actualDbNames.size());
+    ASSERT_EQ(dbt1.getName(), actualDbNames[0]);
+    ASSERT_EQ(dbt2.getName(), actualDbNames[1]);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetDatabasesForShardInvalidDoc) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    auto future = async(std::launch::async,
+                        [this] {
+                            vector<string> dbs;
+                            const auto status =
+                                catalogManager()->getDatabasesForShard("shard0000", &dbs);
+
+                            ASSERT_EQ(ErrorCodes::TypeMismatch, status);
+                            ASSERT_EQ(0U, dbs.size());
+                        });
+
+    onFindCommand([](const RemoteCommandRequest& request) {
+        DatabaseType dbt1;
+        dbt1.setName("db1");
+        dbt1.setPrimary("shard0000");
+
+        return vector<BSONObj>{
+            dbt1.toBSON(),
+            BSON(DatabaseType::name() << 0)  // DatabaseType::name() should be a string
+        };
+    });
+
+    future.get();
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetTagsForCollection) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    TagsType tagA;
+    tagA.setNS("TestDB.TestColl");
+    tagA.setTag("TagA");
+    tagA.setMinKey(BSON("a" << 100));
+    tagA.setMaxKey(BSON("a" << 200));
+
+    TagsType tagB;
+    tagB.setNS("TestDB.TestColl");
+    tagB.setTag("TagB");
+    tagB.setMinKey(BSON("a" << 200));
+    tagB.setMaxKey(BSON("a" << 300));
+
+    auto future =
+        async(std::launch::async,
+              [this] {
+                  vector<TagsType> tags;
+
+                  ASSERT_OK(catalogManager()->getTagsForCollection("TestDB.TestColl", &tags));
+                  ASSERT_EQ(2U, tags.size());
+
+                  return tags;
+              });
+
+    onFindCommand([tagA, tagB](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(nss.toString(), TagsType::ConfigNS);
+
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(query->ns(), TagsType::ConfigNS);
+        ASSERT_EQ(query->getFilter(), BSON(TagsType::ns("TestDB.TestColl")));
+        ASSERT_EQ(query->getSort(), BSON(TagsType::min() << 1));
+
+        return vector<BSONObj>{tagA.toBSON(), tagB.toBSON()};
+    });
+
+    const auto& tags = future.get();
+    ASSERT_EQ(tagA.toBSON(), tags[0].toBSON());
+    ASSERT_EQ(tagB.toBSON(), tags[1].toBSON());
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetTagsForCollectionNoTags) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    auto future =
+        async(std::launch::async,
+              [this] {
+                  vector<TagsType> tags;
+
+                  ASSERT_OK(catalogManager()->getTagsForCollection("TestDB.TestColl", &tags));
+                  ASSERT_EQ(0U, tags.size());
+
+                  return tags;
+              });
+
+    onFindCommand([](const RemoteCommandRequest& request) { return vector<BSONObj>{}; });
+
+    future.get();
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetTagsForCollectionInvalidTag) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    auto future = async(std::launch::async,
+                        [this] {
+                            vector<TagsType> tags;
+                            Status status =
+                                catalogManager()->getTagsForCollection("TestDB.TestColl", &tags);
+
+                            ASSERT_EQUALS(ErrorCodes::FailedToParse, status);
+                            ASSERT_EQ(0U, tags.size());
+                        });
+
+    onFindCommand([](const RemoteCommandRequest& request) {
+        TagsType tagA;
+        tagA.setNS("TestDB.TestColl");
+        tagA.setTag("TagA");
+        tagA.setMinKey(BSON("a" << 100));
+        tagA.setMaxKey(BSON("a" << 200));
+
+        TagsType tagB;
+        tagB.setNS("TestDB.TestColl");
+        tagB.setTag("TagB");
+        tagB.setMinKey(BSON("a" << 200));
+        // Missing maxKey
+
+        return vector<BSONObj>{tagA.toBSON(), tagB.toBSON()};
+    });
+
+    future.get();
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetTagForChunkOneTagFound) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    ChunkType chunk;
+    chunk.setName("chunk0000");
+    chunk.setNS("test.coll");
+    chunk.setMin(BSON("a" << 1));
+    chunk.setMax(BSON("a" << 100));
+    chunk.setVersion({1, 2, OID::gen()});
+    chunk.setShard("shard0000");
+    ASSERT_OK(chunk.validate());
+
+    auto future = async(
+        std::launch::async,
+        [this, chunk] { return assertGet(catalogManager()->getTagForChunk("test.coll", chunk)); });
+
+    onFindCommand([chunk](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(nss.toString(), TagsType::ConfigNS);
+
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(query->ns(), TagsType::ConfigNS);
+        ASSERT_EQ(query->getFilter(),
+                  BSON(TagsType::ns(chunk.getNS())
+                       << TagsType::min() << BSON("$lte" << chunk.getMin()) << TagsType::max()
+                       << BSON("$gte" << chunk.getMax())));
+
+        TagsType tt;
+        tt.setNS("test.coll");
+        tt.setTag("tag");
+        tt.setMinKey(BSON("a" << 1));
+        tt.setMaxKey(BSON("a" << 100));
+
+        return vector<BSONObj>{tt.toBSON()};
+    });
+
+    const string& tagStr = future.get();
+    ASSERT_EQ("tag", tagStr);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetTagForChunkNoTagFound) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    ChunkType chunk;
+    chunk.setName("chunk0000");
+    chunk.setNS("test.coll");
+    chunk.setMin(BSON("a" << 1));
+    chunk.setMax(BSON("a" << 100));
+    chunk.setVersion({1, 2, OID::gen()});
+    chunk.setShard("shard0000");
+    ASSERT_OK(chunk.validate());
+
+    auto future = async(
+        std::launch::async,
+        [this, chunk] { return assertGet(catalogManager()->getTagForChunk("test.coll", chunk)); });
+
+    onFindCommand([chunk](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(nss.toString(), TagsType::ConfigNS);
+
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(query->ns(), TagsType::ConfigNS);
+        ASSERT_EQ(query->getFilter(),
+                  BSON(TagsType::ns(chunk.getNS())
+                       << TagsType::min() << BSON("$lte" << chunk.getMin()) << TagsType::max()
+                       << BSON("$gte" << chunk.getMax())));
+
+        return vector<BSONObj>{};
+    });
+
+    const string& tagStr = future.get();
+    ASSERT_EQ("", tagStr);  // empty string returned when tag document not found
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, GetTagForChunkInvalidTagDoc) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    ChunkType chunk;
+    chunk.setName("chunk0000");
+    chunk.setNS("test.coll");
+    chunk.setMin(BSON("a" << 1));
+    chunk.setMax(BSON("a" << 100));
+    chunk.setVersion({1, 2, OID::gen()});
+    chunk.setShard("shard0000");
+    ASSERT_OK(chunk.validate());
+
+    auto future = async(std::launch::async,
+                        [this, chunk] {
+                            const auto tagResult =
+                                catalogManager()->getTagForChunk("test.coll", chunk);
+
+                            ASSERT_EQ(ErrorCodes::FailedToParse, tagResult.getStatus());
+                        });
+
+    onFindCommand([chunk](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(nss.toString(), TagsType::ConfigNS);
+
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(query->ns(), TagsType::ConfigNS);
+        ASSERT_EQ(query->getFilter(),
+                  BSON(TagsType::ns(chunk.getNS())
+                       << TagsType::min() << BSON("$lte" << chunk.getMin()) << TagsType::max()
+                       << BSON("$gte" << chunk.getMax())));
+
+        // Return a tag document missing the min key
+        return vector<BSONObj>{BSON(TagsType::ns("test.mycol") << TagsType::tag("tag")
+                                                               << TagsType::max(BSON("a" << 20)))};
+    });
+
+    future.get();
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, UpdateDatabase) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    DatabaseType dbt;
+    dbt.setName("test");
+    dbt.setPrimary("shard0000");
+    dbt.setSharded(true);
+
+    auto future = async(std::launch::async,
+                        [this, dbt] {
+                            auto status = catalogManager()->updateDatabase(dbt.getName(), dbt);
+                            ASSERT_OK(status);
+                        });
+
+    onCommand([dbt](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS("config", request.dbname);
+
+        BatchedUpdateRequest actualBatchedUpdate;
+        std::string errmsg;
+        ASSERT_TRUE(actualBatchedUpdate.parseBSON(request.cmdObj, &errmsg));
+        ASSERT_EQUALS(DatabaseType::ConfigNS, actualBatchedUpdate.getCollName());
+        auto updates = actualBatchedUpdate.getUpdates();
+        ASSERT_EQUALS(1U, updates.size());
+        auto update = updates.front();
+
+        ASSERT_TRUE(update->getUpsert());
+        ASSERT_FALSE(update->getMulti());
+        ASSERT_EQUALS(update->getQuery(), BSON(DatabaseType::name(dbt.getName())));
+        ASSERT_EQUALS(update->getUpdateExpr(), dbt.toBSON());
+
+        BatchedCommandResponse response;
+        response.setOk(true);
+        response.setNModified(1);
+
+        return response.toBSON();
+    });
+
+    // Now wait for the updateDatabase call to return
+    future.wait_for(kFutureTimeout);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, UpdateDatabaseHostUnreachable) {
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    HostAndPort host1("TestHost1");
+    targeter->setFindHostReturnValue(host1);
+
+    DatabaseType dbt;
+    dbt.setName("test");
+    dbt.setPrimary("shard0001");
+    dbt.setSharded(false);
+
+    auto future = async(std::launch::async,
+                        [this, dbt] {
+                            auto status = catalogManager()->updateDatabase(dbt.getName(), dbt);
+                            ASSERT_EQ(ErrorCodes::HostUnreachable, status);
+                        });
+
+    onCommand([host1](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(host1, request.target);
+
+        BatchedCommandResponse response;
+        response.setOk(false);
+        response.setErrCode(ErrorCodes::HostUnreachable);
+        response.setErrMessage("socket error");
+
+        return response.toBSON();
+    });
+
+    // Now wait for the updateDatabase call to return
+    future.wait_for(kFutureTimeout);
 }
 
 }  // namespace

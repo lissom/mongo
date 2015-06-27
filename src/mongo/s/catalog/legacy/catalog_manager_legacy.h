@@ -36,6 +36,7 @@
 #include "mongo/s/catalog/catalog_manager.h"
 #include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/thread.h"
+#include "mongo/platform/atomic_word.h"
 
 namespace mongo {
 
@@ -76,11 +77,7 @@ public:
 
     Status createDatabase(const std::string& dbName) override;
 
-    Status updateDatabase(const std::string& dbName, const DatabaseType& db) override;
-
     StatusWith<DatabaseType> getDatabase(const std::string& dbName) override;
-
-    Status updateCollection(const std::string& collNs, const CollectionType& coll) override;
 
     StatusWith<CollectionType> getCollection(const std::string& collNs) override;
 
@@ -91,7 +88,10 @@ public:
     Status getDatabasesForShard(const std::string& shardName,
                                 std::vector<std::string>* dbs) override;
 
-    Status getChunks(const Query& query, int nToReturn, std::vector<ChunkType>* chunks) override;
+    Status getChunks(const BSONObj& query,
+                     const BSONObj& sort,
+                     boost::optional<int> limit,
+                     std::vector<ChunkType>* chunks) override;
 
     Status getTagsForCollection(const std::string& collectionNs,
                                 std::vector<TagsType>* tags) override;
@@ -130,7 +130,7 @@ public:
     void writeConfigServerDirect(const BatchedCommandRequest& request,
                                  BatchedCommandResponse* response) override;
 
-    DistLockManager* getDistLockManager() override;
+    DistLockManager* getDistLockManager() const override;
 
 private:
     /**
@@ -186,6 +186,12 @@ private:
 
     // Distribted lock manager singleton.
     std::unique_ptr<DistLockManager> _distLockManager;
+
+    // Whether the logChange call should attempt to create the changelog collection
+    AtomicInt32 _changeLogCollectionCreated;
+
+    // Whether the logAction call should attempt to create the actionlog collection
+    AtomicInt32 _actionLogCollectionCreated;
 
     // protects _inShutdown, _consistentFromLastCheck; used by _consistencyCheckerCV
     stdx::mutex _mutex;

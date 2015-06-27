@@ -149,6 +149,19 @@ ReplicationCoordinator::Mode getReplicationModeFromSettings(const ReplSettings& 
     }
     return ReplicationCoordinator::modeNone;
 }
+
+DataReplicatorOptions createDataReplicatorOptions(ReplicationCoordinator* replCoord) {
+    DataReplicatorOptions options;
+    options.applierFn = [](OperationContext*, const BSONObj&) -> Status { return Status::OK(); };
+    options.replicationProgressManager = replCoord;
+    options.getMyLastOptime = [replCoord]() { return replCoord->getMyLastOptime(); };
+    options.setMyLastOptime =
+        [replCoord](const OpTime& opTime) { replCoord->setMyLastOptime(opTime); };
+    options.setFollowerMode =
+        [replCoord](const MemberState& newState) { return replCoord->setFollowerMode(newState); };
+    options.syncSourceSelector = replCoord;
+    return options;
+}
 }  // namespace
 
 ReplicationCoordinatorImpl::ReplicationCoordinatorImpl(
@@ -174,7 +187,7 @@ ReplicationCoordinatorImpl::ReplicationCoordinatorImpl(
       _sleptLastElection(false),
       _canAcceptNonLocalWrites(!(settings.usingReplSets() || settings.slave)),
       _canServeNonLocalReads(0U),
-      _dr(DataReplicatorOptions(), &_replExecutor, this) {
+      _dr(createDataReplicatorOptions(this), &_replExecutor) {
     if (!isReplEnabled()) {
         return;
     }
@@ -670,8 +683,8 @@ Status ReplicationCoordinatorImpl::setLastOptimeForSlave(const OID& rid, const T
             "This is likely caused by an old (pre-2.6) member syncing from this node.",
             getReplicationMode() == modeMasterSlave);
 
-    // Term == 0 for master-slave
-    OpTime opTime(ts, OpTime::kDefaultTerm);
+    // term == -1 for master-slave
+    OpTime opTime(ts, OpTime::kProtocolVersionV0Term);
     SlaveInfo* slaveInfo = _findSlaveInfoByRID_inlock(rid);
     if (slaveInfo) {
         if (slaveInfo->opTime < opTime) {

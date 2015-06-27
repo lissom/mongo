@@ -35,6 +35,7 @@
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/client/connection_string.h"
+#include "mongo/platform/atomic_word.h"
 #include "mongo/s/catalog/catalog_manager.h"
 
 namespace mongo {
@@ -78,11 +79,7 @@ public:
 
     Status createDatabase(const std::string& dbName) override;
 
-    Status updateDatabase(const std::string& dbName, const DatabaseType& db) override;
-
     StatusWith<DatabaseType> getDatabase(const std::string& dbName) override;
-
-    Status updateCollection(const std::string& collNs, const CollectionType& coll) override;
 
     StatusWith<CollectionType> getCollection(const std::string& collNs) override;
 
@@ -94,7 +91,10 @@ public:
     Status getDatabasesForShard(const std::string& shardName,
                                 std::vector<std::string>* dbs) override;
 
-    Status getChunks(const Query& query, int nToReturn, std::vector<ChunkType>* chunks) override;
+    Status getChunks(const BSONObj& query,
+                     const BSONObj& sort,
+                     boost::optional<int> limit,
+                     std::vector<ChunkType>* chunks) override;
 
     Status getTagsForCollection(const std::string& collectionNs,
                                 std::vector<TagsType>* tags) override;
@@ -130,14 +130,31 @@ public:
     void writeConfigServerDirect(const BatchedCommandRequest& request,
                                  BatchedCommandResponse* response) override;
 
-    DistLockManager* getDistLockManager() override;
+    DistLockManager* getDistLockManager() const override;
 
 private:
+    /**
+     * Helper for running commands against the config server with logic for retargeting and
+     * retrying the command in the event of a NotMaster response.
+     * Returns ErrorCodes::NotMaster if after the max number of retries we still haven't
+     * successfully delivered the command to a primary.  Can also return a non-ok status in the
+     * event of a network error communicating with the config servers.  If we are able to get
+     * a valid response from running the command then we will return it, even if the command
+     * response indicates failure.  Thus the caller is responsible for checking the command
+     * response object for any kind of command-specific failure.  The only exception is
+     * NotMaster errors, which we intercept and follow the rules described above for handling.
+     */
+    StatusWith<BSONObj> _runConfigServerCommandWithNotMasterRetries(const std::string& dbName,
+                                                                    const BSONObj& cmdObj);
+
     // Config server connection string
     ConnectionString _configServerConnectionString;
 
     // Distribted lock manager singleton.
     std::unique_ptr<DistLockManager> _distLockManager;
+
+    // Whether the logAction call should attempt to create the actionlog collection
+    AtomicInt32 _actionLogCollectionCreated;
 
     // protects _inShutdown
     std::mutex _mutex;

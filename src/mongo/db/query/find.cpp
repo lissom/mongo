@@ -32,7 +32,6 @@
 
 #include "mongo/db/query/find.h"
 
-
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database_holder.h"
@@ -57,6 +56,7 @@
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/d_state.h"
 #include "mongo/s/stale_exception.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
@@ -266,8 +266,10 @@ QueryResult::View getMore(OperationContext* txn,
     // or none of the getMore, or part of the getMore.  The three cases in detail:
     //
     // 1) Normal cursor: we lock with "ctx" and hold it for the whole getMore.
-    // 2) Cursor owned by global cursor manager: we don't lock anything.  These cursors don't
-    //    own any collection state.
+    // 2) Cursor owned by global cursor manager: we don't lock anything.  These cursors don't own
+    //    any collection state. These cursors are generated either by the listCollections or
+    //    listIndexes commands, as these special cursor-generating commands operate over catalog
+    //    data rather than targeting the data within a collection.
     // 3) Agg cursor: we lock with "ctx", then release, then relock with "unpinDBLock" and
     //    "unpinCollLock".  This is because agg cursors handle locking internally (hence the
     //    release), but the pin and unpin of the cursor must occur under the collection lock.
@@ -278,16 +280,18 @@ QueryResult::View getMore(OperationContext* txn,
     // Note that we declare our locks before our ClientCursorPin, in order to ensure that the
     // pin's destructor is called before the lock destructors (so that the unpin occurs under
     // the lock).
-    std::unique_ptr<AutoGetCollectionForRead> ctx;
-    std::unique_ptr<Lock::DBLock> unpinDBLock;
-    std::unique_ptr<Lock::CollectionLock> unpinCollLock;
+    unique_ptr<AutoGetCollectionForRead> ctx;
+    unique_ptr<Lock::DBLock> unpinDBLock;
+    unique_ptr<Lock::CollectionLock> unpinCollLock;
 
     CursorManager* cursorManager;
-    CursorManager* globalCursorManager = CursorManager::getGlobalCursorManager();
-    if (globalCursorManager->ownsCursorId(cursorid)) {
-        cursorManager = globalCursorManager;
+    if (nss.isListIndexesCursorNS() || nss.isListCollectionsCursorNS()) {
+        // List collections and list indexes are special cursor-generating commands whose
+        // cursors are managed globally, as they operate over catalog data rather than targeting
+        // the data within a collection.
+        cursorManager = CursorManager::getGlobalCursorManager();
     } else {
-        ctx.reset(new AutoGetCollectionForRead(txn, nss));
+        ctx = stdx::make_unique<AutoGetCollectionForRead>(txn, nss);
         Collection* collection = ctx->getCollection();
         uassert(17356, "collection dropped between getMore calls", collection);
         cursorManager = collection->getCursorManager();
@@ -315,7 +319,7 @@ QueryResult::View getMore(OperationContext* txn,
     // has a valid RecoveryUnit.  As such, we use RAII to accomplish this.
     //
     // This must be destroyed before the ClientCursor is destroyed.
-    std::unique_ptr<ScopedRecoveryUnitSwapper> ruSwapper;
+    unique_ptr<ScopedRecoveryUnitSwapper> ruSwapper;
 
     // These are set in the QueryResult msg we return.
     int resultFlags = ResultFlag_AwaitCapable;
@@ -416,7 +420,7 @@ QueryResult::View getMore(OperationContext* txn,
 
         if (PlanExecutor::DEAD == state || PlanExecutor::FAILURE == state) {
             // Propagate this error to caller.
-            const std::unique_ptr<PlanStageStats> stats(exec->getStats());
+            const unique_ptr<PlanStageStats> stats(exec->getStats());
             error() << "getMore executor error, stats: " << Explain::statsToBSON(*stats);
             uasserted(17406, "getMore executor error: " + WorkingSetCommon::toStatusString(obj));
         }
@@ -506,17 +510,14 @@ std::string runQuery(OperationContext* txn,
     beginQueryOp(txn, nss, q.query, q.ntoreturn, q.ntoskip);
 
     // Parse the qm into a CanonicalQuery.
-    std::unique_ptr<CanonicalQuery> cq;
-    {
-        CanonicalQuery* cqRaw;
-        Status canonStatus =
-            CanonicalQuery::canonicalize(q, &cqRaw, WhereCallbackReal(txn, nss.db()));
-        if (!canonStatus.isOK()) {
-            uasserted(17287,
-                      str::stream() << "Can't canonicalize query: " << canonStatus.toString());
-        }
-        cq.reset(cqRaw);
+
+    auto statusWithCQ = CanonicalQuery::canonicalize(q, WhereCallbackReal(txn, nss.db()));
+    if (!statusWithCQ.isOK()) {
+        uasserted(
+            17287,
+            str::stream() << "Can't canonicalize query: " << statusWithCQ.getStatus().toString());
     }
+    unique_ptr<CanonicalQuery> cq = std::move(statusWithCQ.getValue());
     invariant(cq.get());
 
     LOG(5) << "Running query:\n" << cq->toString();
@@ -530,7 +531,7 @@ std::string runQuery(OperationContext* txn,
         ctx.getDb() ? ctx.getDb()->getProfilingLevel() : serverGlobalParams.defaultProfile;
 
     // We have a parsed query. Time to get the execution plan for it.
-    std::unique_ptr<PlanExecutor> exec;
+    unique_ptr<PlanExecutor> exec;
     {
         PlanExecutor* rawExec;
         Status execStatus =
@@ -636,7 +637,7 @@ std::string runQuery(OperationContext* txn,
 
     // Caller expects exceptions thrown in certain cases.
     if (PlanExecutor::FAILURE == state || PlanExecutor::DEAD == state) {
-        const std::unique_ptr<PlanStageStats> stats(exec->getStats());
+        const unique_ptr<PlanStageStats> stats(exec->getStats());
         error() << "Plan executor error during find: " << PlanExecutor::statestr(state)
                 << ", stats: " << Explain::statsToBSON(*stats);
         uasserted(17144, "Executor error: " + WorkingSetCommon::toStatusString(obj));

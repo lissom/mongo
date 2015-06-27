@@ -52,7 +52,6 @@
 #include "mongo/db/exec/update.h"
 #include "mongo/db/index_names.h"
 #include "mongo/db/index/index_descriptor.h"
-#include "mongo/db/matcher/expression_algo.h"
 #include "mongo/db/ops/update_lifecycle.h"
 #include "mongo/db/query/canonical_query.h"
 #include "mongo/db/query/explain.h"
@@ -117,20 +116,6 @@ void filterAllowedIndexEntries(const AllowedIndices& allowedIndices,
 namespace {
 // The body is below in the "count hack" section but getExecutor calls it.
 bool turnIxscanIntoCount(QuerySolution* soln);
-
-bool filteredIndexBad(const MatchExpression* filter, CanonicalQuery* query) {
-    if (!filter)
-        return false;
-
-    MatchExpression* queryPredicates = query->root();
-    if (!queryPredicates) {
-        // Index is filtered, but query has none.
-        // Impossible to use index.
-        return true;
-    }
-
-    return !expression::isSubsetOf(queryPredicates, filter);
-}
 }  // namespace
 
 
@@ -142,12 +127,7 @@ void fillOutPlannerParams(OperationContext* txn,
     IndexCatalog::IndexIterator ii = collection->getIndexCatalog()->getIndexIterator(txn, false);
     while (ii.more()) {
         const IndexDescriptor* desc = ii.next();
-
         IndexCatalogEntry* ice = ii.catalogEntry(desc);
-        if (filteredIndexBad(ice->getFilterExpression(), canonicalQuery)) {
-            continue;
-        }
-
         plannerParams->indices.push_back(IndexEntry(desc->keyPattern(),
                                                     desc->getAccessMethodName(),
                                                     desc->isMultikey(txn),
@@ -467,14 +447,15 @@ Status getExecutor(OperationContext* txn,
     if (!CanonicalQuery::isSimpleIdQuery(unparsedQuery) ||
         !collection->getIndexCatalog()->findIdIndex(txn)) {
         const WhereCallbackReal whereCallback(txn, collection->ns().db());
-        CanonicalQuery* cq;
-        Status status =
-            CanonicalQuery::canonicalize(collection->ns(), unparsedQuery, &cq, whereCallback);
-        if (!status.isOK())
-            return status;
+        auto statusWithCQ =
+            CanonicalQuery::canonicalize(collection->ns(), unparsedQuery, whereCallback);
+        if (!statusWithCQ.isOK()) {
+            return statusWithCQ.getStatus();
+        }
+        std::unique_ptr<CanonicalQuery> cq = std::move(statusWithCQ.getValue());
 
         // Takes ownership of 'cq'.
-        return getExecutor(txn, collection, cq, yieldPolicy, out, plannerOptions);
+        return getExecutor(txn, collection, cq.release(), yieldPolicy, out, plannerOptions);
     }
 
     LOG(2) << "Using idhack: " << unparsedQuery.toString();
@@ -968,13 +949,13 @@ Status getExecutorGroup(OperationContext* txn,
 
     const NamespaceString nss(request.ns);
     const WhereCallbackReal whereCallback(txn, nss.db());
-    CanonicalQuery* rawCanonicalQuery;
-    Status canonicalizeStatus = CanonicalQuery::canonicalize(
-        request.ns, request.query, request.explain, &rawCanonicalQuery, whereCallback);
-    if (!canonicalizeStatus.isOK()) {
-        return canonicalizeStatus;
+
+    auto statusWithCQ =
+        CanonicalQuery::canonicalize(request.ns, request.query, request.explain, whereCallback);
+    if (!statusWithCQ.isOK()) {
+        return statusWithCQ.getStatus();
     }
-    unique_ptr<CanonicalQuery> canonicalQuery(rawCanonicalQuery);
+    unique_ptr<CanonicalQuery> canonicalQuery = std::move(statusWithCQ.getValue());
 
     const size_t defaultPlannerOptions = 0;
     Status status = prepareExecution(txn,
@@ -1133,7 +1114,8 @@ std::string getProjectedDottedField(const std::string& field, bool* isIDOut) {
                 std::vector<std::string> prefixStrings(res);
                 prefixStrings.resize(i);
                 // Reset projectedField. Instead of overwriting, joinStringDelim() appends joined
-                // string to the end of projectedField.
+                // string
+                // to the end of projectedField.
                 std::string projectedField;
                 mongo::joinStringDelim(prefixStrings, &projectedField, '.');
                 return projectedField;
@@ -1200,8 +1182,7 @@ Status getExecutorCount(OperationContext* txn,
     if (!request.getQuery().isEmpty() || !request.getHint().isEmpty()) {
         // If query or hint is not empty, canonicalize the query before working with collection.
         typedef MatchExpressionParser::WhereCallback WhereCallback;
-        CanonicalQuery* rawCq = NULL;
-        Status canonStatus = CanonicalQuery::canonicalize(
+        auto statusWithCQ = CanonicalQuery::canonicalize(
             request.getNs(),
             request.getQuery(),
             BSONObj(),  // sort
@@ -1213,14 +1194,13 @@ Status getExecutorCount(OperationContext* txn,
             BSONObj(),  // max
             false,      // snapshot
             explain,
-            &rawCq,
             collection
                 ? static_cast<const WhereCallback&>(WhereCallbackReal(txn, collection->ns().db()))
                 : static_cast<const WhereCallback&>(WhereCallbackNoop()));
-        if (!canonStatus.isOK()) {
-            return canonStatus;
+        if (!statusWithCQ.isOK()) {
+            return statusWithCQ.getStatus();
         }
-        cq.reset(rawCq);
+        cq = std::move(statusWithCQ.getValue());
     }
 
     if (!collection) {
@@ -1348,15 +1328,15 @@ Status getExecutorDistinct(OperationContext* txn,
     // If there are no suitable indices for the distinct hack bail out now into regular planning
     // with no projection.
     if (plannerParams.indices.empty()) {
-        CanonicalQuery* cq;
-        Status status =
-            CanonicalQuery::canonicalize(collection->ns().ns(), query, &cq, whereCallback);
-        if (!status.isOK()) {
-            return status;
+        auto statusWithCQ =
+            CanonicalQuery::canonicalize(collection->ns().ns(), query, whereCallback);
+        if (!statusWithCQ.isOK()) {
+            return statusWithCQ.getStatus();
         }
+        std::unique_ptr<CanonicalQuery> cq = std::move(statusWithCQ.getValue());
 
         // Takes ownership of 'cq'.
-        return getExecutor(txn, collection, cq, yieldPolicy, out);
+        return getExecutor(txn, collection, cq.release(), yieldPolicy, out);
     }
 
     //
@@ -1369,14 +1349,13 @@ Status getExecutorDistinct(OperationContext* txn,
     BSONObj projection = getDistinctProjection(field);
 
     // Apply a projection of the key.  Empty BSONObj() is for the sort.
-    CanonicalQuery* cq;
-    Status status = CanonicalQuery::canonicalize(
-        collection->ns().ns(), query, BSONObj(), projection, &cq, whereCallback);
-    if (!status.isOK()) {
-        return status;
+    auto statusWithCQ = CanonicalQuery::canonicalize(
+        collection->ns().ns(), query, BSONObj(), projection, whereCallback);
+    if (!statusWithCQ.isOK()) {
+        return statusWithCQ.getStatus();
     }
 
-    unique_ptr<CanonicalQuery> autoCq(cq);
+    unique_ptr<CanonicalQuery> cq = std::move(statusWithCQ.getValue());
 
     // If there's no query, we can just distinct-scan one of the indices.
     // Not every index in plannerParams.indices may be suitable. Refer to
@@ -1403,15 +1382,14 @@ Status getExecutorDistinct(OperationContext* txn,
                << ", planSummary: " << Explain::getPlanSummary(root);
 
         // Takes ownership of its arguments (except for 'collection').
-        return PlanExecutor::make(
-            txn, ws, root, soln, autoCq.release(), collection, yieldPolicy, out);
+        return PlanExecutor::make(txn, ws, root, soln, cq.release(), collection, yieldPolicy, out);
     }
 
     // See if we can answer the query in a fast-distinct compatible fashion.
     vector<QuerySolution*> solutions;
-    status = QueryPlanner::plan(*cq, plannerParams, &solutions);
+    Status status = QueryPlanner::plan(*cq, plannerParams, &solutions);
     if (!status.isOK()) {
-        return getExecutor(txn, collection, autoCq.release(), yieldPolicy, out);
+        return getExecutor(txn, collection, cq.release(), yieldPolicy, out);
     }
 
     // We look for a solution that has an ixscan we can turn into a distinctixscan
@@ -1432,9 +1410,9 @@ Status getExecutorDistinct(OperationContext* txn,
             LOG(2) << "Using fast distinct: " << cq->toStringShort()
                    << ", planSummary: " << Explain::getPlanSummary(root);
 
-            // Takes ownership of 'ws', 'root', 'solutions[i]', and 'autoCq'.
+            // Takes ownership of 'ws', 'root', 'solutions[i]', and 'cq'.
             return PlanExecutor::make(
-                txn, ws, root, solutions[i], autoCq.release(), collection, yieldPolicy, out);
+                txn, ws, root, solutions[i], cq.release(), collection, yieldPolicy, out);
         }
     }
 
@@ -1446,15 +1424,15 @@ Status getExecutorDistinct(OperationContext* txn,
     }
 
     // We drop the projection from the 'cq'.  Unfortunately this is not trivial.
-    status = CanonicalQuery::canonicalize(collection->ns().ns(), query, &cq, whereCallback);
-    if (!status.isOK()) {
-        return status;
+    statusWithCQ = CanonicalQuery::canonicalize(collection->ns().ns(), query, whereCallback);
+    if (!statusWithCQ.isOK()) {
+        return statusWithCQ.getStatus();
     }
 
-    autoCq.reset(cq);
+    cq = std::move(statusWithCQ.getValue());
 
-    // Takes ownership of 'autoCq'.
-    return getExecutor(txn, collection, autoCq.release(), yieldPolicy, out);
+    // Takes ownership of 'cq'.
+    return getExecutor(txn, collection, cq.release(), yieldPolicy, out);
 }
 
 }  // namespace mongo

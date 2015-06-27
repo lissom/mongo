@@ -628,6 +628,10 @@ env_vars.Add('MSVC_USE_SCRIPT',
 env_vars.Add('MSVC_VERSION',
     help='Sets the version of Visual Studio to use (e.g.  12.0, 11.0, 10.0)')
 
+env_vars.Add('OBJCOPY',
+    help='Sets the path to objcopy',
+    default=WhereIs('objcopy'))
+
 env_vars.Add('RPATH',
     help='Set the RPATH for dynamic libraries and executables',
     converter=variable_shlex_converter)
@@ -1898,49 +1902,33 @@ def doConfigure(myenv):
     if not myenv.ToolchainIs('msvc'):
         AddToCCFLAGSIfSupported(myenv, "-fno-builtin-memcmp")
 
-    # When using msvc, check for support for __declspec(thread), unless we have been asked
-    # explicitly not to use it. For other compilers, see if __thread works.
-    if myenv.ToolchainIs('msvc'):
-        haveDeclSpecThread = False
-        def CheckDeclspecThread(context):
-            test_body = """
-            __declspec( thread ) int tsp_int;
-            int main(int argc, char* argv[]) {
-            tsp_int = argc;
-            return 0;
-            }
-            """
-            context.Message('Checking for __declspec(thread)... ')
-            ret = context.TryLink(textwrap.dedent(test_body), ".cpp")
-            context.Result(ret)
-            return ret
-        conf = Configure(myenv, help=False, custom_tests = {
-            'CheckDeclspecThread' : CheckDeclspecThread,
-        })
-        haveDeclSpecThread = conf.CheckDeclspecThread()
-        conf.Finish()
-        if haveDeclSpecThread:
-            myenv.SetConfigHeaderDefine("MONGO_CONFIG_HAVE___DECLSPEC_THREAD")
-    else:
-        def CheckUUThread(context):
-            test_body = """
-            __thread int tsp_int;
-            int main(int argc, char* argv[]) {
-                tsp_int = argc;
-                return 0;
-            }
-            """
-            context.Message('Checking for __thread... ')
-            ret = context.TryLink(textwrap.dedent(test_body), ".cpp")
-            context.Result(ret)
-            return ret
-        conf = Configure(myenv, help=False, custom_tests = {
-            'CheckUUThread' : CheckUUThread,
-        })
-        haveUUThread = conf.CheckUUThread()
-        conf.Finish()
-        if haveUUThread:
-            myenv.SetConfigHeaderDefine("MONGO_CONFIG_HAVE___THREAD")
+    def CheckStorageClass(context, storage_class):
+        test_body = """
+        {0} int tsp_int = 1;
+        int main(int argc, char** argv) {{
+            return !(tsp_int == argc);
+        }}
+        """.format(storage_class)
+        context.Message('Checking for storage class {0} '.format(storage_class))
+        ret = context.TryLink(textwrap.dedent(test_body), ".cpp")
+        context.Result(ret)
+        return ret
+
+    conf = Configure(myenv, help=False, custom_tests = {
+        'CheckStorageClass': CheckStorageClass
+    })
+    haveTriviallyConstructibleThreadLocals = False
+    for storage_class, macro_name in [
+            ('thread_local', 'MONGO_CONFIG_HAVE_THREAD_LOCAL'),
+            ('__thread', 'MONGO_CONFIG_HAVE___THREAD'),
+            ('__declspec(thread)', 'MONGO_CONFIG_HAVE___DECLSPEC_THREAD')]:
+        if conf.CheckStorageClass(storage_class):
+            haveTriviallyConstructibleThreadLocals = True
+            myenv.SetConfigHeaderDefine(macro_name)
+    conf.Finish()
+    if not haveTriviallyConstructibleThreadLocals:
+        print "Compiler must support a thread local storage class for trivially constructible types"
+        Exit(1)
 
     # not all C++11-enabled gcc versions have type properties
     def CheckCXX11IsTriviallyCopyable(context):
@@ -2248,8 +2236,6 @@ def getSystemInstallName():
     dist_arch = GetOption("distarch")
     arch_name = env['TARGET_ARCH'] if not dist_arch else dist_arch
     n = env.GetTargetOSName() + "-" + arch_name
-    if has_option("nostrip"):
-        n += "-debugsymbols"
 
     if len(mongo_modules):
             n += "-" + "-".join(m.name for m in mongo_modules)

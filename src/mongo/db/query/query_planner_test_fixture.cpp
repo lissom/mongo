@@ -91,6 +91,16 @@ void QueryPlannerTest::addIndex(BSONObj keyPattern, BSONObj infoObj) {
                                         infoObj));
 }
 
+void QueryPlannerTest::addIndex(BSONObj keyPattern, MatchExpression* filterExpr) {
+    params.indices.push_back(IndexEntry(keyPattern,
+                                        false,  // multikey
+                                        false,  // sparse
+                                        false,  // unique
+                                        "foo",
+                                        filterExpr,
+                                        BSONObj()));
+}
+
 void QueryPlannerTest::runQuery(BSONObj query) {
     runQuerySortProjSkipLimit(query, BSONObj(), BSONObj(), 0, 0);
 }
@@ -155,25 +165,20 @@ void QueryPlannerTest::runQueryFull(const BSONObj& query,
     // Clean up any previous state from a call to runQueryFull
     solns.clear();
 
-    {
-        CanonicalQuery* rawCq;
-        Status s = CanonicalQuery::canonicalize(ns,
-                                                query,
-                                                sort,
-                                                proj,
-                                                skip,
-                                                limit,
-                                                hint,
-                                                minObj,
-                                                maxObj,
-                                                snapshot,
-                                                false,  // explain
-                                                &rawCq);
-        ASSERT_OK(s);
-        cq.reset(rawCq);
-    }
+    auto statusWithCQ = CanonicalQuery::canonicalize(ns,
+                                                     query,
+                                                     sort,
+                                                     proj,
+                                                     skip,
+                                                     limit,
+                                                     hint,
+                                                     minObj,
+                                                     maxObj,
+                                                     snapshot,
+                                                     false);  // explain
+    ASSERT_OK(statusWithCQ.getStatus());
 
-    ASSERT_OK(QueryPlanner::plan(*cq, params, &solns.mutableVector()));
+    ASSERT_OK(QueryPlanner::plan(*statusWithCQ.getValue(), params, &solns.mutableVector()));
 }
 
 void QueryPlannerTest::runInvalidQuery(const BSONObj& query) {
@@ -225,25 +230,20 @@ void QueryPlannerTest::runInvalidQueryFull(const BSONObj& query,
                                            bool snapshot) {
     solns.clear();
 
-    {
-        CanonicalQuery* rawCq;
-        Status s = CanonicalQuery::canonicalize(ns,
-                                                query,
-                                                sort,
-                                                proj,
-                                                skip,
-                                                limit,
-                                                hint,
-                                                minObj,
-                                                maxObj,
-                                                snapshot,
-                                                false,  // explain
-                                                &rawCq);
-        ASSERT_OK(s);
-        cq.reset(rawCq);
-    }
+    auto statusWithCQ = CanonicalQuery::canonicalize(ns,
+                                                     query,
+                                                     sort,
+                                                     proj,
+                                                     skip,
+                                                     limit,
+                                                     hint,
+                                                     minObj,
+                                                     maxObj,
+                                                     snapshot,
+                                                     false);  // explain
+    ASSERT_OK(statusWithCQ.getStatus());
 
-    Status s = QueryPlanner::plan(*cq, params, &solns.mutableVector());
+    Status s = QueryPlanner::plan(*statusWithCQ.getValue(), params, &solns.mutableVector());
     ASSERT_NOT_OK(s);
 }
 
@@ -257,13 +257,11 @@ void QueryPlannerTest::runQueryAsCommand(const BSONObj& cmdObj) {
     std::unique_ptr<LiteParsedQuery> lpq(
         assertGet(LiteParsedQuery::makeFromFindCommand(nss, cmdObj, isExplain)));
 
-    CanonicalQuery* rawCq;
     WhereCallbackNoop whereCallback;
-    Status canonStatus = CanonicalQuery::canonicalize(lpq.release(), &rawCq, whereCallback);
-    ASSERT_OK(canonStatus);
-    cq.reset(rawCq);
+    auto statusWithCQ = CanonicalQuery::canonicalize(lpq.release(), whereCallback);
+    ASSERT_OK(statusWithCQ.getStatus());
 
-    Status s = QueryPlanner::plan(*cq, params, &solns.mutableVector());
+    Status s = QueryPlanner::plan(*statusWithCQ.getValue(), params, &solns.mutableVector());
     ASSERT_OK(s);
 }
 
@@ -334,6 +332,15 @@ void QueryPlannerTest::assertHasOneSolutionOf(const std::vector<std::string>& so
        << " but got " << matches << " instead. all solutions generated: " << '\n';
     dumpSolutions(ss);
     FAIL(ss);
+}
+
+std::unique_ptr<MatchExpression> QueryPlannerTest::parseMatchExpression(const BSONObj& obj) {
+    StatusWithMatchExpression status = MatchExpressionParser::parse(obj);
+    if (!status.isOK()) {
+        FAIL(str::stream() << "failed to parse query: " << obj.toString()
+                           << ". Reason: " << status.getStatus().toString());
+    }
+    return std::unique_ptr<MatchExpression>(status.getValue());
 }
 
 }  // namespace mongo

@@ -39,6 +39,7 @@
 #include <set>
 #include <vector>
 
+#include "mongo/bson/util/bson_extract.h"
 #include "mongo/client/connpool.h"
 #include "mongo/client/replica_set_monitor.h"
 #include "mongo/db/audit.h"
@@ -262,12 +263,6 @@ BSONObj buildRemoveLogEntry(const string& shardName, bool isDraining) {
 
     return details.obj();
 }
-
-// Whether the logChange call should attempt to create the changelog collection
-AtomicInt32 changeLogCollectionCreated(0);
-
-// Whether the logAction call should attempt to create the actionlog collection
-AtomicInt32 actionLogCollectionCreated(0);
 
 }  // namespace
 
@@ -816,25 +811,6 @@ StatusWith<ShardDrainingStatus> CatalogManagerLegacy::removeShard(OperationConte
     return ShardDrainingStatus::ONGOING;
 }
 
-Status CatalogManagerLegacy::updateDatabase(const std::string& dbName, const DatabaseType& db) {
-    fassert(28616, db.validate());
-
-    BatchedCommandResponse response;
-    Status status = update(DatabaseType::ConfigNS,
-                           BSON(DatabaseType::name(dbName)),
-                           db.toBSON(),
-                           true,   // upsert
-                           false,  // multi
-                           &response);
-    if (!status.isOK()) {
-        return Status(status.code(),
-                      str::stream() << "database metadata write failed: " << response.toBSON()
-                                    << "; status: " << status.toString());
-    }
-
-    return Status::OK();
-}
-
 StatusWith<DatabaseType> CatalogManagerLegacy::getDatabase(const std::string& dbName) {
     invariant(nsIsDbOnly(dbName));
 
@@ -861,26 +837,6 @@ StatusWith<DatabaseType> CatalogManagerLegacy::getDatabase(const std::string& db
     return DatabaseType::fromBSON(dbObj);
 }
 
-Status CatalogManagerLegacy::updateCollection(const std::string& collNs,
-                                              const CollectionType& coll) {
-    fassert(28634, coll.validate());
-
-    BatchedCommandResponse response;
-    Status status = update(CollectionType::ConfigNS,
-                           BSON(CollectionType::fullNs(collNs)),
-                           coll.toBSON(),
-                           true,   // upsert
-                           false,  // multi
-                           &response);
-    if (!status.isOK()) {
-        return Status(status.code(),
-                      str::stream() << "collection metadata write failed: " << response.toBSON()
-                                    << "; status: " << status.toString());
-    }
-
-    return Status::OK();
-}
-
 StatusWith<CollectionType> CatalogManagerLegacy::getCollection(const std::string& collNs) {
     ScopedDbConnection conn(_configServerConnectionString, 30.0);
 
@@ -897,8 +853,6 @@ StatusWith<CollectionType> CatalogManagerLegacy::getCollection(const std::string
 
 Status CatalogManagerLegacy::getCollections(const std::string* dbName,
                                             std::vector<CollectionType>* collections) {
-    collections->clear();
-
     BSONObjBuilder b;
     if (dbName) {
         invariant(!dbName->empty());
@@ -914,13 +868,17 @@ Status CatalogManagerLegacy::getCollections(const std::string* dbName,
     while (cursor->more()) {
         const BSONObj collObj = cursor->next();
 
-        auto status = CollectionType::fromBSON(collObj);
-        if (!status.isOK()) {
+        const auto collectionResult = CollectionType::fromBSON(collObj);
+        if (!collectionResult.isOK()) {
             conn.done();
-            return status.getStatus();
+            collections->clear();
+            return Status(ErrorCodes::FailedToParse,
+                          str::stream() << "error while parsing " << CollectionType::ConfigNS
+                                        << " document: " << collObj << " : "
+                                        << collectionResult.getStatus().toString());
         }
 
-        collections->push_back(status.getValue());
+        collections->push_back(collectionResult.getValue());
     }
 
     conn.done();
@@ -1028,16 +986,18 @@ Status CatalogManagerLegacy::dropCollection(const std::string& collectionNs) {
 void CatalogManagerLegacy::logAction(const ActionLogType& actionLog) {
     // Create the action log collection and ensure that it is capped. Wrap in try/catch,
     // because creating an existing collection throws.
-    if (actionLogCollectionCreated.load() == 0) {
+    if (_actionLogCollectionCreated.load() == 0) {
         try {
             ScopedDbConnection conn(_configServerConnectionString, 30.0);
             conn->createCollection(ActionLogType::ConfigNS, 1024 * 1024 * 2, true);
             conn.done();
 
-            actionLogCollectionCreated.store(1);
+            _actionLogCollectionCreated.store(1);
         } catch (const DBException& e) {
-            // It's ok to ignore this exception
             LOG(1) << "couldn't create actionlog collection: " << e;
+            // If we couldn't create the collection don't attempt the insert otherwise we might
+            // implicitly create the collection without it being capped.
+            return;
         }
     }
 
@@ -1053,13 +1013,13 @@ void CatalogManagerLegacy::logChange(OperationContext* opCtx,
                                      const BSONObj& detail) {
     // Create the change log collection and ensure that it is capped. Wrap in try/catch,
     // because creating an existing collection throws.
-    if (changeLogCollectionCreated.load() == 0) {
+    if (_changeLogCollectionCreated.load() == 0) {
         try {
             ScopedDbConnection conn(_configServerConnectionString, 30.0);
             conn->createCollection(ChangelogType::ConfigNS, 1024 * 1024 * 10, true);
             conn.done();
 
-            changeLogCollectionCreated.store(1);
+            _changeLogCollectionCreated.store(1);
         } catch (const UserException& e) {
             // It's ok to ignore this exception
             LOG(1) << "couldn't create changelog collection: " << e;
@@ -1140,12 +1100,21 @@ Status CatalogManagerLegacy::getDatabasesForShard(const string& shardName, vecto
             conn->query(DatabaseType::ConfigNS, Query(BSON(DatabaseType::primary(shardName))))));
         if (!cursor.get()) {
             conn.done();
-            return Status(ErrorCodes::HostUnreachable, "unable to open chunk cursor");
+            return Status(ErrorCodes::HostUnreachable,
+                          str::stream() << "unable to open cursor for " << DatabaseType::ConfigNS);
         }
 
         while (cursor->more()) {
-            BSONObj shard = cursor->nextSafe();
-            dbs->push_back(shard[DatabaseType::name()].str());
+            BSONObj dbObj = cursor->nextSafe();
+
+            string dbName;
+            Status status = bsonExtractStringField(dbObj, DatabaseType::name(), &dbName);
+            if (!status.isOK()) {
+                dbs->clear();
+                return status;
+            }
+
+            dbs->push_back(dbName);
         }
 
         conn.done();
@@ -1156,15 +1125,19 @@ Status CatalogManagerLegacy::getDatabasesForShard(const string& shardName, vecto
     return Status::OK();
 }
 
-Status CatalogManagerLegacy::getChunks(const Query& query,
-                                       int nToReturn,
+Status CatalogManagerLegacy::getChunks(const BSONObj& query,
+                                       const BSONObj& sort,
+                                       boost::optional<int> limit,
                                        vector<ChunkType>* chunks) {
     chunks->clear();
 
     try {
         ScopedDbConnection conn(_configServerConnectionString, 30.0);
+
+        const Query queryWithSort(Query(query).sort(sort));
+
         std::unique_ptr<DBClientCursor> cursor(
-            _safeCursor(conn->query(ChunkType::ConfigNS, query, nToReturn)));
+            _safeCursor(conn->query(ChunkType::ConfigNS, queryWithSort, limit.get_value_or(0))));
         if (!cursor.get()) {
             conn.done();
             return Status(ErrorCodes::HostUnreachable, "unable to open chunk cursor");
@@ -1180,7 +1153,7 @@ Status CatalogManagerLegacy::getChunks(const Query& query,
                 return {ErrorCodes::FailedToParse,
                         stream() << "Failed to parse chunk with id ("
                                  << chunkObj[ChunkType::name()].toString()
-                                 << "): " << chunkRes.getStatus().reason()};
+                                 << "): " << chunkRes.getStatus().toString()};
             }
 
             chunks->push_back(chunkRes.getValue());
@@ -1212,10 +1185,11 @@ Status CatalogManagerLegacy::getTagsForCollection(const std::string& collectionN
 
             StatusWith<TagsType> tagRes = TagsType::fromBSON(tagObj);
             if (!tagRes.isOK()) {
+                tags->clear();
                 conn.done();
                 return Status(ErrorCodes::FailedToParse,
-                              str::stream() << "Failed to parse tag BSONObj: "
-                                            << tagRes.getStatus().reason());
+                              str::stream()
+                                  << "Failed to parse tag: " << tagRes.getStatus().toString());
             }
 
             tags->push_back(tagRes.getValue());
@@ -1272,7 +1246,7 @@ Status CatalogManagerLegacy::getAllShards(vector<ShardType>* shards) {
             return Status(ErrorCodes::FailedToParse,
                           str::stream() << "Failed to parse shard with id ("
                                         << shardObj[ShardType::name()].toString()
-                                        << "): " << shardRes.getStatus().reason());
+                                        << "): " << shardRes.getStatus().toString());
         }
 
         shards->push_back(shardRes.getValue());
@@ -1514,7 +1488,7 @@ size_t CatalogManagerLegacy::_getShardCount(const BSONObj& query) const {
     return shardCount;
 }
 
-DistLockManager* CatalogManagerLegacy::getDistLockManager() {
+DistLockManager* CatalogManagerLegacy::getDistLockManager() const {
     invariant(_distLockManager);
     return _distLockManager.get();
 }
