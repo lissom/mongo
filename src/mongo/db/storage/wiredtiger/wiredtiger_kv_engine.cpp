@@ -50,6 +50,7 @@
 #include "mongo/util/log.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/scopeguard.h"
+#include "mongo/util/time_support.h"
 
 #if !defined(__has_feature)
 #define __has_feature(x) 0
@@ -72,10 +73,12 @@ WiredTigerKVEngine::WiredTigerKVEngine(const std::string& path,
     size_t cacheSizeGB = wiredTigerGlobalOptions.cacheSizeGB;
     if (cacheSizeGB == 0) {
         // Since the user didn't provide a cache size, choose a reasonable default value.
+        // We want to reserve 1GB for the system and binaries, but it's not bad to
+        // leave a fair amount left over for pagecache since that's compressed storage.
         ProcessInfo pi;
-        unsigned long long memSizeMB = pi.getMemSizeMB();
+        double memSizeMB = pi.getMemSizeMB();
         if (memSizeMB > 0) {
-            double cacheMB = memSizeMB / 2;
+            double cacheMB = (memSizeMB - 1024) * 0.6;
             cacheSizeGB = static_cast<size_t>(cacheMB / 1024);
             if (cacheSizeGB < 1)
                 cacheSizeGB = 1;
@@ -94,6 +97,8 @@ WiredTigerKVEngine::WiredTigerKVEngine(const std::string& path,
             }
         }
     }
+
+    _previousCheckedDropsQueued = Date_t::now();
 
     std::stringstream ss;
     ss << "create,";
@@ -345,10 +350,20 @@ bool WiredTigerKVEngine::_drop(StringData ident) {
 }
 
 bool WiredTigerKVEngine::haveDropsQueued() const {
+    Date_t now = Date_t::now();
+    Milliseconds delta = now - _previousCheckedDropsQueued;
+
     if (_sizeStorerSyncTracker.intervalHasElapsed()) {
         _sizeStorerSyncTracker.resetLastTime();
         syncSizeInfo(false);
     }
+
+    // We only want to check the queue max once per second or we'll thrash
+    // This is done in haveDropsQueued, not dropAllQueued so we skip the mutex
+    if (delta < Milliseconds(1000))
+        return false;
+
+    _previousCheckedDropsQueued = now;
     stdx::lock_guard<stdx::mutex> lk(_identToDropMutex);
     return !_identToDrop.empty();
 }

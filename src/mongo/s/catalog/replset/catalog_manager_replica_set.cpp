@@ -43,9 +43,12 @@
 #include "mongo/client/remote_command_targeter.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/namespace_string.h"
+#include "mongo/db/operation_context.h"
+#include "mongo/executor/network_interface.h"
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/s/catalog/dist_lock_manager.h"
 #include "mongo/s/catalog/type_actionlog.h"
+#include "mongo/s/catalog/type_changelog.h"
 #include "mongo/s/catalog/type_collection.h"
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_database.h"
@@ -84,6 +87,7 @@ const ReadPreferenceSetting kConfigReadSelector(ReadPreference::SecondaryOnly, T
 const int kNotMasterNumRetries = 3;
 const Milliseconds kNotMasterRetryInterval{500};
 const int kActionLogCollectionSize = 1024 * 1024 * 2;
+const int kChangeLogCollectionSize = 1024 * 1024 * 10;
 
 void _toBatchError(const Status& status, BatchedCommandResponse* response) {
     response->clear();
@@ -131,7 +135,8 @@ Status CatalogManagerReplicaSet::enableSharding(const std::string& dbName) {
     return notYetImplemented;
 }
 
-Status CatalogManagerReplicaSet::shardCollection(const string& ns,
+Status CatalogManagerReplicaSet::shardCollection(OperationContext* txn,
+                                                 const string& ns,
                                                  const ShardKeyPattern& fieldsAndOrder,
                                                  bool unique,
                                                  vector<BSONObj>* initPoints,
@@ -143,7 +148,8 @@ Status CatalogManagerReplicaSet::createDatabase(const std::string& dbName) {
     return notYetImplemented;
 }
 
-StatusWith<string> CatalogManagerReplicaSet::addShard(const string& name,
+StatusWith<string> CatalogManagerReplicaSet::addShard(OperationContext* txn,
+                                                      const string& name,
                                                       const ConnectionString& shardConnectionString,
                                                       const long long maxSize) {
     return notYetImplemented;
@@ -262,7 +268,8 @@ Status CatalogManagerReplicaSet::getCollections(const std::string* dbName,
     return Status::OK();
 }
 
-Status CatalogManagerReplicaSet::dropCollection(const std::string& collectionNs) {
+Status CatalogManagerReplicaSet::dropCollection(OperationContext* txn,
+                                                const std::string& collectionNs) {
     return notYetImplemented;
 }
 
@@ -291,10 +298,50 @@ void CatalogManagerReplicaSet::logAction(const ActionLogType& actionLog) {
     }
 }
 
-void CatalogManagerReplicaSet::logChange(OperationContext* opCtx,
+void CatalogManagerReplicaSet::logChange(const string& clientAddress,
                                          const string& what,
                                          const string& ns,
-                                         const BSONObj& detail) {}
+                                         const BSONObj& detail) {
+    if (_changeLogCollectionCreated.load() == 0) {
+        BSONObj createCmd = BSON("create" << ChangelogType::ConfigNS << "capped" << true << "size"
+                                          << kChangeLogCollectionSize);
+        auto result = _runConfigServerCommandWithNotMasterRetries("config", createCmd);
+        if (!result.isOK()) {
+            LOG(1) << "couldn't create changelog collection: " << causedBy(result.getStatus());
+            return;
+        }
+
+        Status commandStatus = Command::getStatusFromCommandResult(result.getValue());
+        if (commandStatus.isOK() || commandStatus == ErrorCodes::NamespaceExists) {
+            _changeLogCollectionCreated.store(1);
+        } else {
+            LOG(1) << "couldn't create changelog collection: " << causedBy(commandStatus);
+            return;
+        }
+    }
+
+    Date_t now = grid.shardRegistry()->getExecutor()->now();
+    std::string hostName = grid.shardRegistry()->getNetwork()->getHostName();
+    const string changeID = str::stream() << hostName << "-" << now.toString() << "-" << OID::gen();
+
+    ChangelogType changeLog;
+    changeLog.setChangeID(changeID);
+    changeLog.setServer(hostName);
+    changeLog.setClientAddr(clientAddress);
+    changeLog.setTime(now);
+    changeLog.setNS(ns);
+    changeLog.setWhat(what);
+    changeLog.setDetails(detail);
+
+    BSONObj changeLogBSON = changeLog.toBSON();
+    log() << "about to log metadata event: " << changeLogBSON;
+
+    Status result = insert(ChangelogType::ConfigNS, changeLogBSON, NULL);
+    if (!result.isOK()) {
+        warning() << "Error encountered while logging config change with ID " << changeID << ": "
+                  << result;
+    }
+}
 
 StatusWith<SettingsType> CatalogManagerReplicaSet::getGlobalSettings(const string& key) {
     const auto configShard = grid.shardRegistry()->getShard("config");
@@ -542,7 +589,21 @@ bool CatalogManagerReplicaSet::runUserManagementReadCommand(const std::string& d
 
 Status CatalogManagerReplicaSet::applyChunkOpsDeprecated(const BSONArray& updateOps,
                                                          const BSONArray& preCondition) {
-    return notYetImplemented;
+    BSONObj cmd = BSON("applyOps" << updateOps << "preCondition" << preCondition);
+    auto response = _runConfigServerCommandWithNotMasterRetries("config", cmd);
+
+    if (!response.isOK()) {
+        return response.getStatus();
+    }
+
+    Status status = Command::getStatusFromCommandResult(response.getValue());
+    if (!status.isOK()) {
+        string errMsg(str::stream() << "Unable to save chunk ops. Command: " << cmd
+                                    << ". Result: " << response.getValue());
+
+        return Status(status.code(), errMsg);
+    }
+    return Status::OK();
 }
 
 DistLockManager* CatalogManagerReplicaSet::getDistLockManager() const {

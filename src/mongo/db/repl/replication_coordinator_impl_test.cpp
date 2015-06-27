@@ -299,7 +299,7 @@ TEST_F(ReplCoordTest, InitiatePassesIfQuorumMet) {
     getNet()->scheduleResponse(
         noi,
         startDate + Milliseconds(10),
-        ResponseStatus(RemoteCommandResponse(hbResp.toBSON(false), Milliseconds(8))));
+        ResponseStatus(RemoteCommandResponse(hbResp.toBSON(false), BSONObj(), Milliseconds(8))));
     getNet()->runUntil(startDate + Milliseconds(10));
     getNet()->exitNetwork();
     ASSERT_EQUALS(startDate + Milliseconds(10), getNet()->now());
@@ -988,7 +988,7 @@ TEST_F(ReplCoordTest, UpdateTerm) {
                            << BSON("_id" << 1 << "host"
                                          << "test2:1234") << BSON("_id" << 2 << "host"
                                                                         << "test3:1234"))
-             << "protocolVersion" << 1),
+             << "settings" << BSON("protocolVersion" << 1)),
         HostAndPort("test1", 1234));
     getReplCoord()->setMyLastOptime(OpTime(Timestamp(100, 1), 0));
     ASSERT(getReplCoord()->setFollowerMode(MemberState::RS_SECONDARY));

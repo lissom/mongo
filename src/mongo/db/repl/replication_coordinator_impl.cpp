@@ -66,7 +66,6 @@
 #include "mongo/db/server_options.h"
 #include "mongo/db/write_concern_options.h"
 #include "mongo/stdx/functional.h"
-#include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
 #include "mongo/util/scopeguard.h"
@@ -153,6 +152,8 @@ ReplicationCoordinator::Mode getReplicationModeFromSettings(const ReplSettings& 
 DataReplicatorOptions createDataReplicatorOptions(ReplicationCoordinator* replCoord) {
     DataReplicatorOptions options;
     options.applierFn = [](OperationContext*, const BSONObj&) -> Status { return Status::OK(); };
+    options.rollbackFn =
+        [](OperationContext*, const OpTime&, const HostAndPort&) { return Status::OK(); };
     options.replicationProgressManager = replCoord;
     options.getMyLastOptime = [replCoord]() { return replCoord->getMyLastOptime(); };
     options.setMyLastOptime =
@@ -365,8 +366,7 @@ void ReplicationCoordinatorImpl::startReplication(OperationContext* txn) {
         return;
     }
 
-    _topCoordDriverThread.reset(
-        new stdx::thread(stdx::bind(&ReplicationExecutor::run, &_replExecutor)));
+    _replExecutor.startup();
 
     bool doneLoadingConfig = _startLoadLocalConfig(txn);
     if (doneLoadingConfig) {
@@ -408,8 +408,9 @@ void ReplicationCoordinatorImpl::shutdown() {
         }
     }
 
+    // joining the replication executor is blocking so it must be run outside of the mutex
     _replExecutor.shutdown();
-    _topCoordDriverThread->join();  // must happen outside _mutex
+    _replExecutor.join();
     _externalState->shutdown();
 }
 
@@ -2025,7 +2026,7 @@ void ReplicationCoordinatorImpl::_performPostMemberStateUpdateAction(
             break;
         case kActionWinElection: {
             stdx::unique_lock<stdx::mutex> lk(_mutex);
-            _electionId = OID::gen();
+            _electionId = OID(_topCoord->getTerm());
             _topCoord->processWinElection(_electionId, getNextGlobalTimestamp());
             _isWaitingForDrainToComplete = true;
             const PostMemberStateUpdateAction nextAction =
@@ -2489,7 +2490,7 @@ void ReplicationCoordinatorImpl::_processReplSetRequestVotes_finish(
     }
 
     stdx::unique_lock<stdx::mutex> lk(_mutex);
-    _topCoord->processReplSetRequestVotes(args, response, getMyLastOptime());
+    _topCoord->processReplSetRequestVotes(args, response, _getMyLastOptime_inlock());
     *result = Status::OK();
 }
 
@@ -2529,14 +2530,27 @@ void ReplicationCoordinatorImpl::_processReplSetDeclareElectionWinner_finish(
     *result = _topCoord->processReplSetDeclareElectionWinner(args, responseTerm);
 }
 
-void ReplicationCoordinatorImpl::prepareCursorResponseInfo(BSONObjBuilder* objBuilder) {
+void ReplicationCoordinatorImpl::prepareReplResponseMetadata(BSONObjBuilder* objBuilder) {
     if (getReplicationMode() == modeReplSet && isV1ElectionProtocol()) {
-        BSONObjBuilder replObj(objBuilder->subobjStart("repl"));
-        _topCoord->prepareCursorResponseInfo(objBuilder, getLastCommittedOpTime());
-        replObj.done();
+        CBHStatus cbh = _replExecutor.scheduleWork(
+            stdx::bind(&ReplicationCoordinatorImpl::_prepareReplResponseMetadata_finish,
+                       this,
+                       stdx::placeholders::_1,
+                       objBuilder));
+        if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
+            return;
+        }
+        fassert(28709, cbh.getStatus());
+        _replExecutor.wait(cbh.getValue());
     }
 }
 
+void ReplicationCoordinatorImpl::_prepareReplResponseMetadata_finish(
+    const ReplicationExecutor::CallbackArgs& cbData, BSONObjBuilder* objBuilder) {
+    BSONObjBuilder replObj(objBuilder->subobjStart(rpc::kReplicationMetadataFieldName));
+    _topCoord->prepareReplResponseMetadata(&replObj, getLastCommittedOpTime());
+    replObj.done();
+}
 bool ReplicationCoordinatorImpl::isV1ElectionProtocol() {
     return getConfig().getProtocolVersion() == 1;
 }

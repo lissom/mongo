@@ -63,10 +63,12 @@ const Seconds kConfigCommandTimeout{30};
 ShardRegistry::ShardRegistry(std::unique_ptr<RemoteCommandTargeterFactory> targeterFactory,
                              std::unique_ptr<RemoteCommandRunner> commandRunner,
                              std::unique_ptr<executor::TaskExecutor> executor,
+                             executor::NetworkInterface* network,
                              CatalogManager* catalogManager)
     : _targeterFactory(std::move(targeterFactory)),
       _commandRunner(std::move(commandRunner)),
       _executor(std::move(executor)),
+      _network(network),
       _catalogManager(catalogManager) {
     // add config shard registry entry so know it's always there
     std::lock_guard<std::mutex> lk(_mutex);
@@ -74,6 +76,15 @@ ShardRegistry::ShardRegistry(std::unique_ptr<RemoteCommandTargeterFactory> targe
 }
 
 ShardRegistry::~ShardRegistry() = default;
+
+void ShardRegistry::startup() {
+    _executor->startup();
+}
+
+void ShardRegistry::shutdown() {
+    _executor->shutdown();
+    _executor->join();
+}
 
 void ShardRegistry::reload() {
     vector<ShardType> shards;

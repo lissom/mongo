@@ -34,7 +34,12 @@
 #include <boost/intrusive_ptr.hpp>
 #include <boost/unordered_map.hpp>
 #include <deque>
+#include <list>
+#include <string>
+#include <utility>
+#include <vector>
 
+#include "mongo/base/init.h"
 #include "mongo/client/connpool.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/jsobj.h"
@@ -46,6 +51,7 @@
 #include "mongo/db/pipeline/value.h"
 #include "mongo/db/sorter/sorter.h"
 #include "mongo/s/strategy.h"
+#include "mongo/stdx/functional.h"
 #include "mongo/util/intrusive_counter.h"
 
 
@@ -59,8 +65,22 @@ class ExpressionObject;
 class DocumentSourceLimit;
 class PlanExecutor;
 
+/**
+ * Registers a DocumentSource to have the name 'key'. When a stage with name '$key' is found,
+ * 'parser' will be called to construct a DocumentSource.
+ */
+#define REGISTER_DOCUMENT_SOURCE(key, parser)                               \
+    MONGO_INITIALIZER(addToDocSourceParserMap_##key)(InitializerContext*) { \
+        /* Prevent duplicate document sources with the same name. */        \
+        DocumentSource::registerParser("$" #key, (parser));                 \
+        return Status::OK();                                                \
+    }
+
 class DocumentSource : public IntrusiveCounterUnsigned {
 public:
+    using Parser = stdx::function<boost::intrusive_ptr<DocumentSource>(
+        BSONElement, const boost::intrusive_ptr<ExpressionContext>&)>;
+
     virtual ~DocumentSource() {}
 
     /** Returns the next Document if there is one or boost::none if at EOF.
@@ -160,11 +180,26 @@ public:
         return false;
     }
 
+    /**
+     * Create a DocumentSource pipeline stage from 'stageObj'.
+     */
+    static boost::intrusive_ptr<DocumentSource> parse(
+        const boost::intrusive_ptr<ExpressionContext> expCtx, BSONObj stageObj);
+
+    /**
+     * Registers a DocumentSource with a parsing function, so that when a stage with the given name
+     * is encountered, it will call 'parser' to construct that stage.
+     *
+     * DO NOT call this method directly. Instead, use the REGISTER_DOCUMENT_SOURCE macro defined in
+     * this file.
+     */
+    static void registerParser(std::string name, Parser parser);
+
 protected:
     /**
        Base constructor.
      */
-    DocumentSource(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
+    explicit DocumentSource(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
 
     /*
       Most DocumentSources have an underlying source they get their data
@@ -255,13 +290,13 @@ protected:
 };
 
 
-class DocumentSourceBsonArray : public DocumentSource {
+class DocumentSourceBsonArray final : public DocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual Value serialize(bool explain = false) const;
-    virtual void setSource(DocumentSource* pSource);
-    virtual bool isValidInitialSource() const {
+    boost::optional<Document> getNext() final;
+    Value serialize(bool explain = false) const final;
+    void setSource(DocumentSource* pSource) final;
+    bool isValidInitialSource() const final {
         return true;
     }
 
@@ -294,10 +329,10 @@ private:
 class DocumentSourceCommandShards : public DocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual Value serialize(bool explain = false) const;
-    virtual void setSource(DocumentSource* pSource);
-    virtual bool isValidInitialSource() const {
+    boost::optional<Document> getNext() final;
+    Value serialize(bool explain = false) const final;
+    void setSource(DocumentSource* pSource) final;
+    bool isValidInitialSource() const final {
         return true;
     }
 
@@ -349,19 +384,19 @@ private:
  *
  * An object of this type may only be used by one thread, see SERVER-6123.
  */
-class DocumentSourceCursor : public DocumentSource {
+class DocumentSourceCursor final : public DocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual ~DocumentSourceCursor();
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual Value serialize(bool explain = false) const;
-    virtual void setSource(DocumentSource* pSource);
-    virtual bool coalesce(const boost::intrusive_ptr<DocumentSource>& nextSource);
-    virtual bool isValidInitialSource() const {
+    ~DocumentSourceCursor() final;
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    Value serialize(bool explain = false) const final;
+    void setSource(DocumentSource* pSource) final;
+    bool coalesce(const boost::intrusive_ptr<DocumentSource>& nextSource) final;
+    bool isValidInitialSource() const final {
         return true;
     }
-    virtual void dispose();
+    void dispose() final;
 
     /**
      * Create a document source based on a passed-in PlanExecutor.
@@ -438,15 +473,15 @@ private:
 };
 
 
-class DocumentSourceGroup : public DocumentSource, public SplittableDocumentSource {
+class DocumentSourceGroup final : public DocumentSource, public SplittableDocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual boost::intrusive_ptr<DocumentSource> optimize();
-    virtual GetDepsReturn getDependencies(DepsTracker* deps) const;
-    virtual void dispose();
-    virtual Value serialize(bool explain = false) const;
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    boost::intrusive_ptr<DocumentSource> optimize() final;
+    GetDepsReturn getDependencies(DepsTracker* deps) const final;
+    void dispose() final;
+    Value serialize(bool explain = false) const final;
 
     static boost::intrusive_ptr<DocumentSourceGroup> create(
         const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
@@ -487,13 +522,13 @@ public:
         BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
 
     // Virtuals for SplittableDocumentSource
-    virtual boost::intrusive_ptr<DocumentSource> getShardSource();
-    virtual boost::intrusive_ptr<DocumentSource> getMergeSource();
+    boost::intrusive_ptr<DocumentSource> getShardSource() final;
+    boost::intrusive_ptr<DocumentSource> getMergeSource() final;
 
     static const char groupName[];
 
 private:
-    DocumentSourceGroup(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
+    explicit DocumentSourceGroup(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
 
     /// Spill groups map to disk and returns an iterator to the file.
     std::shared_ptr<Sorter<Value, Value>::Iterator> spill();
@@ -569,15 +604,15 @@ private:
 };
 
 
-class DocumentSourceMatch : public DocumentSource {
+class DocumentSourceMatch final : public DocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual bool coalesce(const boost::intrusive_ptr<DocumentSource>& nextSource);
-    virtual Value serialize(bool explain = false) const;
-    virtual boost::intrusive_ptr<DocumentSource> optimize();
-    virtual void setSource(DocumentSource* Source);
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    bool coalesce(const boost::intrusive_ptr<DocumentSource>& nextSource) final;
+    Value serialize(bool explain = false) const final;
+    boost::intrusive_ptr<DocumentSource> optimize() final;
+    void setSource(DocumentSource* Source) final;
 
     /**
       Create a filter.
@@ -624,11 +659,11 @@ public:
 
     // virtuals from DocumentSource
     boost::optional<Document> getNext();
-    virtual void setSource(DocumentSource* pSource);
-    virtual const char* getSourceName() const;
-    virtual void dispose();
-    virtual Value serialize(bool explain = false) const;
-    virtual bool isValidInitialSource() const {
+    void setSource(DocumentSource* pSource) final;
+    const char* getSourceName() const final;
+    void dispose() final;
+    Value serialize(bool explain = false) const final;
+    bool isValidInitialSource() const final {
         return true;
     }
 
@@ -678,22 +713,22 @@ private:
     bool _unstarted;
 };
 
-class DocumentSourceOut : public DocumentSource,
-                          public SplittableDocumentSource,
-                          public DocumentSourceNeedsMongod {
+class DocumentSourceOut final : public DocumentSource,
+                                public SplittableDocumentSource,
+                                public DocumentSourceNeedsMongod {
 public:
     // virtuals from DocumentSource
-    virtual ~DocumentSourceOut();
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual Value serialize(bool explain = false) const;
-    virtual GetDepsReturn getDependencies(DepsTracker* deps) const;
+    ~DocumentSourceOut() final;
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    Value serialize(bool explain = false) const final;
+    GetDepsReturn getDependencies(DepsTracker* deps) const final;
 
     // Virtuals for SplittableDocumentSource
-    virtual boost::intrusive_ptr<DocumentSource> getShardSource() {
+    boost::intrusive_ptr<DocumentSource> getShardSource() final {
         return NULL;
     }
-    virtual boost::intrusive_ptr<DocumentSource> getMergeSource() {
+    boost::intrusive_ptr<DocumentSource> getMergeSource() final {
         return this;
     }
 
@@ -732,13 +767,13 @@ private:
 };
 
 
-class DocumentSourceProject : public DocumentSource {
+class DocumentSourceProject final : public DocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual boost::intrusive_ptr<DocumentSource> optimize();
-    virtual Value serialize(bool explain = false) const;
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    boost::intrusive_ptr<DocumentSource> optimize() final;
+    Value serialize(bool explain = false) const final;
 
     virtual GetDepsReturn getDependencies(DepsTracker* deps) const;
 
@@ -772,18 +807,18 @@ private:
     BSONObj _raw;
 };
 
-class DocumentSourceRedact : public DocumentSource {
+class DocumentSourceRedact final : public DocumentSource {
 public:
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual boost::intrusive_ptr<DocumentSource> optimize();
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    boost::intrusive_ptr<DocumentSource> optimize() final;
 
     static const char redactName[];
 
     static boost::intrusive_ptr<DocumentSource> createFromBson(
         BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx);
 
-    virtual Value serialize(bool explain = false) const;
+    Value serialize(bool explain = false) const final;
 
 private:
     DocumentSourceRedact(const boost::intrusive_ptr<ExpressionContext>& expCtx,
@@ -798,19 +833,19 @@ private:
     boost::intrusive_ptr<Expression> _expression;
 };
 
-class DocumentSourceSort : public DocumentSource, public SplittableDocumentSource {
+class DocumentSourceSort final : public DocumentSource, public SplittableDocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual void serializeToArray(std::vector<Value>& array, bool explain = false) const;
-    virtual bool coalesce(const boost::intrusive_ptr<DocumentSource>& pNextSource);
-    virtual void dispose();
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    void serializeToArray(std::vector<Value>& array, bool explain = false) const final;
+    bool coalesce(const boost::intrusive_ptr<DocumentSource>& pNextSource) final;
+    void dispose() final;
 
-    virtual GetDepsReturn getDependencies(DepsTracker* deps) const;
+    GetDepsReturn getDependencies(DepsTracker* deps) const final;
 
-    virtual boost::intrusive_ptr<DocumentSource> getShardSource();
-    virtual boost::intrusive_ptr<DocumentSource> getMergeSource();
+    boost::intrusive_ptr<DocumentSource> getShardSource() final;
+    boost::intrusive_ptr<DocumentSource> getMergeSource() final;
 
     /**
       Add sort key field.
@@ -857,9 +892,9 @@ public:
     static const char sortName[];
 
 private:
-    DocumentSourceSort(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
+    explicit DocumentSourceSort(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
 
-    virtual Value serialize(bool explain = false) const {
+    Value serialize(bool explain = false) const final {
         verify(false);  // should call addToBsonArray instead
     }
 
@@ -914,15 +949,15 @@ private:
     std::unique_ptr<MySorter::Iterator> _output;
 };
 
-class DocumentSourceLimit : public DocumentSource, public SplittableDocumentSource {
+class DocumentSourceLimit final : public DocumentSource, public SplittableDocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual bool coalesce(const boost::intrusive_ptr<DocumentSource>& pNextSource);
-    virtual Value serialize(bool explain = false) const;
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    bool coalesce(const boost::intrusive_ptr<DocumentSource>& pNextSource) final;
+    Value serialize(bool explain = false) const final;
 
-    virtual GetDepsReturn getDependencies(DepsTracker* deps) const {
+    GetDepsReturn getDependencies(DepsTracker* deps) const final {
         return SEE_NEXT;  // This doesn't affect needed fields
     }
 
@@ -937,10 +972,10 @@ public:
 
     // Virtuals for SplittableDocumentSource
     // Need to run on rounter. Running on shard as well is an optimization.
-    virtual boost::intrusive_ptr<DocumentSource> getShardSource() {
+    boost::intrusive_ptr<DocumentSource> getShardSource() final {
         return this;
     }
-    virtual boost::intrusive_ptr<DocumentSource> getMergeSource() {
+    boost::intrusive_ptr<DocumentSource> getMergeSource() final {
         return this;
     }
 
@@ -974,16 +1009,16 @@ private:
     long long count;
 };
 
-class DocumentSourceSkip : public DocumentSource, public SplittableDocumentSource {
+class DocumentSourceSkip final : public DocumentSource, public SplittableDocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual bool coalesce(const boost::intrusive_ptr<DocumentSource>& pNextSource);
-    virtual Value serialize(bool explain = false) const;
-    virtual boost::intrusive_ptr<DocumentSource> optimize();
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    bool coalesce(const boost::intrusive_ptr<DocumentSource>& pNextSource) final;
+    Value serialize(bool explain = false) const final;
+    boost::intrusive_ptr<DocumentSource> optimize() final;
 
-    virtual GetDepsReturn getDependencies(DepsTracker* deps) const {
+    GetDepsReturn getDependencies(DepsTracker* deps) const final {
         return SEE_NEXT;  // This doesn't affect needed fields
     }
 
@@ -998,10 +1033,10 @@ public:
 
     // Virtuals for SplittableDocumentSource
     // Need to run on rounter. Can't run on shards.
-    virtual boost::intrusive_ptr<DocumentSource> getShardSource() {
+    boost::intrusive_ptr<DocumentSource> getShardSource() final {
         return NULL;
     }
-    virtual boost::intrusive_ptr<DocumentSource> getMergeSource() {
+    boost::intrusive_ptr<DocumentSource> getMergeSource() final {
         return this;
     }
 
@@ -1029,21 +1064,21 @@ public:
     static const char skipName[];
 
 private:
-    DocumentSourceSkip(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
+    explicit DocumentSourceSkip(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
 
     long long _skip;
     bool _needToSkip;
 };
 
 
-class DocumentSourceUnwind : public DocumentSource {
+class DocumentSourceUnwind final : public DocumentSource {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual Value serialize(bool explain = false) const;
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    Value serialize(bool explain = false) const final;
 
-    virtual GetDepsReturn getDependencies(DepsTracker* deps) const;
+    GetDepsReturn getDependencies(DepsTracker* deps) const final;
 
     /**
       Create a new projection DocumentSource from BSON.
@@ -1061,7 +1096,7 @@ public:
     static const char unwindName[];
 
 private:
-    DocumentSourceUnwind(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
+    explicit DocumentSourceUnwind(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
 
     /** Specify the field to unwind. */
     void unwindPath(const FieldPath& fieldPath);
@@ -1079,18 +1114,18 @@ class DocumentSourceGeoNear : public DocumentSource,
                               public DocumentSourceNeedsMongod {
 public:
     // virtuals from DocumentSource
-    virtual boost::optional<Document> getNext();
-    virtual const char* getSourceName() const;
-    virtual void setSource(DocumentSource* pSource);
-    virtual bool coalesce(const boost::intrusive_ptr<DocumentSource>& pNextSource);
-    virtual bool isValidInitialSource() const {
+    boost::optional<Document> getNext() final;
+    const char* getSourceName() const final;
+    void setSource(DocumentSource* pSource) final;
+    bool coalesce(const boost::intrusive_ptr<DocumentSource>& pNextSource) final;
+    bool isValidInitialSource() const final {
         return true;
     }
-    virtual Value serialize(bool explain = false) const;
+    Value serialize(bool explain = false) const final;
 
     // Virtuals for SplittableDocumentSource
-    virtual boost::intrusive_ptr<DocumentSource> getShardSource();
-    virtual boost::intrusive_ptr<DocumentSource> getMergeSource();
+    boost::intrusive_ptr<DocumentSource> getShardSource() final;
+    boost::intrusive_ptr<DocumentSource> getMergeSource() final;
 
     static boost::intrusive_ptr<DocumentSource> createFromBson(
         BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& pCtx);
@@ -1106,7 +1141,7 @@ public:
         const boost::intrusive_ptr<ExpressionContext>& pCtx);
 
 private:
-    DocumentSourceGeoNear(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
+    explicit DocumentSourceGeoNear(const boost::intrusive_ptr<ExpressionContext>& pExpCtx);
 
     void parseOptions(BSONObj options);
     BSONObj buildGeoNearCmd() const;

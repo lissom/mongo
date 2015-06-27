@@ -63,7 +63,6 @@ public:
         CursorId cursorId = 0;
         NamespaceString nss;
         Documents documents;
-        // TODO: fill in with replication metadata.
         struct OtherFields {
             BSONObj metadata;
         } otherFields;
@@ -118,7 +117,8 @@ public:
             const HostAndPort& source,
             const std::string& dbname,
             const BSONObj& cmdObj,
-            const CallbackFn& work);
+            const CallbackFn& work,
+            const BSONObj& metadata = rpc::makeEmptyMetadata());
 
     virtual ~Fetcher();
 
@@ -167,12 +167,20 @@ private:
      */
     void _finishCallback();
 
+    /**
+     * Sends a kill cursor for the specified id and collection (namespace)
+     *
+     * Note: Errors are ignored and no retry is done
+     */
+    void _sendKillCursors(const CursorId id, const NamespaceString& nss);
+
     // Not owned by us.
     executor::TaskExecutor* _executor;
 
     HostAndPort _source;
     std::string _dbname;
     BSONObj _cmdObj;
+    BSONObj _metadata;
     CallbackFn _work;
 
     // Protects member data of this Fetcher.

@@ -600,18 +600,17 @@ public:
             unique_ptr<AutoGetCollectionForRead> ctx(new AutoGetCollectionForRead(txn, ns));
             Collection* coll = ctx->getCollection();
 
-            PlanExecutor* rawExec;
-            if (!getExecutor(txn,
-                             coll,
-                             cq.release(),
-                             PlanExecutor::YIELD_MANUAL,
-                             &rawExec,
-                             QueryPlannerParams::NO_TABLE_SCAN).isOK()) {
+            auto statusWithPlanExecutor = getExecutor(txn,
+                                                      coll,
+                                                      std::move(cq),
+                                                      PlanExecutor::YIELD_MANUAL,
+                                                      QueryPlannerParams::NO_TABLE_SCAN);
+            if (!statusWithPlanExecutor.isOK()) {
                 uasserted(17241, "Can't get executor for query " + query.toString());
                 return 0;
             }
 
-            unique_ptr<PlanExecutor> exec(rawExec);
+            unique_ptr<PlanExecutor> exec = std::move(statusWithPlanExecutor.getValue());
             // Process notifications when the lock is released/reacquired in the loop below
             exec->registerExec();
 
@@ -756,7 +755,7 @@ public:
                 result.append("millis", timer.millis());
                 return 1;
             }
-            exec.reset(InternalPlanner::collectionScan(txn, ns, collection));
+            exec = InternalPlanner::collectionScan(txn, ns, collection);
         } else if (min.isEmpty() || max.isEmpty()) {
             errmsg = "only one of min or max specified";
             return false;
@@ -780,7 +779,7 @@ public:
             min = Helpers::toKeyFormat(kp.extendRangeBound(min, false));
             max = Helpers::toKeyFormat(kp.extendRangeBound(max, false));
 
-            exec.reset(InternalPlanner::indexScan(txn, collection, idx, min, max, false));
+            exec = InternalPlanner::indexScan(txn, collection, idx, min, max, false);
         }
 
         long long avgObjSize = collection->dataSize(txn) / collection->numRecords(txn);
@@ -1300,11 +1299,18 @@ bool Command::run(OperationContext* txn,
 
     // For commands from mongos, append some info to help getLastError(w) work.
     // TODO: refactor out of here as part of SERVER-18326
-    if (replCoord->getReplicationMode() == repl::ReplicationCoordinator::modeReplSet &&
-        shardingState.enabled()) {
+    bool isReplSet = replCoord->getReplicationMode() == repl::ReplicationCoordinator::modeReplSet;
+
+    if (isReplSet && shardingState.enabled()) {
         rpc::ShardingMetadata(
             repl::ReplClientInfo::forClient(txn->getClient()).getLastOp().getTimestamp(),
             replCoord->getElectionId()).writeToMetadata(&metadataBob);
+    }
+
+    const auto& metadata = request.getMetadata();
+    if (isReplSet && metadata.hasField(rpc::kReplicationMetadataFieldName)) {
+        BSONObjBuilder replInfoBob(metadataBob.subobjStart(rpc::kReplicationMetadataFieldName));
+        replCoord->prepareReplResponseMetadata(&replInfoBob);
     }
 
     auto cmdResponse = replyBuilderBob.done();
