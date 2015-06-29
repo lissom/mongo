@@ -7,6 +7,7 @@
 
 #include "mongo/platform/basic.h"
 
+#include "mongo/s/bulk_write_operation_runner.h"
 #include "mongo/s/message_pipeline.h"
 #include "mongo/util/net/client_async_message_port.h"
 
@@ -50,20 +51,19 @@ MessagePipeline::MessageProcessor::MessageProcessor(MessagePipeline* const owner
 }
 
 void MessagePipeline::MessageProcessor::run() {
-    for (;;) {
+    while (!inShutdown()) {
         network::ClientAsyncMessagePort* newMessageConn =
                 _owner->getNextSocketWithWaitingRequest();
         if (newMessageConn == nullptr)
             return;
-        std::unique_ptr<BasicOperationRunner> upRunner(new BasicOperationRunner(newMessageConn));
-        //Take a raw pointer for general use before ownership transfer
-        _runner = upRunner.get();
-        newMessageConn->setOpRunner(std::move(upRunner));
+        // TODO: turn this into a factory based on message operation
+        std::unique_ptr<AbstractOperationRunner> upRunner(
+        		new BulkWriteOperationRunner(newMessageConn));
 
+        //Take a raw pointer for general use before ownership transfer
+        AbstractOperationRunner* _runner = upRunner.get();
+        newMessageConn->setOpRunner(std::move(upRunner));
         _runner->run();
-        //Original code releases sharded connections
-        // Release connections back to pool, if any still cached
-        //ShardConnection::releaseMyConnections();
     }
 }
 

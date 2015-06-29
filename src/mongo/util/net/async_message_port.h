@@ -23,7 +23,8 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/message_port.h"
-#include "mongo/s/basic_operation_runner.h"
+
+#include "../../s/abstract_operation_runner.h"
 
 namespace mongo {
 namespace network {

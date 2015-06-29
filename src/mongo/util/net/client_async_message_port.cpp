@@ -16,12 +16,11 @@ ClientAsyncMessagePort::ClientAsyncMessagePort(Connections* const owner,
     	AsyncMessagePort(owner, std::move(socket)) { }
 
 ClientAsyncMessagePort::~ClientAsyncMessagePort() {
-	delete _runner;
 }
 
-void ClientAsyncMessagePort::setOpRunner(std::unique_ptr<BasicOperationRunner> newOpRunner) {
+void ClientAsyncMessagePort::setOpRunner(std::unique_ptr<AbstractOperationRunner> newOpRunner) {
 	fassert(-1, state() != State::complete);
-	_runner = newOpRunner.release();
+	_runner = std::move(newOpRunner);
 }
 
 } /* namespace network */

@@ -14,7 +14,7 @@
 #include <thread>
 #include <unordered_set>
 
-#include "mongo/s/basic_operation_runner.h"
+#include "abstract_operation_runner.h"
 #include "mongo/s/abstract_message_pipeline.h"
 
 namespace mongo {
@@ -59,11 +59,8 @@ private:
         void run();
 
     private:
-        BasicOperationRunner* _runner { };
         MessagePipeline* const _owner;
     };
-
-    void workLoop();
 
     OpStats opStats;
     //TODO: Get a better concurrency structure

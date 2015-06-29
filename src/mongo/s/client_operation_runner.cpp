@@ -1,7 +1,7 @@
 /*
- * basic_operation_runner.cpp
+ * client_operation_runner.cpp
  *
- *  Created on: Jun 28, 2015
+ *  Created on: Jun 29, 2015
  *      Author: charlie
  */
 
@@ -10,15 +10,14 @@
 #include "mongo/db/client.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/lasterror.h"
-#include "mongo/s/basic_operation_runner.h"
+#include "mongo/s/client_operation_runner.h"
 #include "mongo/s/cluster_last_error_info.h"
-#include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
-#include "mongo/util/net/client_async_message_port.h"
+#include "mongo/util/assert_util.h"
 
 namespace mongo {
 
-BasicOperationRunner::BasicOperationRunner(network::ClientAsyncMessagePort* const connInfo) :
+ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* const connInfo) :
         port(connInfo), _clientInfo(&cc()), _m(static_cast<void*>(connInfo->getBuffer()), false),
         _d(_m), _requestId(_m.header().getId()), _requestOp(static_cast<Operations>(_m.operation())),
         _nss(_d.messageShouldHaveNs() ? _d.getns() : "") {
@@ -35,13 +34,11 @@ BasicOperationRunner::BasicOperationRunner(network::ClientAsyncMessagePort* cons
     }
 }
 
-BasicOperationRunner::~BasicOperationRunner() {
-    //Ensure no dangling operations
-    fassert(-1, operationsActive() == false);
+ClientOperationRunner::~ClientOperationRunner() {
     port->persistClientState();
 }
 
-void BasicOperationRunner::run() {
+void ClientOperationRunner::run() {
     verify(_state == State::init);
     try {
         Client::initThread("conn", port);
@@ -85,7 +82,7 @@ BSONObj buildErrReply(const DBException& ex) {
 }
 }
 
-void BasicOperationRunner::logException(int logLevel, const char* const messageStart,
+void ClientOperationRunner::logException(int logLevel, const char* const messageStart,
         const DBException& ex) {
     LOG(logLevel) << messageStart << " while processing op " << _requestOp
             << " for " << _nss << causedBy(ex);
@@ -98,12 +95,12 @@ void BasicOperationRunner::logException(int logLevel, const char* const messageS
     LastError::get(cc()).setLastError(ex.getCode(), ex.what());
 }
 
-void BasicOperationRunner::onContextStart() {
+void ClientOperationRunner::onContextStart() {
     port->restoreClientState();
 }
 
-void BasicOperationRunner::onContextEnd() {
+void ClientOperationRunner::onContextEnd() {
     port->persistClientState();
 }
 
-} //namespace mongo
+} /* namespace mongo */
