@@ -7,13 +7,13 @@
 
 #pragma once
 
-#include "../util/net/async_message_port.h"
+#include "mongo/util/net/client_async_message_port.h"
 
 namespace mongo {
 class AbstractMessagePipeline {
 public:
     virtual ~AbstractMessagePipeline() {}
-    virtual void enqueueMessage(network::AsyncClientConnection* conn) = 0;
-    virtual network::AsyncClientConnection* getNextMessage() = 0;
+    virtual void enqueueMessage(network::ClientAsyncMessagePort* conn) = 0;
+    virtual network::ClientAsyncMessagePort* getNextSocketWithWaitingRequest() = 0;
 };
 } //namespace mongo

@@ -25,8 +25,9 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
+#include "mongo/util/net/async_message_server.h"
 #include "mongo/util/net/message.h"
-#include "async_message_server.h"
+
 
 namespace mongo {
 namespace network {
@@ -34,7 +35,9 @@ namespace network {
 const std::string NETWORK_PREFIX = "conn";
 
 AsioAsyncServer::AsioAsyncServer(Options options, AbstractMessagePipeline* const pipeline) :
-        _connections(new Connections(this)), _pipeline(pipeline), _options(std::move(options)), _timerThread(
+        _connections(new Connections(this, [this] (AsyncMessagePort* const port) {
+		this->handlerOperationReady(port);
+	})), _pipeline(pipeline), _options(std::move(options)), _timerThread(
                 [this] {updateTime();}) {
     //If ipList is specified bind on those ips, otherwise bind to all ips for that port
     if (_options.ipList.size()) {
@@ -63,8 +66,8 @@ AsioAsyncServer::~AsioAsyncServer() {
     _timerThread.join();
 }
 
-void AsioAsyncServer::handlerOperationReady(AsyncClientConnection* conn) {
-    _pipeline->enqueueMessage(conn);
+void AsioAsyncServer::handlerOperationReady(AsyncMessagePort* conn) {
+    _pipeline->enqueueMessage(dynamic_cast<network::ClientAsyncMessagePort*>(conn));
 }
 
 void AsioAsyncServer::startAllWaits() {
@@ -76,22 +79,23 @@ void AsioAsyncServer::startAllWaits() {
 void AsioAsyncServer::startWait(Initiator* const initiator) {
     initiator->_acceptor.async_accept(initiator->_socket, [this, initiator] (std::error_code ec) {
         if (!ec)
-        //TOOO: Ensure that move is enabled: ASIO_HAS_MOVE
-            _connections->newConnHandler(std::move(initiator->_socket));
-            else {
-                //Clear the socket
-                asio::ip::tcp::socket sock(std::move(initiator->_socket));
-                sock.shutdown(asio::socket_base::shutdown_type::shutdown_both);
-                sock.close();
-                log() << "Error listening for new connection. Code: " << ec
-                //TODO: add template to logstream_builder.h to take operator<< if it exists...
-                //" on port " <<
-                //initiator->_acceptor.local_endpoint()
-                << std::endl;
-            }
-            //requeue
-            startWait(initiator);
-        });
+        	//TOOO: Ensure that move is enabled: ASIO_HAS_MOVE
+        	//The connection inserts itself into the container
+        	(void) new ClientAsyncMessagePort(_connections.get(), std::move(initiator->_socket));
+		else {
+			//Clear the socket
+			asio::ip::tcp::socket sock(std::move(initiator->_socket));
+			sock.shutdown(asio::socket_base::shutdown_type::shutdown_both);
+			sock.close();
+			log() << "Error listening for new connection. Code: " << ec
+			//TODO: add template to logstream_builder.h to take operator<< if it exists...
+			//" on port " <<
+			//initiator->_acceptor.local_endpoint()
+			<< std::endl;
+		}
+		//requeue
+		startWait(initiator);
+	});
 }
 
 void AsioAsyncServer::serviceRun() {

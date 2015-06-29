@@ -14,7 +14,7 @@
 #include <thread>
 #include <unordered_set>
 
-#include "mongo/s/operation_runner.h"
+#include "mongo/s/basic_operation_runner.h"
 #include "mongo/s/abstract_message_pipeline.h"
 
 namespace mongo {
@@ -45,8 +45,8 @@ public:
      * Iterate over the message runners for running currentOps and then the queues for "waiting" currentOps
      */
     std::unique_ptr<CurrentOp> currentOp();
-    void enqueueMessage(network::AsyncClientConnection* conn) final;
-    network::AsyncClientConnection* getNextMessage();
+    void enqueueMessage(network::ClientAsyncMessagePort* conn) final;
+    network::ClientAsyncMessagePort* getNextSocketWithWaitingRequest();
 
 private:
     /*
@@ -59,7 +59,7 @@ private:
         void run();
 
     private:
-        OperationRunner* _runner { };
+        BasicOperationRunner* _runner { };
         MessagePipeline* const _owner;
     };
 
@@ -69,7 +69,7 @@ private:
     //TODO: Get a better concurrency structure
     std::mutex _mutex;
     std::condition_variable _notifyNewMessages;
-    std::queue<network::AsyncClientConnection*> _newMessages;
+    std::queue<network::ClientAsyncMessagePort*> _newMessages;
     std::atomic<bool> _terminate { };
     std::vector<std::thread> _threads;
 };

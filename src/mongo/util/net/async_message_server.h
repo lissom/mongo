@@ -14,11 +14,11 @@
 #include <vector>
 #include <unordered_map>
 
-#include "async_message_port.h"
 #include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/s/abstract_message_pipeline.h"
+#include "mongo/util/net/client_async_message_port.h"
 #include "mongo/util/net/message_server.h"
 #include "mongo/util/net/clock.h"
 
@@ -48,7 +48,7 @@ public:
      * Connections call this to initiate listening on their client connection
      * and capture of a message
      */
-    void handlerOperationReady(AsyncClientConnection* conn);
+    void handlerOperationReady(AsyncMessagePort* conn);
 
 private:
     struct Initiator {

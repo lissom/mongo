@@ -161,6 +161,19 @@ public:
             dassert(response.isValid(NULL));
         }
 
+
+
+
+
+
+
+//RETURN
+
+
+
+
+
+
         // Populate the lastError object based on the write response
         cmdLastError->reset();
         batchErrorToLastError(request, response, cmdLastError);

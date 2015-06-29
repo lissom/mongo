@@ -8,6 +8,7 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/s/message_pipeline.h"
+#include "mongo/util/net/client_async_message_port.h"
 
 namespace mongo {
 
@@ -24,21 +25,21 @@ MessagePipeline::~MessagePipeline() {
     _terminate = true;
 }
 
-void MessagePipeline::enqueueMessage(network::AsyncClientConnection* conn) {
+void MessagePipeline::enqueueMessage(network::ClientAsyncMessagePort* conn) {
     std::unique_lock<std::mutex> lock(_mutex);
     _newMessages.push(conn);
     lock.release();
     _notifyNewMessages.notify_one();
 }
 
-network::AsyncClientConnection* MessagePipeline::getNextMessage() {
+network::ClientAsyncMessagePort* MessagePipeline::getNextSocketWithWaitingRequest() {
     std::unique_lock<std::mutex> lock(_mutex);
     _notifyNewMessages.wait(lock, [this] {
         return _newMessages.size() || _terminate;
     });
     if (_terminate)
         return nullptr;
-    network::AsyncClientConnection* result;
+    network::ClientAsyncMessagePort* result;
     result = _newMessages.front();
     _newMessages.pop();
     return result;
@@ -50,13 +51,14 @@ MessagePipeline::MessageProcessor::MessageProcessor(MessagePipeline* const owner
 
 void MessagePipeline::MessageProcessor::run() {
     for (;;) {
-        network::AsyncClientConnection* newMessageConn = _owner->getNextMessage();
+        network::ClientAsyncMessagePort* newMessageConn =
+                _owner->getNextSocketWithWaitingRequest();
         if (newMessageConn == nullptr)
             return;
-        std::unique_ptr<OperationRunner> upRunner(new OperationRunner(newMessageConn));
+        std::unique_ptr<BasicOperationRunner> upRunner(new BasicOperationRunner(newMessageConn));
         //Take a raw pointer for general use before ownership transfer
         _runner = upRunner.get();
-        newMessageConn->setOpRuner(std::move(upRunner));
+        newMessageConn->setOpRunner(std::move(upRunner));
 
         _runner->run();
         //Original code releases sharded connections

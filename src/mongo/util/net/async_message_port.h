@@ -11,18 +11,19 @@
 #include <asio.hpp>
 #include <boost/thread/thread.hpp>
 #include <errno.h>
+#include <functional>
 #include <mutex>
 #include <utility>
 
 #include "mongo/db/client.h"
 #include "mongo/db/service_context.h"
 #include "mongo/platform/platform_specific.h"
-#include "mongo/s/abstract_operation_runner.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/message_port.h"
+#include "mongo/s/basic_operation_runner.h"
 
 namespace mongo {
 namespace network {
@@ -61,35 +62,20 @@ struct ConnStats {
  *
  * Piggyback isn't supported, only appears to be used for mongoD (and isn't part of the abstract)
  *
- * AsyncClientConnection(ACC) and OperationRunner(OpRunner) are tightly bound
- * ACC starts a receive, then passes itself to a pipeline, which generates an OperationRunner
- * ACC should not go into State::receive with an OperationRunner in existence
- * ACC should not be in State::send without an OperationRUnner active
- * ACC shall delete the OperationRunner at the end of the send and retain any needed client state
- *
- * ACC has no knowledge of how the message was formed, so it has to copy into it's buffer :(
- *
  */
-//This class isn't marked final, probably going to derive from it later on
 //TODO: Abstract class to glue AsyncClientConnection and OperationRunner together
 //TODO: MONGO_ALIGN_TO_CACHE, mars release date 6.24
-class AsyncClientConnection final : public AbstractMessagingPort {
+class AsyncMessagePort : public AbstractMessagingPort {
 public:
-    MONGO_DISALLOW_COPYING(AsyncClientConnection);
+    MONGO_DISALLOW_COPYING(AsyncMessagePort);
     //State is what is being waiting on (unless errored or completed)
     enum class State {
         init, receieve, send, operation, error, complete
     };
     using PersistantState = ServiceContext::UniqueClient;
-    AsyncClientConnection(Connections* const owner, asio::ip::tcp::socket socket,
-            ConnectionId connectionId);
+    AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
 
-    ~AsyncClientConnection();
-
-    void setOpRuner(std::unique_ptr<AbstractOperationRunner> newOpRunner) {
-        fassert(-1, _state != State::complete);
-        _runner = std::move(newOpRunner);
-    }
+    ~AsyncMessagePort();
 
     MsgData::View& getMsgData() {
         verify(_buf.data());
@@ -125,8 +111,11 @@ public:
     char* getBuffer() {
         return _buf.data();
     }
+    const char* getBuffer() const {
+        return _buf.data();
+    }
     //Not the message's size, the buffers
-    size_t getBufferSize() {
+    const size_t getBufferSize() const {
         return _buf.size();
     }
     const ConnStats& getStats() const {
@@ -137,6 +126,8 @@ public:
     }
 
     // Begin AbstractMessagingPort
+
+    const Timer& messageTimer() { return _messageTimer; }
 
     void reply(Message& received, Message& response, MSGID responseToId) final {
         fassert(-1, state() == State::operation);
@@ -177,6 +168,8 @@ public:
     }
 
     // End AbstractMessagingPort
+protected:
+    const State state() const { return _state; }
 
 private:
     //Send start assumes a synchronous sender that needs to be detached from
@@ -217,15 +210,13 @@ private:
     bool isValid(State state) {
         return state != State::error && state != State::complete;
     }
-    State state() {
-        return _state;
-    }
+
     void setState(State newState);
 
     Connections* const _owner;
     ConnStats _stats;
     asio::ip::tcp::socket _socket;
-    ConnectionId _connectionId;
+    const ConnectionId _connectionId;
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector<char> _buf;
     std::vector<asio::const_buffer> _ioBuf;
@@ -236,33 +227,37 @@ private:
     //TODO: Turn this into state and verify it's correct at all stages
     std::atomic<bool> _closeOnComplete { };
     std::atomic<State> _state { State::init };
-    std::unique_ptr<AbstractOperationRunner> _runner { };
+    Timer _messageTimer;
 };
 
 /*
  * TODO: NUMA aware handling will be added one day, so NONE of this is static
- * All funcions starting with async are calling from async functions, should not
+ * All functions starting with async are calling from async functions, should not
  * take locks if at all possible
  */
 //TODO: MONGO_ALIGN_TO_CACHE
 class Connections {
 public:
-MONGO_DISALLOW_COPYING(Connections);
-    Connections(AsioAsyncServer* const server) :
-            _server(server) {
+	MONGO_DISALLOW_COPYING(Connections);
+	using MessageReadyHandler = std::function<void(AsyncMessagePort*)>;
+    Connections(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
+            _server(server), _messageReadyHandler(messageReadyHandler) {
     }
     void newConnHandler(asio::ip::tcp::socket&& socket);
     //Passing message, which shouldn't allocate any buffers
-    void handlerOperationReady(AsyncClientConnection* conn);
+    void handlerOperationReady(AsyncMessagePort* conn);
     const ConnStats& getStats() const {
         return _stats;
     }
 
 private:
-    friend class AsyncClientConnection;
-    using ConnectionHolder = UnboundedContainer<network::AsyncClientConnection*>;
+    friend class AsyncMessagePort;
+    using ConnectionHolder = UnboundedContainer<network::AsyncMessagePort*>;
+
+    ConnectionId getNewConnId() { return ++_connectionCount; }
 
     AsioAsyncServer* const _server;
+    MessageReadyHandler _messageReadyHandler;
     ConnectionHolder _conns;
     ConnStats _stats;
     //TODO: more concurrent
