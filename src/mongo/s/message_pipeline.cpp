@@ -55,10 +55,16 @@ void MessagePipeline::MessageProcessor::run() {
         network::ClientAsyncMessagePort* newMessageConn =
                 _owner->getNextSocketWithWaitingRequest();
         if (newMessageConn == nullptr)
-            return;
+            continue;
+
+
+
+
         // TODO: turn this into a factory based on message operation
-        std::unique_ptr<AbstractOperationRunner> upRunner(
-        		new BulkWriteOperationRunner(newMessageConn));
+        std::unique_ptr<AbstractOperationRunner> upRunner =
+                createOpRunnerClient(connInfo);
+
+
 
         //Take a raw pointer for general use before ownership transfer
         AbstractOperationRunner* _runner = upRunner.get();

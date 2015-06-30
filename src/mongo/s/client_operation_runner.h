@@ -15,7 +15,8 @@ namespace mongo {
 class ClientOperationRunner : public AbstractOperationRunner {
 public:
     MONGO_DISALLOW_COPYING(ClientOperationRunner);
-    ClientOperationRunner(network::ClientAsyncMessagePort* const connInfo);
+    ClientOperationRunner(network::ClientAsyncMessagePort* const connInfo,
+            Message* const message, DbMessage* const dbMessage, NamespaceString* const nss);
     ~ClientOperationRunner();
 
     void run() final;

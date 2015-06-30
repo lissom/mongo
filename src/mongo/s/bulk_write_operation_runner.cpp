@@ -10,8 +10,9 @@
 #include "mongo/s/bulk_write_operation_runner.h"
 
 namespace mongo {
-BulkWriteOperationRunner::BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo) :
-		ClientOperationRunner(connInfo) {
+BulkWriteOperationRunner::BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo,
+        Message* const message, DbMessage* const dbMessage, NamespaceString* const nss) :
+		ClientOperationRunner(connInfo, message, dbMessage, nss) {
 }
 
 BulkWriteOperationRunner::~BulkWriteOperationRunner() {

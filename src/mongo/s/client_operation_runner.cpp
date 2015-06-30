@@ -17,10 +17,11 @@
 
 namespace mongo {
 
-ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* const connInfo) :
-        port(connInfo), _clientInfo(&cc()), _m(static_cast<void*>(connInfo->getBuffer()), false),
-        _d(_m), _requestId(_m.header().getId()), _requestOp(static_cast<Operations>(_m.operation())),
-        _nss(_d.messageShouldHaveNs() ? _d.getns() : "") {
+ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* const connInfo,
+        Message* const message, DbMessage* const dbMessage, NamespaceString* const nss) :
+        port(connInfo), _clientInfo(&cc()), _m(*message), _d(std::move(*dbMessage)),
+        _requestId(_m.header().getId()), _requestOp(static_cast<Operations>(_m.operation())),
+        _nss(std::move(*nss)) {
     // Noting Request::process unconditionally calls getns() which calls _d.getns() for logging
     // this should always be true
     if (_d.messageShouldHaveNs()) {

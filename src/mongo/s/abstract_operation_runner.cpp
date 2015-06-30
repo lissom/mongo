@@ -10,5 +10,13 @@
 #include "mongo/s/abstract_operation_runner.h"
 
 namespace mongo {
+OpRunnerPtr createOpRunnerClient(network::ClientAsyncMessagePort* const connInfo,
+        Message* const message, DbMessage* const dbMessage, NamespaceString* const nss) {
+    OpRunnerPtr ret;
+    // TODO: Move generating the right OpRunner into commands, here now to minimize files touched
+
+
+    return ret;
+}
 
 } //namespace mongo

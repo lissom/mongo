@@ -21,7 +21,7 @@
 #include <memory>
 #include <string>
 
-namespace tools {
+namespace mongo {
 /*
  * Factory template
  * This factory template is never meant to be concrete, templates "namespace" and statics

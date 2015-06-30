@@ -17,7 +17,8 @@ public:
     enum class State {
         init, running, completed, errored, finished
     };
-    BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo);
+    BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo,
+            Message* const message, DbMessage* const dbMessage, NamespaceString* const nss);
     ~BulkWriteOperationRunner();
 
 private:

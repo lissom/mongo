@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include "mongo/platform/basic.h"
 
 #include "mongo/db/client.h"
@@ -15,11 +17,16 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/service_context.h"
 #include "mongo/platform/platform_specific.h"
+#include "mongo/util/factory.h"
 
 namespace mongo {
-namespace network {
-    class ClientAsyncMessagePort;
-}
+class AbstractOperationRunner;
+using OpRunnerPtr = std::unique_ptr<AbstractOperationRunner>;
+//This factory will only produce client ops as the creation args are different
+using OpRunnerClientCreator = std::function<OpRunnerPtr(
+        network::ClientAsyncMessagePort* const connInfo,
+        Message* const message, DbMessage* const dbMessage, NamespaceString* const nss)>;
+using OpRunnerClientFactory =  RegisterFactory<OpRunnerPtr, OpRunnerClientCreator>;
 
 /*
  * AsyncMessagePort(AMP) and OperationRunner(OpRunner) are tightly bound
@@ -69,5 +76,8 @@ protected:
 
     std::atomic<State> _state { State::init };
 };
+
+OpRunnerPtr createOpRunnerClient(network::ClientAsyncMessagePort* const connInfo,
+        Message* const message, DbMessage* const dbMessage, NamespaceString* const nss);
 
 } //namespace mongo
