@@ -115,6 +115,20 @@ struct Record {
  *
  * Implementations may override any default implementation if they can provide a more
  * efficient implementation.
+ *
+ * IMPORTANT NOTE FOR DOCUMENT-LOCKING ENGINES: If you implement capped collections with a
+ * "visibility" system such that documents that exist in your snapshot but were inserted after
+ * the last uncommitted document are hidden, you must follow the following rules:
+ *   - next() must never return invisible documents.
+ *   - If next() on a forward cursor hits an invisible document, it should behave as if it hit
+ *     the end of the collection.
+ *   - When next() on a reverse cursor seeks to the end of the collection it must return the
+ *     newest visible document. This should only return boost::none if there are no visible
+ *     documents in the collection.
+ *   - seekExact() must ignore the visibility filter and return the requested document even if
+ *     it is supposed to be invisible.
+ * TODO SERVER-18934 Handle this above the storage engine layer so storage engines don't have to
+ * deal with capped visibility.
  */
 class RecordCursor {
 public:
@@ -498,6 +512,9 @@ public:
      * When we write to an oplog, we call this so that if the storage engine
      * supports doc locking, it can manage the visibility of oplog entries to ensure
      * they are ordered.
+     *
+     * Since this is called inside of a WriteUnitOfWork while holding a std::mutex, it is
+     * illegal to acquire any LockManager locks inside of this function.
      */
     virtual Status oplogDiskLocRegister(OperationContext* txn, const Timestamp& opTime) {
         return Status::OK();

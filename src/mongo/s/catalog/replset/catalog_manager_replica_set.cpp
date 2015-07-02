@@ -123,7 +123,7 @@ ConnectionString CatalogManagerReplicaSet::connectionString() const {
 void CatalogManagerReplicaSet::shutDown() {
     LOG(1) << "CatalogManagerReplicaSet::shutDown() called.";
     {
-        std::lock_guard<std::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _inShutdown = true;
     }
 
@@ -141,10 +141,6 @@ Status CatalogManagerReplicaSet::shardCollection(OperationContext* txn,
                                                  bool unique,
                                                  vector<BSONObj>* initPoints,
                                                  set<ShardId>* initShardsIds) {
-    return notYetImplemented;
-}
-
-Status CatalogManagerReplicaSet::createDatabase(const std::string& dbName) {
     return notYetImplemented;
 }
 
@@ -568,9 +564,9 @@ bool CatalogManagerReplicaSet::runUserManagementWriteCommand(const std::string& 
     return Command::getStatusFromCommandResult(response.getValue()).isOK();
 }
 
-bool CatalogManagerReplicaSet::runUserManagementReadCommand(const std::string& dbname,
-                                                            const BSONObj& cmdObj,
-                                                            BSONObjBuilder* result) {
+bool CatalogManagerReplicaSet::runReadCommand(const std::string& dbname,
+                                              const BSONObj& cmdObj,
+                                              BSONObjBuilder* result) {
     auto targeter = grid.shardRegistry()->getShard("config")->getTargeter();
     auto target = targeter->findHost(kConfigReadSelector);
     if (!target.isOK()) {
@@ -668,6 +664,43 @@ StatusWith<BSONObj> CatalogManagerReplicaSet::_runConfigServerCommandWithNotMast
     }
 
     MONGO_UNREACHABLE;
+}
+
+Status CatalogManagerReplicaSet::_checkDbDoesNotExist(const string& dbName) const {
+    BSONObjBuilder queryBuilder;
+    queryBuilder.appendRegex(
+        DatabaseType::name(), (string) "^" + pcrecpp::RE::QuoteMeta(dbName) + "$", "i");
+
+    const auto configShard = grid.shardRegistry()->getShard("config");
+    const auto readHost = configShard->getTargeter()->findHost(kConfigReadSelector);
+    if (!readHost.isOK()) {
+        return readHost.getStatus();
+    }
+
+    auto findStatus = grid.shardRegistry()->exhaustiveFind(readHost.getValue(),
+                                                           NamespaceString(DatabaseType::ConfigNS),
+                                                           queryBuilder.obj(),
+                                                           BSONObj(),
+                                                           1);
+    if (!findStatus.isOK()) {
+        return findStatus.getStatus();
+    }
+
+    const auto& docs = findStatus.getValue();
+    if (docs.empty()) {
+        return Status::OK();
+    }
+
+    BSONObj dbObj = docs.front();
+    std::string actualDbName = dbObj[DatabaseType::name()].String();
+    if (actualDbName == dbName) {
+        return Status(ErrorCodes::NamespaceExists,
+                      str::stream() << "database " << dbName << " already exists");
+    }
+
+    return Status(ErrorCodes::DatabaseDifferCase,
+                  str::stream() << "can't have 2 databases that just differ on case "
+                                << " have: " << actualDbName << " want to add: " << dbName);
 }
 
 }  // namespace mongo

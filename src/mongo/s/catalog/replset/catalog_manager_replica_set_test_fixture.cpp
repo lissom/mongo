@@ -33,9 +33,10 @@
 #include <vector>
 
 #include "mongo/base/status_with.h"
-#include "mongo/client/remote_command_runner_mock.h"
 #include "mongo/client/remote_command_targeter_factory_mock.h"
+#include "mongo/db/client.h"
 #include "mongo/db/repl/replication_executor.h"
+#include "mongo/db/service_context_noop.h"
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/s/catalog/dist_lock_manager_mock.h"
 #include "mongo/s/catalog/replset/catalog_manager_replica_set.h"
@@ -55,6 +56,11 @@ CatalogManagerReplSetTestFixture::CatalogManagerReplSetTestFixture() = default;
 CatalogManagerReplSetTestFixture::~CatalogManagerReplSetTestFixture() = default;
 
 void CatalogManagerReplSetTestFixture::setUp() {
+    _service = stdx::make_unique<ServiceContextNoop>();
+    _messagePort = stdx::make_unique<MessagingPortMock>();
+    _client = _service->makeClient("CatalogManagerReplSetTestFixture", _messagePort.get());
+    _opCtx = _client->makeOperationContext();
+
     auto network(stdx::make_unique<executor::NetworkInterfaceMock>());
 
     _mockNetwork = network.get();
@@ -73,7 +79,6 @@ void CatalogManagerReplSetTestFixture::setUp() {
 
     auto shardRegistry(
         stdx::make_unique<ShardRegistry>(stdx::make_unique<RemoteCommandTargeterFactoryMock>(),
-                                         stdx::make_unique<RemoteCommandRunnerMock>(),
                                          std::move(executor),
                                          _mockNetwork,
                                          cm.get()));
@@ -88,6 +93,10 @@ void CatalogManagerReplSetTestFixture::tearDown() {
     // This call will shut down the shard registry, which will terminate the underlying executor
     // and its threads.
     grid.clearForUnitTests();
+
+    _opCtx.reset();
+    _client.reset();
+    _service.reset();
 }
 
 CatalogManagerReplicaSet* CatalogManagerReplSetTestFixture::catalogManager() const {
@@ -101,12 +110,12 @@ ShardRegistry* CatalogManagerReplSetTestFixture::shardRegistry() const {
     return grid.shardRegistry();
 }
 
-RemoteCommandRunnerMock* CatalogManagerReplSetTestFixture::commandRunner() const {
-    return RemoteCommandRunnerMock::get(shardRegistry()->getCommandRunner());
-}
-
 executor::NetworkInterfaceMock* CatalogManagerReplSetTestFixture::network() const {
     return _mockNetwork;
+}
+
+MessagingPortMock* CatalogManagerReplSetTestFixture::getMessagingPort() const {
+    return _messagePort.get();
 }
 
 DistLockManagerMock* CatalogManagerReplSetTestFixture::distLock() const {
@@ -114,6 +123,12 @@ DistLockManagerMock* CatalogManagerReplSetTestFixture::distLock() const {
     invariant(distLock);
 
     return distLock;
+}
+
+OperationContext* CatalogManagerReplSetTestFixture::operationContext() const {
+    invariant(_opCtx);
+
+    return _opCtx.get();
 }
 
 void CatalogManagerReplSetTestFixture::onCommand(NetworkTestEnv::OnCommandFunction func) {

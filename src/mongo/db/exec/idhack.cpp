@@ -39,11 +39,13 @@
 #include "mongo/db/index/btree_access_method.h"
 #include "mongo/db/storage/record_fetcher.h"
 #include "mongo/s/d_state.h"
+#include "mongo/stdx/memory.h"
 
 namespace mongo {
 
 using std::unique_ptr;
 using std::vector;
+using stdx::make_unique;
 
 // static
 const char* IDHackStage::kStageType = "IDHACK";
@@ -105,10 +107,10 @@ PlanStage::StageState IDHackStage::work(WorkingSetID* out) {
         invariant(_recordCursor);
         WorkingSetID id = _idBeingPagedIn;
         _idBeingPagedIn = WorkingSet::INVALID_ID;
+
+        invariant(WorkingSetCommon::fetchIfUnfetched(_txn, _workingSet, id, _recordCursor));
+
         WorkingSetMember* member = _workingSet->get(id);
-
-        invariant(WorkingSetCommon::fetchIfUnfetched(_txn, member, _recordCursor));
-
         return advance(id, member, out);
     }
 
@@ -139,8 +141,8 @@ PlanStage::StageState IDHackStage::work(WorkingSetID* out) {
         // Create a new WSM for the result document.
         id = _workingSet->allocate();
         WorkingSetMember* member = _workingSet->get(id);
-        member->state = WorkingSetMember::LOC_AND_IDX;
         member->loc = loc;
+        _workingSet->transitionToLocAndIdx(id);
 
         if (!_recordCursor)
             _recordCursor = _collection->getCursor(_txn);
@@ -157,7 +159,7 @@ PlanStage::StageState IDHackStage::work(WorkingSetID* out) {
         }
 
         // The doc was already in memory, so we go ahead and return it.
-        if (!WorkingSetCommon::fetch(_txn, member, _recordCursor)) {
+        if (!WorkingSetCommon::fetch(_txn, _workingSet, id, _recordCursor)) {
             // _id is immutable so the index would return the only record that could
             // possibly match the query.
             _workingSet->free(id);
@@ -244,11 +246,11 @@ vector<PlanStage*> IDHackStage::getChildren() const {
     return empty;
 }
 
-PlanStageStats* IDHackStage::getStats() {
+unique_ptr<PlanStageStats> IDHackStage::getStats() {
     _commonStats.isEOF = isEOF();
-    unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_IDHACK));
-    ret->specific.reset(new IDHackStats(_specificStats));
-    return ret.release();
+    unique_ptr<PlanStageStats> ret = make_unique<PlanStageStats>(_commonStats, STAGE_IDHACK);
+    ret->specific = make_unique<IDHackStats>(_specificStats);
+    return ret;
 }
 
 const CommonStats* IDHackStage::getCommonStats() const {

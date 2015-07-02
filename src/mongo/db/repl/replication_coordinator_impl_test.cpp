@@ -30,7 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <future>
 #include <iostream>
 #include <memory>
 #include <set>
@@ -50,12 +49,14 @@
 #include "mongo/db/repl/replication_coordinator_external_state_mock.h"
 #include "mongo/db/repl/replication_coordinator_impl.h"
 #include "mongo/db/repl/replication_coordinator_test_fixture.h"
+#include "mongo/db/repl/replication_metadata.h"
 #include "mongo/db/repl/topology_coordinator_impl.h"
 #include "mongo/db/repl/update_position_args.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/write_concern_options.h"
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/future.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
@@ -1871,7 +1872,6 @@ TEST_F(ReplCoordTest, AwaitReplicationReconfigNodeCountExceedsNumberOfNodes) {
     getNet()->exitNetwork();
     reconfigThread.join();
     ASSERT_OK(status);
-    std::cout << "asdf" << std::endl;
 
     // writeconcern feasability should be reevaluated and an error should be returned
     ReplicationCoordinator::StatusAndDuration statusAndDur = awaiter.getResult();
@@ -2161,11 +2161,11 @@ TEST_F(ReplCoordTest, ReadAfterDeferredGreaterOpTime) {
 
     getReplCoord()->setMyLastOptime(OpTimeWithTermZero(0, 0));
 
-    auto pseudoLogOp = std::async(std::launch::async,
-                                  [this]() {
-                                      // Not guaranteed to be scheduled after waitUnitl blocks...
-                                      getReplCoord()->setMyLastOptime(OpTimeWithTermZero(200, 0));
-                                  });
+    auto pseudoLogOp = stdx::async(stdx::launch::async,
+                                   [this]() {
+                                       // Not guaranteed to be scheduled after waitUntil blocks...
+                                       getReplCoord()->setMyLastOptime(OpTimeWithTermZero(200, 0));
+                                   });
 
     auto result =
         getReplCoord()->waitUntilOpTime(&txn, ReadAfterOpTimeArgs(OpTimeWithTermZero(100, 0)));
@@ -2188,17 +2188,136 @@ TEST_F(ReplCoordTest, ReadAfterDeferredEqualOpTime) {
 
     OpTimeWithTermZero opTimeToWait(100, 0);
 
-    auto pseudoLogOp = std::async(std::launch::async,
-                                  [this, &opTimeToWait]() {
-                                      // Not guaranteed to be scheduled after waitUnitl blocks...
-                                      getReplCoord()->setMyLastOptime(opTimeToWait);
-                                  });
+    auto pseudoLogOp = stdx::async(stdx::launch::async,
+                                   [this, &opTimeToWait]() {
+                                       // Not guaranteed to be scheduled after waitUntil blocks...
+                                       getReplCoord()->setMyLastOptime(opTimeToWait);
+                                   });
 
     auto result = getReplCoord()->waitUntilOpTime(&txn, ReadAfterOpTimeArgs(opTimeToWait));
     pseudoLogOp.get();
 
     ASSERT_TRUE(result.didWait());
     ASSERT_OK(result.getStatus());
+}
+
+TEST_F(ReplCoordTest, MetadataWrongConfigVersion) {
+    // Ensure that we do not process ReplicationMetadata when ConfigVersions do not match.
+    assertStartSuccess(BSON("_id"
+                            << "mySet"
+                            << "version" << 2 << "members"
+                            << BSON_ARRAY(BSON("host"
+                                               << "node1:12345"
+                                               << "_id" << 0)
+                                          << BSON("host"
+                                                  << "node2:12345"
+                                                  << "_id" << 1) << BSON("host"
+                                                                         << "node3:12345"
+                                                                         << "_id" << 2))),
+                       HostAndPort("node1", 12345));
+    ASSERT_EQUALS(OpTime(Timestamp(0, 0), 0), getReplCoord()->getLastCommittedOpTime());
+
+    // lower configVersion
+    ReplicationMetadata metadata;
+    metadata.initialize(BSON("lastOpCommittedTimestamp" << Timestamp(10, 0) << "lastOpCommittedTerm"
+                                                        << 2 << "configVersion" << 1 << "primaryId"
+                                                        << 2 << "term" << 2));
+    getReplCoord()->processReplicationMetadata(metadata);
+    ASSERT_EQUALS(OpTime(Timestamp(0, 0), 0), getReplCoord()->getLastCommittedOpTime());
+
+    // higher configVersion
+    ReplicationMetadata metadata2;
+    metadata2.initialize(BSON("lastOpCommittedTimestamp"
+                              << Timestamp(10, 0) << "lastOpCommittedTerm" << 2 << "configVersion"
+                              << 100 << "primaryId" << 2 << "term" << 2));
+    getReplCoord()->processReplicationMetadata(metadata2);
+    ASSERT_EQUALS(OpTime(Timestamp(0, 0), 0), getReplCoord()->getLastCommittedOpTime());
+}
+
+TEST_F(ReplCoordTest, MetadataUpdatesLastCommittedOpTime) {
+    // Ensure that LastCommittedOpTime updates when a newer OpTime comes in via ReplicationMetadata,
+    // but not if the OpTime is older than the current LastCommittedOpTime.
+    assertStartSuccess(BSON("_id"
+                            << "mySet"
+                            << "version" << 2 << "members"
+                            << BSON_ARRAY(BSON("host"
+                                               << "node1:12345"
+                                               << "_id" << 0)
+                                          << BSON("host"
+                                                  << "node2:12345"
+                                                  << "_id" << 1) << BSON("host"
+                                                                         << "node3:12345"
+                                                                         << "_id" << 2))),
+                       HostAndPort("node1", 12345));
+    ASSERT_EQUALS(OpTime(Timestamp(0, 0), 0), getReplCoord()->getLastCommittedOpTime());
+    getReplCoord()->updateTerm(1);
+    ASSERT_EQUALS(1, getReplCoord()->getTerm());
+
+    // higher OpTime, should change
+    ReplicationMetadata metadata;
+    metadata.initialize(BSON("lastOpCommittedTimestamp" << Timestamp(10, 0) << "lastOpCommittedTerm"
+                                                        << 1 << "configVersion" << 2 << "primaryId"
+                                                        << 2 << "term" << 1));
+    getReplCoord()->processReplicationMetadata(metadata);
+    ASSERT_EQUALS(OpTime(Timestamp(10, 0), 1), getReplCoord()->getLastCommittedOpTime());
+
+    // lower OpTime, should not change
+    ReplicationMetadata metadata2;
+    metadata2.initialize(BSON("lastOpCommittedTimestamp" << Timestamp(9, 0) << "lastOpCommittedTerm"
+                                                         << 1 << "configVersion" << 2 << "primaryId"
+                                                         << 2 << "term" << 1));
+    getReplCoord()->processReplicationMetadata(metadata2);
+    ASSERT_EQUALS(OpTime(Timestamp(10, 0), 1), getReplCoord()->getLastCommittedOpTime());
+}
+
+TEST_F(ReplCoordTest, MetadataUpdatesTermAndPrimaryId) {
+    // Ensure that the term and PrimaryId are updated if and only if the term is greater than our
+    // current term.
+    assertStartSuccess(BSON("_id"
+                            << "mySet"
+                            << "version" << 2 << "members"
+                            << BSON_ARRAY(BSON("host"
+                                               << "node1:12345"
+                                               << "_id" << 0)
+                                          << BSON("host"
+                                                  << "node2:12345"
+                                                  << "_id" << 1) << BSON("host"
+                                                                         << "node3:12345"
+                                                                         << "_id" << 2))),
+                       HostAndPort("node1", 12345));
+    ASSERT_EQUALS(OpTime(Timestamp(0, 0), 0), getReplCoord()->getLastCommittedOpTime());
+    getReplCoord()->updateTerm(1);
+    ASSERT_EQUALS(1, getReplCoord()->getTerm());
+
+    // higher term, should change
+    ReplicationMetadata metadata;
+    metadata.initialize(BSON("lastOpCommittedTimestamp" << Timestamp(10, 0) << "lastOpCommittedTerm"
+                                                        << 3 << "configVersion" << 2 << "primaryId"
+                                                        << 2 << "term" << 3));
+    getReplCoord()->processReplicationMetadata(metadata);
+    ASSERT_EQUALS(OpTime(Timestamp(10, 0), 3), getReplCoord()->getLastCommittedOpTime());
+    ASSERT_EQUALS(3, getReplCoord()->getTerm());
+    ASSERT_EQUALS(2, getTopoCoord().getCurrentPrimaryIndex());
+
+    // lower term, should not change
+    ReplicationMetadata metadata2;
+    metadata2.initialize(BSON("lastOpCommittedTimestamp"
+                              << Timestamp(11, 0) << "lastOpCommittedTerm" << 3 << "configVersion"
+                              << 2 << "primaryId" << 1 << "term" << 2));
+    getReplCoord()->processReplicationMetadata(metadata2);
+    ASSERT_EQUALS(OpTime(Timestamp(11, 0), 3), getReplCoord()->getLastCommittedOpTime());
+    ASSERT_EQUALS(3, getReplCoord()->getTerm());
+    ASSERT_EQUALS(2, getTopoCoord().getCurrentPrimaryIndex());
+
+    // same term, should not change
+    ReplicationMetadata metadata3;
+    metadata3.initialize(BSON("lastOpCommittedTimestamp"
+                              << Timestamp(11, 0) << "lastOpCommittedTerm" << 3 << "configVersion"
+                              << 2 << "primaryId" << 1 << "term" << 3));
+    getReplCoord()->processReplicationMetadata(metadata3);
+    ASSERT_EQUALS(OpTime(Timestamp(11, 0), 3), getReplCoord()->getLastCommittedOpTime());
+    ASSERT_EQUALS(3, getReplCoord()->getTerm());
+    ASSERT_EQUALS(2, getTopoCoord().getCurrentPrimaryIndex());
 }
 
 // TODO(schwerin): Unit test election id updating

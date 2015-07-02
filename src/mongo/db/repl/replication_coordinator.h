@@ -34,7 +34,6 @@
 #include "mongo/base/status.h"
 #include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/repl_settings.h"
-#include "mongo/db/repl/reporter.h"
 #include "mongo/db/repl/sync_source_selector.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
@@ -68,6 +67,7 @@ class ReplSetHtmlSummary;
 class ReplSetRequestVotesArgs;
 class ReplSetRequestVotesResponse;
 class ReplicaSetConfig;
+class ReplicationMetadata;
 class UpdatePositionArgs;
 
 /**
@@ -85,7 +85,7 @@ extern const char* replAllDead;
  * with the rest of the system.  The public methods on ReplicationCoordinator are the public
  * API that the replication subsystem presents to the rest of the codebase.
  */
-class ReplicationCoordinator : public ReplicationProgressManager, public SyncSourceSelector {
+class ReplicationCoordinator : public SyncSourceSelector {
     MONGO_DISALLOW_COPYING(ReplicationCoordinator);
 
 public:
@@ -395,6 +395,16 @@ public:
      * Handles an incoming replSetGetConfig command. Adds BSON to 'result'.
      */
     virtual void processReplSetGetConfig(BSONObjBuilder* result) = 0;
+
+    /**
+     * Processes the ReplicationMetadata returned from a command run against another replica set
+     * member and updates protocol version 1 information (most recent optime that is committed,
+     * member id of the current PRIMARY, the current config version and the current term).
+     *
+     * TODO(dannenberg): Move this method to be testing only if it does not end up being used
+     * to process the find and getmore metadata responses from the DataReplicator.
+     */
+    virtual void processReplicationMetadata(const ReplicationMetadata& replMetadata) = 0;
 
     /**
      * Toggles maintenanceMode to the value expressed by 'activate'

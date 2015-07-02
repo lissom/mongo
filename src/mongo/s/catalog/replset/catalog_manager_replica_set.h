@@ -29,7 +29,6 @@
 #pragma once
 
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -37,6 +36,7 @@
 #include "mongo/client/connection_string.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/s/catalog/catalog_manager.h"
+#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 
@@ -79,8 +79,6 @@ public:
     StatusWith<ShardDrainingStatus> removeShard(OperationContext* txn,
                                                 const std::string& name) override;
 
-    Status createDatabase(const std::string& dbName) override;
-
     StatusWith<DatabaseType> getDatabase(const std::string& dbName) override;
 
     StatusWith<CollectionType> getCollection(const std::string& collNs) override;
@@ -113,9 +111,9 @@ public:
                                        const BSONObj& cmdObj,
                                        BSONObjBuilder* result) override;
 
-    bool runUserManagementReadCommand(const std::string& dbname,
-                                      const BSONObj& cmdObj,
-                                      BSONObjBuilder* result) override;
+    bool runReadCommand(const std::string& dbname,
+                        const BSONObj& cmdObj,
+                        BSONObjBuilder* result) override;
 
     Status applyChunkOpsDeprecated(const BSONArray& updateOps,
                                    const BSONArray& preCondition) override;
@@ -135,6 +133,8 @@ public:
     DistLockManager* getDistLockManager() const override;
 
 private:
+    Status _checkDbDoesNotExist(const std::string& dbName) const override;
+
     /**
      * Helper for running commands against the config server with logic for retargeting and
      * retrying the command in the event of a NotMaster response.
@@ -162,7 +162,7 @@ private:
     AtomicInt32 _changeLogCollectionCreated;
 
     // protects _inShutdown
-    std::mutex _mutex;
+    stdx::mutex _mutex;
 
     // True if shutDown() has been called. False, otherwise.
     bool _inShutdown = false;

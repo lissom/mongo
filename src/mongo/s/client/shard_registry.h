@@ -30,12 +30,12 @@
 
 #include <boost/optional.hpp>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/s/client/shard.h"
+#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 
@@ -43,7 +43,6 @@ class BSONObjBuilder;
 class CatalogManager;
 struct HostAndPort;
 class NamespaceString;
-class RemoteCommandRunner;
 class RemoteCommandTargeterFactory;
 class Shard;
 class ShardType;
@@ -76,7 +75,6 @@ public:
      * @param catalogManager Used to retrieve the list of registered shard. TODO: remove.
      */
     ShardRegistry(std::unique_ptr<RemoteCommandTargeterFactory> targeterFactory,
-                  std::unique_ptr<RemoteCommandRunner> commandRunner,
                   std::unique_ptr<executor::TaskExecutor> executor,
                   executor::NetworkInterface* network,
                   CatalogManager* catalogManager);
@@ -93,10 +91,6 @@ public:
      * Stops the executor thread and waits for it to join.
      */
     void shutdown();
-
-    RemoteCommandRunner* getCommandRunner() const {
-        return _commandRunner.get();
-    }
 
     executor::TaskExecutor* getExecutor() const {
         return _executor.get();
@@ -165,9 +159,6 @@ private:
     // Factory to obtain remote command targeters for shards
     const std::unique_ptr<RemoteCommandTargeterFactory> _targeterFactory;
 
-    // API to run remote commands to shards in a synchronous manner
-    const std::unique_ptr<RemoteCommandRunner> _commandRunner;
-
     // Executor for scheduling work and remote commands to shards that run in an asynchronous
     // manner.
     const std::unique_ptr<executor::TaskExecutor> _executor;
@@ -181,7 +172,7 @@ private:
     CatalogManager* const _catalogManager;
 
     // Protects the maps below
-    mutable std::mutex _mutex;
+    mutable stdx::mutex _mutex;
 
     // Map of both shardName -> Shard and hostName -> Shard
     ShardMap _lookup;

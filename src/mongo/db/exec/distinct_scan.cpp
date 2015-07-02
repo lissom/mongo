@@ -34,11 +34,13 @@
 #include "mongo/db/exec/working_set_computed_data.h"
 #include "mongo/db/index/index_access_method.h"
 #include "mongo/db/index/index_descriptor.h"
+#include "mongo/stdx/memory.h"
 
 namespace mongo {
 
 using std::unique_ptr;
 using std::vector;
+using stdx::make_unique;
 
 // static
 const char* DistinctScan::kStageType = "DISTINCT_SCAN";
@@ -113,7 +115,7 @@ PlanStage::StageState DistinctScan::work(WorkingSetID* out) {
             WorkingSetMember* member = _workingSet->get(id);
             member->loc = kv->loc;
             member->keyData.push_back(IndexKeyDatum(_descriptor->keyPattern(), kv->key, _iam));
-            member->state = WorkingSetMember::LOC_AND_IDX;
+            _workingSet->transitionToLocAndIdx(id);
 
             *out = id;
             ++_commonStats.advanced;
@@ -153,10 +155,10 @@ vector<PlanStage*> DistinctScan::getChildren() const {
     return empty;
 }
 
-PlanStageStats* DistinctScan::getStats() {
-    unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_DISTINCT_SCAN));
-    ret->specific.reset(new DistinctScanStats(_specificStats));
-    return ret.release();
+unique_ptr<PlanStageStats> DistinctScan::getStats() {
+    unique_ptr<PlanStageStats> ret = make_unique<PlanStageStats>(_commonStats, STAGE_DISTINCT_SCAN);
+    ret->specific = make_unique<DistinctScanStats>(_specificStats);
+    return ret;
 }
 
 const CommonStats* DistinctScan::getCommonStats() const {

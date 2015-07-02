@@ -26,45 +26,66 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
+#pragma once
 
-#include "mongo/client/remote_command_runner_mock.h"
+#include <memory>
 
 #include "mongo/unittest/unittest.h"
-#include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
+namespace executor {
 
-namespace {
-void noCheckerSet(const RemoteCommandRequest& request) {
-    FAIL(str::stream() << "runCommand not expected to be called. request: " << request.toString());
-}
-}
+class TaskExecutor;
+class NetworkInterface;
+class NetworkInterfaceMock;
 
-RemoteCommandRunnerMock::RemoteCommandRunnerMock()
-    : _runCommandChecker(noCheckerSet),
-      _response(Status(ErrorCodes::InternalError, "response not set")) {}
+/**
+ * Test fixture for tests that require a TaskExecutor backed by a NetworkInterfaceMock.
+ */
+class TaskExecutorTest : public unittest::Test {
+public:
+    /**
+     * Creates an initial error status suitable for checking if
+     * component has modified the 'status' field in test fixture.
+     */
+    static Status getDetectableErrorStatus();
 
-RemoteCommandRunnerMock::~RemoteCommandRunnerMock() = default;
+protected:
+    virtual ~TaskExecutorTest();
 
-RemoteCommandRunnerMock* RemoteCommandRunnerMock::get(RemoteCommandRunner* runner) {
-    auto mock = dynamic_cast<RemoteCommandRunnerMock*>(runner);
-    invariant(mock);
+    executor::NetworkInterfaceMock* getNet() {
+        return _net;
+    }
+    TaskExecutor& getExecutor() {
+        return *_executor;
+    }
 
-    return mock;
-}
+    /**
+     * Initializes both the NetworkInterfaceMock and TaskExecutor but does not start the executor.
+     */
+    void setUp() override;
 
-StatusWith<RemoteCommandResponse> RemoteCommandRunnerMock::runCommand(
-    const RemoteCommandRequest& request) {
-    _runCommandChecker(request);
-    _runCommandChecker = noCheckerSet;
-    return _response;
-}
+    /**
+     * Destroys the replication executor.
+     *
+     * Shuts down and joins the running executor.
+     */
+    void tearDown() override;
 
-void RemoteCommandRunnerMock::setNextExpectedCommand(
-    stdx::function<void(const RemoteCommandRequest& request)> checkerFunc,
-    StatusWith<RemoteCommandResponse> returnThis) {
-    _runCommandChecker = checkerFunc;
-    _response = std::move(returnThis);
-}
-}
+    void launchExecutorThread();
+    void joinExecutorThread();
+
+private:
+    virtual std::unique_ptr<TaskExecutor> makeTaskExecutor(
+        std::unique_ptr<NetworkInterface> net) = 0;
+
+    virtual void postExecutorThreadLaunch();
+
+    NetworkInterfaceMock* _net;
+    std::unique_ptr<TaskExecutor> _executor;
+    bool _executorStarted = false;
+    bool _executorJoined = false;
+};
+
+}  // namespace executor
+}  // namespace mongo

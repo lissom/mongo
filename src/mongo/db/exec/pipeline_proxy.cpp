@@ -33,12 +33,15 @@
 
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/expression_context.h"
+#include "mongo/stdx/memory.h"
 
 namespace mongo {
 
 using boost::intrusive_ptr;
 using std::shared_ptr;
+using std::unique_ptr;
 using std::vector;
+using stdx::make_unique;
 
 const char* PipelineProxyStage::kStageType = "PIPELINE_PROXY";
 
@@ -61,7 +64,7 @@ PlanStage::StageState PipelineProxyStage::work(WorkingSetID* out) {
         WorkingSetMember* member = _ws->get(*out);
         member->obj = Snapshotted<BSONObj>(SnapshotId(), _stash.back());
         _stash.pop_back();
-        member->state = WorkingSetMember::OWNED_OBJ;
+        member->transitionToOwnedObj();
         return PlanStage::ADVANCED;
     }
 
@@ -69,7 +72,7 @@ PlanStage::StageState PipelineProxyStage::work(WorkingSetID* out) {
         *out = _ws->allocate();
         WorkingSetMember* member = _ws->get(*out);
         member->obj = Snapshotted<BSONObj>(SnapshotId(), *next);
-        member->state = WorkingSetMember::OWNED_OBJ;
+        member->transitionToOwnedObj();
         return PlanStage::ADVANCED;
     }
 
@@ -115,11 +118,11 @@ vector<PlanStage*> PipelineProxyStage::getChildren() const {
     return empty;
 }
 
-PlanStageStats* PipelineProxyStage::getStats() {
-    std::unique_ptr<PlanStageStats> ret(
-        new PlanStageStats(CommonStats(kStageType), STAGE_PIPELINE_PROXY));
-    ret->specific.reset(new CollectionScanStats());
-    return ret.release();
+unique_ptr<PlanStageStats> PipelineProxyStage::getStats() {
+    unique_ptr<PlanStageStats> ret =
+        make_unique<PlanStageStats>(CommonStats(kStageType), STAGE_PIPELINE_PROXY);
+    ret->specific = make_unique<CollectionScanStats>();
+    return ret;
 }
 
 boost::optional<BSONObj> PipelineProxyStage::getNextBson() {

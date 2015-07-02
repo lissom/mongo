@@ -36,6 +36,7 @@
 #include "mongo/db/exec/scoped_timer.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/storage/record_fetcher.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/mongoutils/str.h"
 
@@ -43,6 +44,7 @@ namespace mongo {
 
 using std::unique_ptr;
 using std::vector;
+using stdx::make_unique;
 
 // static
 const char* FetchStage::kStageType = "FETCH";
@@ -101,7 +103,7 @@ PlanStage::StageState FetchStage::work(WorkingSetID* out) {
             ++_specificStats.alreadyHasObj;
         } else {
             // We need a valid loc to fetch from and this is the only state that has one.
-            verify(WorkingSetMember::LOC_AND_IDX == member->state);
+            verify(WorkingSetMember::LOC_AND_IDX == member->getState());
             verify(member->hasLoc());
 
             try {
@@ -120,7 +122,7 @@ PlanStage::StageState FetchStage::work(WorkingSetID* out) {
 
                 // The doc is already in memory, so go ahead and grab it. Now we have a RecordId
                 // as well as an unowned object
-                if (!WorkingSetCommon::fetch(_txn, member, _cursor)) {
+                if (!WorkingSetCommon::fetch(_txn, _ws, id, _cursor)) {
                     _ws->free(id);
                     _commonStats.needTime++;
                     return NEED_TIME;
@@ -227,7 +229,7 @@ vector<PlanStage*> FetchStage::getChildren() const {
     return children;
 }
 
-PlanStageStats* FetchStage::getStats() {
+unique_ptr<PlanStageStats> FetchStage::getStats() {
     _commonStats.isEOF = isEOF();
 
     // Add a BSON representation of the filter to the stats tree, if there is one.
@@ -237,10 +239,10 @@ PlanStageStats* FetchStage::getStats() {
         _commonStats.filter = bob.obj();
     }
 
-    unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_FETCH));
-    ret->specific.reset(new FetchStats(_specificStats));
-    ret->children.push_back(_child->getStats());
-    return ret.release();
+    unique_ptr<PlanStageStats> ret = make_unique<PlanStageStats>(_commonStats, STAGE_FETCH);
+    ret->specific = make_unique<FetchStats>(_specificStats);
+    ret->children.push_back(_child->getStats().release());
+    return ret;
 }
 
 const CommonStats* FetchStage::getCommonStats() const {

@@ -32,6 +32,7 @@
 #include "mongo/db/exec/scoped_timer.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/exec/working_set.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/util/mongoutils/str.h"
 
 namespace {
@@ -46,6 +47,7 @@ namespace mongo {
 
 using std::unique_ptr;
 using std::vector;
+using stdx::make_unique;
 
 const size_t AndHashStage::kLookAheadWorks = 10;
 
@@ -240,8 +242,7 @@ PlanStage::StageState AndHashStage::work(WorkingSetID* out) {
         WorkingSetID hashID = it->second;
         _dataMap.erase(it);
 
-        WorkingSetMember* olderMember = _ws->get(hashID);
-        AndCommon::mergeFrom(olderMember, *member);
+        AndCommon::mergeFrom(_ws, hashID, *member);
         _ws->free(*out);
 
         ++_commonStats.advanced;
@@ -350,10 +351,11 @@ PlanStage::StageState AndHashStage::hashOtherChildren(WorkingSetID* out) {
         } else {
             // We have a hit.  Copy data into the WSM we already have.
             _seenMap.insert(member->loc);
-            WorkingSetMember* olderMember = _ws->get(_dataMap[member->loc]);
+            WorkingSetID olderMemberID = _dataMap[member->loc];
+            WorkingSetMember* olderMember = _ws->get(olderMemberID);
             size_t memUsageBefore = olderMember->getMemUsage();
 
-            AndCommon::mergeFrom(olderMember, *member);
+            AndCommon::mergeFrom(_ws, olderMemberID, *member);
 
             // Update memory stats.
             _memUsage += olderMember->getMemUsage() - memUsageBefore;
@@ -502,19 +504,19 @@ vector<PlanStage*> AndHashStage::getChildren() const {
     return _children;
 }
 
-PlanStageStats* AndHashStage::getStats() {
+unique_ptr<PlanStageStats> AndHashStage::getStats() {
     _commonStats.isEOF = isEOF();
 
     _specificStats.memLimit = _maxMemUsage;
     _specificStats.memUsage = _memUsage;
 
-    unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_AND_HASH));
-    ret->specific.reset(new AndHashStats(_specificStats));
+    unique_ptr<PlanStageStats> ret = make_unique<PlanStageStats>(_commonStats, STAGE_AND_HASH);
+    ret->specific = make_unique<AndHashStats>(_specificStats);
     for (size_t i = 0; i < _children.size(); ++i) {
-        ret->children.push_back(_children[i]->getStats());
+        ret->children.push_back(_children[i]->getStats().release());
     }
 
-    return ret.release();
+    return ret;
 }
 
 const CommonStats* AndHashStage::getCommonStats() const {

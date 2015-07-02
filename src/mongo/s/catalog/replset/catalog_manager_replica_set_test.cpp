@@ -30,7 +30,7 @@
 
 #include "mongo/platform/basic.h"
 
-#include <chrono>
+#include <pcrecpp.h>
 
 #include "mongo/client/remote_command_targeter_mock.h"
 #include "mongo/db/commands.h"
@@ -52,6 +52,8 @@
 #include "mongo/s/write_ops/batched_command_response.h"
 #include "mongo/s/write_ops/batched_insert_request.h"
 #include "mongo/s/write_ops/batched_update_request.h"
+#include "mongo/stdx/chrono.h"
+#include "mongo/stdx/future.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
@@ -64,7 +66,7 @@ using std::vector;
 using stdx::chrono::milliseconds;
 using unittest::assertGet;
 
-static const std::chrono::seconds kFutureTimeout{5};
+static const stdx::chrono::seconds kFutureTimeout{5};
 
 TEST_F(CatalogManagerReplSetTestFixture, GetCollectionExisting) {
     RemoteCommandTargeterMock* targeter =
@@ -549,8 +551,8 @@ TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementReadCommand) {
 
     auto future = launchAsync([this] {
         BSONObjBuilder responseBuilder;
-        bool ok = catalogManager()->runUserManagementReadCommand(
-            "test", BSON("usersInfo" << 1), &responseBuilder);
+        bool ok =
+            catalogManager()->runReadCommand("test", BSON("usersInfo" << 1), &responseBuilder);
         ASSERT_TRUE(ok);
 
         BSONObj response = responseBuilder.obj();
@@ -566,7 +568,7 @@ TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementReadCommand) {
         return BSON("ok" << 1 << "users" << BSONArrayBuilder().arr());
     });
 
-    // Now wait for the runUserManagementReadCommand call to return
+    // Now wait for the runReadCommand call to return
     future.wait_for(kFutureTimeout);
 }
 
@@ -577,8 +579,7 @@ TEST_F(CatalogManagerReplSetTestFixture, RunUserManagementReadCommandUnsatisfied
         Status(ErrorCodes::FailedToSatisfyReadPreference, "no nodes up"));
 
     BSONObjBuilder responseBuilder;
-    bool ok = catalogManager()->runUserManagementReadCommand(
-        "test", BSON("usersInfo" << 1), &responseBuilder);
+    bool ok = catalogManager()->runReadCommand("test", BSON("usersInfo" << 1), &responseBuilder);
     ASSERT_FALSE(ok);
 
     Status commandStatus = Command::getStatusFromCommandResult(responseBuilder.obj());
@@ -1389,12 +1390,10 @@ TEST_F(CatalogManagerReplSetTestFixture, ApplyChunkOpsDeprecated) {
                                         << BSON("precondition2"
                                                 << "second precondition"));
 
-    auto future = async(std::launch::async,
-                        [this, updateOps, preCondition] {
-                            auto status =
-                                catalogManager()->applyChunkOpsDeprecated(updateOps, preCondition);
-                            ASSERT_OK(status);
-                        });
+    auto future = launchAsync([this, updateOps, preCondition] {
+        auto status = catalogManager()->applyChunkOpsDeprecated(updateOps, preCondition);
+        ASSERT_OK(status);
+    });
 
     onCommand([updateOps, preCondition](const RemoteCommandRequest& request) {
         ASSERT_EQUALS("config", request.dbname);
@@ -1422,12 +1421,10 @@ TEST_F(CatalogManagerReplSetTestFixture, ApplyChunkOpsDeprecatedCommandFailed) {
                                         << BSON("precondition2"
                                                 << "second precondition"));
 
-    auto future = async(std::launch::async,
-                        [this, updateOps, preCondition] {
-                            auto status =
-                                catalogManager()->applyChunkOpsDeprecated(updateOps, preCondition);
-                            ASSERT_EQUALS(ErrorCodes::BadValue, status);
-                        });
+    auto future = launchAsync([this, updateOps, preCondition] {
+        auto status = catalogManager()->applyChunkOpsDeprecated(updateOps, preCondition);
+        ASSERT_EQUALS(ErrorCodes::BadValue, status);
+    });
 
     onCommand([updateOps, preCondition](const RemoteCommandRequest& request) {
         ASSERT_EQUALS("config", request.dbname);
@@ -1441,6 +1438,405 @@ TEST_F(CatalogManagerReplSetTestFixture, ApplyChunkOpsDeprecatedCommandFailed) {
     });
 
     // Now wait for the applyChunkOpsDeprecated call to return
+    future.wait_for(kFutureTimeout);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, createDatabaseSuccess) {
+    const string dbname = "databaseToCreate";
+    const HostAndPort configHost("TestHost1");
+
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter())
+        ->setFindHostReturnValue(configHost);
+
+    ShardType s0;
+    s0.setName("shard0000");
+    s0.setHost("ShardHost0:27017");
+
+    ShardType s1;
+    s1.setName("shard0001");
+    s1.setHost("ShardHost1:27017");
+
+    ShardType s2;
+    s2.setName("shard0002");
+    s2.setHost("ShardHost2:27017");
+
+    // Prime the shard registry with information about the existing shards
+    auto future = launchAsync([this] { shardRegistry()->reload(); });
+
+    onFindCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(configHost, request.target);
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(ShardType::ConfigNS, query->ns());
+        ASSERT_EQ(BSONObj(), query->getFilter());
+        ASSERT_EQ(BSONObj(), query->getSort());
+        ASSERT_FALSE(query->getLimit().is_initialized());
+
+        return vector<BSONObj>{s0.toBSON(), s1.toBSON(), s2.toBSON()};
+    });
+
+    future.wait_for(kFutureTimeout);
+
+    // Set up all the target mocks return values.  Have to redo this for the config shard because
+    // shardRegistry()->reload() re-creates the config shard entry and its targeter
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter())
+        ->setFindHostReturnValue(configHost);
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard(s0.getName())->getTargeter())
+        ->setFindHostReturnValue(HostAndPort(s0.getHost()));
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard(s1.getName())->getTargeter())
+        ->setFindHostReturnValue(HostAndPort(s1.getHost()));
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard(s2.getName())->getTargeter())
+        ->setFindHostReturnValue(HostAndPort(s2.getHost()));
+
+
+    // Now actually start the createDatabase work.
+
+    distLock()->expectLock([dbname](StringData name,
+                                    StringData whyMessage,
+                                    stdx::chrono::milliseconds waitFor,
+                                    stdx::chrono::milliseconds lockTryInterval) {},
+                           Status::OK());
+
+
+    future = launchAsync([this, dbname] {
+        Status status = catalogManager()->createDatabase(dbname);
+        ASSERT_OK(status);
+    });
+
+    // Report no databases with the same name already exist
+    onFindCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(configHost, request.target);
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(DatabaseType::ConfigNS, nss.toString());
+        return vector<BSONObj>{};
+    });
+
+    // Return size information about first shard
+    onCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(s0.getHost(), request.target.toString());
+        ASSERT_EQUALS("admin", request.dbname);
+        string cmdName = request.cmdObj.firstElement().fieldName();
+        ASSERT_EQUALS("listDatabases", cmdName);
+
+        return BSON("ok" << 1 << "totalSize" << 10);
+    });
+
+    // Return size information about second shard
+    onCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(s1.getHost(), request.target.toString());
+        ASSERT_EQUALS("admin", request.dbname);
+        string cmdName = request.cmdObj.firstElement().fieldName();
+        ASSERT_EQUALS("listDatabases", cmdName);
+
+        return BSON("ok" << 1 << "totalSize" << 1);
+    });
+
+    // Return size information about third shard
+    onCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(s2.getHost(), request.target.toString());
+        ASSERT_EQUALS("admin", request.dbname);
+        string cmdName = request.cmdObj.firstElement().fieldName();
+        ASSERT_EQUALS("listDatabases", cmdName);
+
+        return BSON("ok" << 1 << "totalSize" << 100);
+    });
+
+    // Process insert to config.databases collection
+    onCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(configHost, request.target);
+        ASSERT_EQUALS("config", request.dbname);
+
+        BatchedInsertRequest actualBatchedInsert;
+        std::string errmsg;
+        ASSERT_TRUE(actualBatchedInsert.parseBSON(request.cmdObj, &errmsg));
+        ASSERT_EQUALS(DatabaseType::ConfigNS, actualBatchedInsert.getCollName());
+        auto inserts = actualBatchedInsert.getDocuments();
+        ASSERT_EQUALS(1U, inserts.size());
+        auto insert = inserts.front();
+
+        DatabaseType expectedDb;
+        expectedDb.setName(dbname);
+        expectedDb.setPrimary(s1.getName());  // This is the one we reported with the smallest size
+        expectedDb.setSharded(false);
+
+        ASSERT_EQUALS(expectedDb.toBSON(), insert);
+
+        BatchedCommandResponse response;
+        response.setOk(true);
+        response.setNModified(1);
+
+        return response.toBSON();
+    });
+
+    future.wait_for(kFutureTimeout);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, createDatabaseDistLockHeld) {
+    const string dbname = "databaseToCreate";
+
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    distLock()->expectLock(
+        [dbname](StringData name,
+                 StringData whyMessage,
+                 milliseconds waitFor,
+                 milliseconds lockTryInterval) {
+            ASSERT_EQUALS(dbname, name);
+            ASSERT_EQUALS("createDatabase", whyMessage);
+        },
+        Status(ErrorCodes::LockBusy, "lock already held"));
+
+    Status status = catalogManager()->createDatabase(dbname);
+    ASSERT_EQUALS(ErrorCodes::LockBusy, status);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, createDatabaseDBExists) {
+    const string dbname = "databaseToCreate";
+
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    distLock()->expectLock([dbname](StringData name,
+                                    StringData whyMessage,
+                                    stdx::chrono::milliseconds waitFor,
+                                    stdx::chrono::milliseconds lockTryInterval) {},
+                           Status::OK());
+
+
+    auto future = launchAsync([this, dbname] {
+        Status status = catalogManager()->createDatabase(dbname);
+        ASSERT_EQUALS(ErrorCodes::NamespaceExists, status);
+    });
+
+    onFindCommand([dbname](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        BSONObjBuilder queryBuilder;
+        queryBuilder.appendRegex(
+            DatabaseType::name(), (string) "^" + pcrecpp::RE::QuoteMeta(dbname) + "$", "i");
+
+        ASSERT_EQ(DatabaseType::ConfigNS, query->ns());
+        ASSERT_EQ(queryBuilder.obj(), query->getFilter());
+
+        return vector<BSONObj>{BSON("_id" << dbname)};
+    });
+
+    future.wait_for(kFutureTimeout);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, createDatabaseDBExistsDifferentCase) {
+    const string dbname = "databaseToCreate";
+    const string dbnameDiffCase = "databasetocreate";
+
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    distLock()->expectLock([dbname](StringData name,
+                                    StringData whyMessage,
+                                    stdx::chrono::milliseconds waitFor,
+                                    stdx::chrono::milliseconds lockTryInterval) {},
+                           Status::OK());
+
+
+    auto future = launchAsync([this, dbname] {
+        Status status = catalogManager()->createDatabase(dbname);
+        ASSERT_EQUALS(ErrorCodes::DatabaseDifferCase, status);
+    });
+
+    onFindCommand([dbname, dbnameDiffCase](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        BSONObjBuilder queryBuilder;
+        queryBuilder.appendRegex(
+            DatabaseType::name(), (string) "^" + pcrecpp::RE::QuoteMeta(dbname) + "$", "i");
+
+        ASSERT_EQ(DatabaseType::ConfigNS, query->ns());
+        ASSERT_EQ(queryBuilder.obj(), query->getFilter());
+
+        return vector<BSONObj>{BSON("_id" << dbnameDiffCase)};
+    });
+
+    future.wait_for(kFutureTimeout);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, createDatabaseNoShards) {
+    const string dbname = "databaseToCreate";
+
+    RemoteCommandTargeterMock* targeter =
+        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
+    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+
+    distLock()->expectLock([dbname](StringData name,
+                                    StringData whyMessage,
+                                    stdx::chrono::milliseconds waitFor,
+                                    stdx::chrono::milliseconds lockTryInterval) {},
+                           Status::OK());
+
+
+    auto future = launchAsync([this, dbname] {
+        Status status = catalogManager()->createDatabase(dbname);
+        ASSERT_EQUALS(ErrorCodes::ShardNotFound, status);
+    });
+
+    // Report no databases with the same name already exist
+    onFindCommand([dbname](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(DatabaseType::ConfigNS, nss.toString());
+        return vector<BSONObj>{};
+    });
+
+    // Report no shards exist
+    onFindCommand([](const RemoteCommandRequest& request) {
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(ShardType::ConfigNS, query->ns());
+        ASSERT_EQ(BSONObj(), query->getFilter());
+        ASSERT_EQ(BSONObj(), query->getSort());
+        ASSERT_FALSE(query->getLimit().is_initialized());
+
+        return vector<BSONObj>{};
+    });
+
+    future.wait_for(kFutureTimeout);
+}
+
+TEST_F(CatalogManagerReplSetTestFixture, createDatabaseDuplicateKeyOnInsert) {
+    const string dbname = "databaseToCreate";
+    const HostAndPort configHost("TestHost1");
+
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter())
+        ->setFindHostReturnValue(configHost);
+
+    ShardType s0;
+    s0.setName("shard0000");
+    s0.setHost("ShardHost0:27017");
+
+    ShardType s1;
+    s1.setName("shard0001");
+    s1.setHost("ShardHost1:27017");
+
+    ShardType s2;
+    s2.setName("shard0002");
+    s2.setHost("ShardHost2:27017");
+
+    // Prime the shard registry with information about the existing shards
+    auto future = launchAsync([this] { shardRegistry()->reload(); });
+
+    onFindCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(configHost, request.target);
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        auto query = assertGet(LiteParsedQuery::makeFromFindCommand(nss, request.cmdObj, false));
+
+        ASSERT_EQ(ShardType::ConfigNS, query->ns());
+        ASSERT_EQ(BSONObj(), query->getFilter());
+        ASSERT_EQ(BSONObj(), query->getSort());
+        ASSERT_FALSE(query->getLimit().is_initialized());
+
+        return vector<BSONObj>{s0.toBSON(), s1.toBSON(), s2.toBSON()};
+    });
+
+    future.wait_for(kFutureTimeout);
+
+    // Set up all the target mocks return values.  Have to redo this for the config shard because
+    // shardRegistry()->reload() re-creates the config shard entry and its targeter
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter())
+        ->setFindHostReturnValue(configHost);
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard(s0.getName())->getTargeter())
+        ->setFindHostReturnValue(HostAndPort(s0.getHost()));
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard(s1.getName())->getTargeter())
+        ->setFindHostReturnValue(HostAndPort(s1.getHost()));
+    RemoteCommandTargeterMock::get(shardRegistry()->getShard(s2.getName())->getTargeter())
+        ->setFindHostReturnValue(HostAndPort(s2.getHost()));
+
+
+    // Now actually start the createDatabase work.
+
+    distLock()->expectLock([dbname](StringData name,
+                                    StringData whyMessage,
+                                    stdx::chrono::milliseconds waitFor,
+                                    stdx::chrono::milliseconds lockTryInterval) {},
+                           Status::OK());
+
+
+    future = launchAsync([this, dbname] {
+        Status status = catalogManager()->createDatabase(dbname);
+        ASSERT_EQUALS(ErrorCodes::DuplicateKey, status);
+    });
+
+    // Report no databases with the same name already exist
+    onFindCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(configHost, request.target);
+        const NamespaceString nss(request.dbname, request.cmdObj.firstElement().String());
+        ASSERT_EQ(DatabaseType::ConfigNS, nss.toString());
+        return vector<BSONObj>{};
+    });
+
+    // Return size information about first shard
+    onCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(s0.getHost(), request.target.toString());
+        ASSERT_EQUALS("admin", request.dbname);
+        string cmdName = request.cmdObj.firstElement().fieldName();
+        ASSERT_EQUALS("listDatabases", cmdName);
+
+        return BSON("ok" << 1 << "totalSize" << 10);
+    });
+
+    // Return size information about second shard
+    onCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(s1.getHost(), request.target.toString());
+        ASSERT_EQUALS("admin", request.dbname);
+        string cmdName = request.cmdObj.firstElement().fieldName();
+        ASSERT_EQUALS("listDatabases", cmdName);
+
+        return BSON("ok" << 1 << "totalSize" << 1);
+    });
+
+    // Return size information about third shard
+    onCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(s2.getHost(), request.target.toString());
+        ASSERT_EQUALS("admin", request.dbname);
+        string cmdName = request.cmdObj.firstElement().fieldName();
+        ASSERT_EQUALS("listDatabases", cmdName);
+
+        return BSON("ok" << 1 << "totalSize" << 100);
+    });
+
+    // Process insert to config.databases collection
+    onCommand([&](const RemoteCommandRequest& request) {
+        ASSERT_EQUALS(configHost, request.target);
+        ASSERT_EQUALS("config", request.dbname);
+
+        BatchedInsertRequest actualBatchedInsert;
+        std::string errmsg;
+        ASSERT_TRUE(actualBatchedInsert.parseBSON(request.cmdObj, &errmsg));
+        ASSERT_EQUALS(DatabaseType::ConfigNS, actualBatchedInsert.getCollName());
+        auto inserts = actualBatchedInsert.getDocuments();
+        ASSERT_EQUALS(1U, inserts.size());
+        auto insert = inserts.front();
+
+        DatabaseType expectedDb;
+        expectedDb.setName(dbname);
+        expectedDb.setPrimary(s1.getName());  // This is the one we reported with the smallest size
+        expectedDb.setSharded(false);
+
+        ASSERT_EQUALS(expectedDb.toBSON(), insert);
+
+        BatchedCommandResponse response;
+        response.setOk(false);
+        response.setErrCode(ErrorCodes::DuplicateKey);
+        response.setErrMessage("duplicate key");
+
+        return response.toBSON();
+    });
+
     future.wait_for(kFutureTimeout);
 }
 

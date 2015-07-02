@@ -147,7 +147,6 @@ public:
         return *this;
     }
 
-
     LogstreamBuilder& operator<<(std::ostream& (*manip)(std::ostream&)) {
         stream() << manip;
         return *this;

@@ -67,9 +67,9 @@
 #include "mongo/s/config.h"
 #include "mongo/s/catalog/dist_lock_manager.h"
 #include "mongo/s/catalog/legacy/legacy_dist_lock_manager.h"
+#include "mongo/s/catalog/type_config_version.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/shard_key_pattern.h"
-#include "mongo/s/type_config_version.h"
 #include "mongo/s/write_ops/batched_command_request.h"
 #include "mongo/s/write_ops/batched_command_response.h"
 #include "mongo/stdx/memory.h"
@@ -417,7 +417,10 @@ void CatalogManagerLegacy::shutDown() {
         _inShutdown = true;
         _consistencyCheckerCV.notify_one();
     }
-    _consistencyCheckerThread.join();
+
+    // Only try to join the thread if we actually started it.
+    if (_consistencyCheckerThread.joinable())
+        _consistencyCheckerThread.join();
 
     invariant(_distLockManager);
     _distLockManager->shutDown();
@@ -571,57 +574,6 @@ Status CatalogManagerLegacy::shardCollection(OperationContext* txn,
     logChange(txn->getClient()->clientAddress(true), "shardCollection", ns, finishDetail.obj());
 
     return Status::OK();
-}
-
-Status CatalogManagerLegacy::createDatabase(const std::string& dbName) {
-    invariant(nsIsDbOnly(dbName));
-
-    // The admin and config databases should never be explicitly created. They "just exist",
-    // i.e. getDatabase will always return an entry for them.
-    invariant(dbName != "admin");
-    invariant(dbName != "config");
-
-    // Lock the database globally to prevent conflicts with simultaneous database creation.
-    auto scopedDistLock =
-        getDistLockManager()->lock(dbName, "createDatabase", Seconds{5}, Milliseconds{500});
-    if (!scopedDistLock.isOK()) {
-        return scopedDistLock.getStatus();
-    }
-
-    // Check for case sensitivity violations
-    auto status = _checkDbDoesNotExist(dbName);
-    if (!status.isOK()) {
-        return status;
-    }
-
-    // Database does not exist, pick a shard and create a new entry
-    auto newShardIdStatus = selectShardForNewDatabase(grid.shardRegistry());
-    if (!newShardIdStatus.isOK()) {
-        return newShardIdStatus.getStatus();
-    }
-
-    const ShardId& newShardId = newShardIdStatus.getValue();
-
-    log() << "Placing [" << dbName << "] on: " << newShardId;
-
-    DatabaseType db;
-    db.setName(dbName);
-    db.setPrimary(newShardId);
-    db.setSharded(false);
-
-    BatchedCommandResponse response;
-    status = insert(DatabaseType::ConfigNS, db.toBSON(), &response);
-    if (status.isOK()) {
-        return status;
-    }
-
-    if (status.code() == ErrorCodes::DuplicateKey) {
-        return Status(ErrorCodes::NamespaceExists, "database " + dbName + " already exists");
-    }
-
-    return Status(status.code(),
-                  str::stream() << "database metadata write failed for " << dbName
-                                << ". Error: " << response.toBSON());
 }
 
 StatusWith<string> CatalogManagerLegacy::addShard(OperationContext* txn,
@@ -1009,11 +961,15 @@ void CatalogManagerLegacy::logAction(const ActionLogType& actionLog) {
             conn.done();
 
             _actionLogCollectionCreated.store(1);
-        } catch (const DBException& e) {
-            LOG(1) << "couldn't create actionlog collection: " << e;
-            // If we couldn't create the collection don't attempt the insert otherwise we might
-            // implicitly create the collection without it being capped.
-            return;
+        } catch (const DBException& ex) {
+            if (ex.toStatus() == ErrorCodes::NamespaceExists) {
+                _actionLogCollectionCreated.store(1);
+            } else {
+                LOG(1) << "couldn't create actionlog collection: " << ex;
+                // If we couldn't create the collection don't attempt the insert otherwise we might
+                // implicitly create the collection without it being capped.
+                return;
+            }
         }
     }
 
@@ -1036,11 +992,15 @@ void CatalogManagerLegacy::logChange(const string& clientAddress,
             conn.done();
 
             _changeLogCollectionCreated.store(1);
-        } catch (const UserException& e) {
-            LOG(1) << "couldn't create changelog collection: " << e;
-            // If we couldn't create the collection don't attempt the insert otherwise we might
-            // implicitly create the collection without it being capped.
-            return;
+        } catch (const DBException& ex) {
+            if (ex.toStatus() == ErrorCodes::NamespaceExists) {
+                _changeLogCollectionCreated.store(1);
+            } else {
+                LOG(1) << "couldn't create changelog collection: " << ex;
+                // If we couldn't create the collection don't attempt the insert otherwise we might
+                // implicitly create the collection without it being capped.
+                return;
+            }
         }
     }
 
@@ -1348,9 +1308,9 @@ bool CatalogManagerLegacy::runUserManagementWriteCommand(const string& commandNa
     return Command::appendCommandStatus(*result, status);
 }
 
-bool CatalogManagerLegacy::runUserManagementReadCommand(const string& dbname,
-                                                        const BSONObj& cmdObj,
-                                                        BSONObjBuilder* result) {
+bool CatalogManagerLegacy::runReadCommand(const string& dbname,
+                                          const BSONObj& cmdObj,
+                                          BSONObjBuilder* result) {
     try {
         // let SyncClusterConnection handle connecting to the first config server
         // that is reachable and returns data

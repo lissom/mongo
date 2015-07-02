@@ -5,6 +5,7 @@
  *    it under the terms of the GNU Affero General Public License, version 3,
  *    as published by the Free Software Foundation.
  *
+ *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
  *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -28,53 +29,53 @@
 
 #pragma once
 
-#include "mongo/client/remote_command_runner.h"
-#include "mongo/stdx/functional.h"
+#include <boost/optional.hpp>
+#include <wiredtiger.h>
+
+#include "mongo/base/disallow_copying.h"
+#include "mongo/db/storage/snapshot_manager.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
+#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 
-/**
- * Note: This is NOT thread-safe.
- *
- * Example usage:
- *
- * RemoteCommandRunnerMock executor;
- * executor.setNextExpectedCommand([](const RemoteCommandRequest& request) {
- *     ASSERT_EQUALS("config", request.dbname);
- * },
- * RemoteCommandResponse(BSON("ok" << 1), Milliseconds(0)));
- *
- * auto response = executor.runCommand(RemoteCommandRequest()); // Assertion error!
- */
-class RemoteCommandRunnerMock final : public RemoteCommandRunner {
+class WiredTigerSnapshotManager final : public SnapshotManager {
+    MONGO_DISALLOW_COPYING(WiredTigerSnapshotManager);
+
 public:
-    RemoteCommandRunnerMock();
-    virtual ~RemoteCommandRunnerMock();
+    explicit WiredTigerSnapshotManager(WT_CONNECTION* conn) {
+        invariantWTOK(conn->open_session(conn, NULL, NULL, &_session));
+    }
+
+    ~WiredTigerSnapshotManager() {
+        shutdown();
+    }
+
+    Status prepareForCreateSnapshot(OperationContext* txn) final;
+    Status createSnapshot(OperationContext* ru, const SnapshotName& name) final;
+    void setCommittedSnapshot(const SnapshotName& name) final;
+    void dropAllSnapshots() final;
+
+    //
+    // WT-specific methods
+    //
 
     /**
-     * Shortcut for unit-tests.
+     * Prepares for a shutdown of the WT_CONNECTION.
      */
-    static RemoteCommandRunnerMock* get(RemoteCommandRunner* runner);
+    void shutdown();
 
-    /**
-     * Runs the function set by the last call to setNextExpectedCommand. Calling this more
-     * than once after a single call to setNextExpectedCommand will result in an assertion
-     * failure.
-     *
-     * Returns the value set on a previous call to setNextExpectedCommand.
-     */
-    StatusWith<RemoteCommandResponse> runCommand(const RemoteCommandRequest& request) override;
+    bool haveCommittedSnapshot() const;
+    void beginTransactionOnCommittedSnapshot(WT_SESSION* session, bool sync) const;
 
-    /**
-     * Sets the checker method to use and it's return value the next time runCommand is
-     * called.
-     */
-    void setNextExpectedCommand(
-        stdx::function<void(const RemoteCommandRequest& request)> checkerFunc,
-        StatusWith<RemoteCommandResponse> returnThis);
+    // We explicitly do not offer a way to ask for the current committed snapshot name, because
+    // it would be impossible to use correctly without introducing a race condition. All
+    // operations that need to use the _committedSnapshot must be performed while holding
+    // _mutex.
 
 private:
-    stdx::function<void(const RemoteCommandRequest& request)> _runCommandChecker;
-    StatusWith<RemoteCommandResponse> _response;
+    mutable stdx::mutex _mutex;  // Guards all members.
+    boost::optional<SnapshotName> _committedSnapshot;
+    WT_SESSION* _session;  // only used for dropping snapshots.
 };
 }

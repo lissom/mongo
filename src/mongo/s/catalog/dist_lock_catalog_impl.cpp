@@ -41,9 +41,9 @@
 #include "mongo/db/query/find_and_modify_request.h"
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/rpc/metadata/sharding_metadata.h"
+#include "mongo/s/catalog/type_lockpings.h"
+#include "mongo/s/catalog/type_locks.h"
 #include "mongo/s/client/shard_registry.h"
-#include "mongo/s/type_lockpings.h"
-#include "mongo/s/type_locks.h"
 #include "mongo/s/write_ops/wc_error_detail.h"
 #include "mongo/util/time_support.h"
 
@@ -107,7 +107,7 @@ StatusWith<BSONObj> extractFindAndModifyNewObj(const BSONObj& responseObj) {
         return newDocElem.Obj();
     }
 
-    return {ErrorCodes::LockStateChangeFailed,
+    return {ErrorCodes::UnsupportedFormat,
             str::stream() << "no '" << kFindAndModifyResponseResultDocField
                           << "' in findAndModify response"};
 }
@@ -263,15 +263,9 @@ StatusWith<LocksType> DistLockCatalogImpl::grabLock(StringData lockID,
         return findAndModifyStatus.getStatus();
     }
 
-    BSONObj newDoc(findAndModifyStatus.getValue());
-
-    if (newDoc.isEmpty()) {
-        return LocksType();
-    }
-
     LocksType lockDoc;
     string errMsg;
-    if (!lockDoc.parseBSON(newDoc, &errMsg)) {
+    if (!lockDoc.parseBSON(findAndModifyStatus.getValue(), &errMsg)) {
         return {ErrorCodes::FailedToParse, errMsg};
     }
 
@@ -320,15 +314,9 @@ StatusWith<LocksType> DistLockCatalogImpl::overtakeLock(StringData lockID,
         return findAndModifyStatus.getStatus();
     }
 
-    BSONObj newDoc(findAndModifyStatus.getValue());
-
-    if (newDoc.isEmpty()) {
-        return LocksType();
-    }
-
     LocksType lockDoc;
     string errMsg;
-    if (!lockDoc.parseBSON(newDoc, &errMsg)) {
+    if (!lockDoc.parseBSON(findAndModifyStatus.getValue(), &errMsg)) {
         return {ErrorCodes::FailedToParse, errMsg};
     }
 

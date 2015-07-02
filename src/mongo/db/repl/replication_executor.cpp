@@ -33,7 +33,6 @@
 #include "mongo/db/repl/replication_executor.h"
 
 #include <limits>
-#include <thread>
 
 #include "mongo/db/repl/database_task.h"
 #include "mongo/db/repl/storage_interface.h"
@@ -120,7 +119,6 @@ void ReplicationExecutor::run() {
 void ReplicationExecutor::startup() {
     // Ensure that thread has not yet been created
     invariant(!_executorThread.joinable());
-    invariant(!_inShutdown);
 
     _executorThread = stdx::thread([this] { run(); });
 }

@@ -35,7 +35,6 @@
 
 #include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
 
-#include <boost/shared_array.hpp>
 #include <wiredtiger.h>
 
 #include "mongo/base/checked_cast.h"
@@ -108,7 +107,32 @@ public:
             return {};
 
         WT_CURSOR* c = _cursor->get();
-        {
+
+        bool mustAdvance = true;
+        if (_lastReturnedId.isNull() && !_forward && _rs._isCapped) {
+            // In this case we need to seek to the highest visible record.
+            const RecordId reverseCappedInitialSeekPoint =
+                _readUntilForOplog.isNull() ? _rs.lowestCappedHiddenRecord() : _readUntilForOplog;
+
+            if (!reverseCappedInitialSeekPoint.isNull()) {
+                c->set_key(c, _makeKey(reverseCappedInitialSeekPoint));
+                int cmp;
+                int seekRet = WT_OP_CHECK(c->search_near(c, &cmp));
+                if (seekRet == WT_NOTFOUND) {
+                    _eof = true;
+                    return {};
+                }
+                invariantWTOK(seekRet);
+
+                // If we landed at or past the lowest hidden record, we must advance to be in
+                // the visible range.
+                mustAdvance = _rs.isCappedHidden(reverseCappedInitialSeekPoint)
+                    ? (cmp >= 0)
+                    : (cmp > 0);  // No longer hidden.
+            }
+        }
+
+        if (mustAdvance) {
             // Nothing after the next line can throw WCEs.
             // Note that an unpositioned (or eof) WT_CURSOR returns the first/last entry in the
             // table when you call next/prev.
@@ -139,11 +163,6 @@ public:
     }
 
     boost::optional<Record> seekExact(const RecordId& id) final {
-        if (!isVisible(id)) {
-            _eof = true;
-            return {};
-        }
-
         WT_CURSOR* c = _cursor->get();
         c->set_key(c, _makeKey(id));
         // Nothing after the next line can throw WCEs.
@@ -160,6 +179,7 @@ public:
         data.makeOwned();  // TODO delete this line once safe.
 
         _lastReturnedId = id;
+        _eof = false;
         return {{id, std::move(data)}};
     }
 
@@ -280,7 +300,7 @@ private:
     bool _forParallelCollectionScan;  // This can go away once SERVER-17364 is resolved.
     std::unique_ptr<WiredTigerCursor> _cursor;
     bool _eof = false;
-    RecordId _lastReturnedId;
+    RecordId _lastReturnedId;  // If null, need to seek to first/last record.
     const RecordId _readUntilForOplog;
 };
 
@@ -601,7 +621,7 @@ int64_t WiredTigerRecordStore::cappedDeleteAsNeeded(OperationContext* txn,
         // Don't wait forever: we're in a transaction, we could block eviction.
         if (!lock.try_lock()) {
             Date_t before = Date_t::now();
-            (void)lock.timed_lock(boost::posix_time::millisec(200));
+            (void)lock.try_lock_for(stdx::chrono::milliseconds(200));
             stdx::chrono::milliseconds delay = Date_t::now() - before;
             _cappedSleep.fetchAndAdd(1);
             _cappedSleepMS.fetchAndAdd(delay.count());
@@ -616,7 +636,7 @@ int64_t WiredTigerRecordStore::cappedDeleteAsNeeded(OperationContext* txn,
 
             // Don't wait forever: we're in a transaction, we could block eviction.
             Date_t before = Date_t::now();
-            bool gotLock = lock.timed_lock(boost::posix_time::millisec(200));
+            bool gotLock = lock.try_lock_for(stdx::chrono::milliseconds(200));
             stdx::chrono::milliseconds delay = Date_t::now() - before;
             _cappedSleep.fetchAndAdd(1);
             _cappedSleepMS.fetchAndAdd(delay.count());
@@ -803,12 +823,17 @@ bool WiredTigerRecordStore::isCappedHidden(const RecordId& loc) const {
     return _uncommittedDiskLocs.front() <= loc;
 }
 
+RecordId WiredTigerRecordStore::lowestCappedHiddenRecord() const {
+    stdx::lock_guard<stdx::mutex> lk(_uncommittedDiskLocsMutex);
+    return _uncommittedDiskLocs.empty() ? RecordId() : _uncommittedDiskLocs.front();
+}
+
 StatusWith<RecordId> WiredTigerRecordStore::insertRecord(OperationContext* txn,
                                                          const DocWriter* doc,
                                                          bool enforceQuota) {
     const int len = doc->documentSize();
 
-    boost::shared_array<char> buf(new char[len]);
+    std::unique_ptr<char[]> buf(new char[len]);
     doc->writeDocument(buf.get());
 
     return insertRecord(txn, buf.get(), len, enforceQuota);

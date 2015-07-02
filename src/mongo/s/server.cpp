@@ -38,7 +38,6 @@
 #include "mongo/client/connpool.h"
 #include "mongo/client/dbclient_rs.h"
 #include "mongo/client/global_conn_pool.h"
-#include "mongo/client/remote_command_runner_impl.h"
 #include "mongo/client/remote_command_targeter_factory_impl.h"
 #include "mongo/client/replica_set_monitor.h"
 #include "mongo/config.h"
@@ -57,7 +56,7 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/service_context_noop.h"
 #include "mongo/db/startup_warnings_common.h"
-#include "mongo/executor/network_interface_impl.h"
+#include "mongo/executor/network_interface_factory.h"
 #include "mongo/executor/task_executor.h"
 #include "mongo/platform/process_id.h"
 #include "mongo/s/balance.h"
@@ -228,13 +227,12 @@ static ExitCode runMongosServer(bool doUpgrade) {
         }
     }
 
-    auto shardRegistry(
-        stdx::make_unique<ShardRegistry>(stdx::make_unique<RemoteCommandTargeterFactoryImpl>(),
-                                         stdx::make_unique<RemoteCommandRunnerImpl>(0),
-                                         stdx::make_unique<repl::ReplicationExecutor>(
-                                             new executor::NetworkInterfaceImpl(), nullptr, 0),
-                                         nullptr,
-                                         catalogManager.get()));
+    auto shardRegistry(stdx::make_unique<ShardRegistry>(
+        stdx::make_unique<RemoteCommandTargeterFactoryImpl>(),
+        stdx::make_unique<repl::ReplicationExecutor>(
+            executor::makeNetworkInterface().release(), nullptr, 0),
+        nullptr,
+        catalogManager.get()));
     shardRegistry->startup();
 
     grid.init(std::move(catalogManager), std::move(shardRegistry));

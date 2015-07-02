@@ -33,6 +33,7 @@
 #include "mongo/executor/network_interface_asio.h"
 
 #include <chrono>
+#include <utility>
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/client.h"
@@ -50,6 +51,14 @@ using ResponseStatus = TaskExecutor::ResponseStatus;
 using asio::ip::tcp;
 using RemoteCommandCompletionFn = stdx::function<void(const ResponseStatus&)>;
 
+NetworkInterfaceASIO::AsyncConnection::AsyncConnection(
+    ConnectionPool::ConnectionPtr&& bootstrapConn, asio::ip::tcp::socket&& sock)
+    : _bootstrapConn{std::move(bootstrapConn)}, _sock(std::move(sock)) {}
+
+tcp::socket* NetworkInterfaceASIO::AsyncConnection::sock() {
+    return &_sock;
+}
+
 NetworkInterfaceASIO::AsyncOp::AsyncOp(const TaskExecutor::CallbackHandle& cbHandle,
                                        const RemoteCommandRequest& request,
                                        const RemoteCommandCompletionFn& onFinish,
@@ -63,26 +72,34 @@ NetworkInterfaceASIO::AsyncOp::AsyncOp(const TaskExecutor::CallbackHandle& cbHan
       _canceled(0),
       _id(id) {}
 
+
 void NetworkInterfaceASIO::AsyncOp::connect(ConnectionPool* const pool,
                                             asio::io_service* service,
                                             Date_t now) {
-    _conn = stdx::make_unique<ConnectionPool::ConnectionPtr>(
-        pool, _request.target, now, Milliseconds(1000));
+    // TODO(amidvidy): why is this hardcoded to 1 second? That seems too low.
+    ConnectionPool::ConnectionPtr conn(pool, _request.target, now, Milliseconds(1000));
 
     _state = OpState::kConnectionAcquired;
 
     // TODO: Add a case here for unix domain sockets.
-    int protocol = _conn->get()->port().localAddr().getType();
+    int protocol = conn.get()->port().localAddr().getType();
     if (protocol != AF_INET && protocol != AF_INET6) {
         throw SocketException(SocketException::CONNECT_ERROR, "Unsupported family");
     }
 
     _state = OpState::kConnectionVerified;
 
-    _sock = stdx::make_unique<tcp::socket>(
-        *service, protocol == AF_INET ? tcp::v4() : tcp::v6(), _conn->get()->port().psock->rawFD());
+    tcp::socket sock{
+        *service, protocol == AF_INET ? tcp::v4() : tcp::v6(), conn.get()->port().psock->rawFD()};
+
+    _connection.emplace(std::move(conn), std::move(sock));
 
     _state = OpState::kConnected;
+}
+
+NetworkInterfaceASIO::AsyncConnection* NetworkInterfaceASIO::AsyncOp::connection() {
+    invariant(_connection.is_initialized());
+    return _connection.get_ptr();
 }
 
 std::string NetworkInterfaceASIO::AsyncOp::toString() const {
@@ -108,6 +125,10 @@ std::string NetworkInterfaceASIO::AsyncOp::toString() const {
     return output;
 }
 
+namespace {
+const auto kCanceledStatus = Status(ErrorCodes::CallbackCanceled, "Callback canceled");
+}  // namespace
+
 void NetworkInterfaceASIO::AsyncOp::cancel() {
     // An operation may be in mid-flight when it is canceled, so we
     // do not disconnect immediately upon cancellation.
@@ -131,15 +152,6 @@ bool NetworkInterfaceASIO::AsyncOp::connected() const {
 
 void NetworkInterfaceASIO::AsyncOp::finish(const ResponseStatus& status) {
     _onFinish(status);
-}
-
-void NetworkInterfaceASIO::AsyncOp::complete(Date_t now) {
-    if (canceled()) {
-        finish(ResponseStatus(ErrorCodes::CallbackCanceled, "Callback canceled"));
-    } else {
-        finish(ResponseStatus(Response(_output, Milliseconds(now - start()))));
-    }
-
     _state = OpState::kCompleted;
 }
 
@@ -149,14 +161,6 @@ MSGHEADER::Value* NetworkInterfaceASIO::AsyncOp::header() {
 
 const RemoteCommandRequest& NetworkInterfaceASIO::AsyncOp::request() const {
     return _request;
-}
-
-void NetworkInterfaceASIO::AsyncOp::setOutput(const BSONObj& bson) {
-    _output = bson;
-}
-
-tcp::socket* NetworkInterfaceASIO::AsyncOp::sock() {
-    return _sock.get();
 }
 
 Date_t NetworkInterfaceASIO::AsyncOp::start() const {
@@ -184,6 +188,10 @@ std::string NetworkInterfaceASIO::getDiagnosticString() {
     return output;
 }
 
+std::string NetworkInterfaceASIO::getHostName() {
+    return getHostNameCached();
+}
+
 void NetworkInterfaceASIO::_messageFromRequest(const RemoteCommandRequest& request,
                                                Message* toSend,
                                                bool useOpCommand) {
@@ -209,14 +217,17 @@ void NetworkInterfaceASIO::_messageFromRequest(const RemoteCommandRequest& reque
 }
 
 void NetworkInterfaceASIO::_asyncSendSimpleMessage(AsyncOp* op, const asio::const_buffer& buf) {
-    asio::async_write(*(op->sock()),
+    asio::async_write(*(op->connection()->sock()),
                       asio::buffer(buf),
                       [this, op](std::error_code ec, std::size_t bytes) {
-                          if (ec)
-                              return _networkErrorCallback(op, ec);
 
-                          if (op->canceled())
-                              return _completeOperation(op);
+                          if (op->canceled()) {
+                              return _completeOperation(op, kCanceledStatus);
+                          }
+
+                          if (ec) {
+                              return _networkErrorCallback(op, ec);
+                          }
 
                           _receiveResponse(op);
                       });
@@ -268,61 +279,65 @@ void NetworkInterfaceASIO::_recvMessageBody(AsyncOp* op) {
     invariant(bodyLength >= 0);
 
     // receive remaining data into md->data
-    asio::async_read(*(op->sock()),
+    asio::async_read(*(op->connection()->sock()),
                      asio::buffer(mdView.data(), bodyLength),
                      [this, op, mdView](asio::error_code ec, size_t bytes) {
+
+                         if (op->canceled()) {
+                             return _completeOperation(op, kCanceledStatus);
+                         }
+
                          if (ec) {
                              LOG(3) << "error receiving message body";
                              return _networkErrorCallback(op, ec);
                          }
-
-                         if (op->canceled())
-                             return _completeOperation(op);
 
                          return _completedWriteCallback(op);
                      });
 }
 
 void NetworkInterfaceASIO::_recvMessageHeader(AsyncOp* op) {
-    asio::async_read(*(op->sock()),
+    asio::async_read(*(op->connection()->sock()),
                      asio::buffer(reinterpret_cast<char*>(op->header()), sizeof(MSGHEADER::Value)),
                      [this, op](asio::error_code ec, size_t bytes) {
+
+                         if (op->canceled()) {
+                             return _completeOperation(op, kCanceledStatus);
+                         }
+
                          if (ec) {
                              LOG(3) << "error receiving header";
                              return _networkErrorCallback(op, ec);
                          }
-
-                         if (op->canceled())
-                             return _completeOperation(op);
-
                          _recvMessageBody(op);
                      });
 }
 
 void NetworkInterfaceASIO::_completedWriteCallback(AsyncOp* op) {
     // If we were told to send an empty message, toRecv will be empty here.
+
+    // TODO: handle metadata SERVER-19156
+    BSONObj commandReply;
     if (op->toRecv()->empty()) {
-        op->setOutput(BSONObj());
         LOG(3) << "received an empty message";
     } else {
         QueryResult::View qr = op->toRecv()->singleData().view2ptr();
         // unavoidable copy
-        op->setOutput(BSONObj(qr.data()).getOwned());
+        commandReply = BSONObj(qr.data()).getOwned();
     }
-    _completeOperation(op);
+    _completeOperation(
+        op, RemoteCommandResponse(std::move(commandReply), BSONObj(), now() - op->start()));
 }
 
 void NetworkInterfaceASIO::_networkErrorCallback(AsyncOp* op, const std::error_code& ec) {
     LOG(3) << "networking error occurred";
-    // TODO: Perhaps we should set this to a specific 'network error' value.
-    op->setOutput(BSONObj());
-    _completeOperation(op);
+    _completeOperation(op, Status(ErrorCodes::HostUnreachable, ec.message()));
 }
 
 // NOTE: This method may only be called by ASIO threads
 // (do not call from methods entered by ReplicationExecutor threads)
-void NetworkInterfaceASIO::_completeOperation(AsyncOp* op) {
-    op->complete(now());
+void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus& resp) {
+    op->finish(resp);
 
     {
         // NOTE: op will be deleted in the call to erase() below.
@@ -335,7 +350,7 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op) {
 }
 
 void NetworkInterfaceASIO::startup() {
-    _serviceRunner = std::thread([this]() {
+    _serviceRunner = stdx::thread([this]() {
         asio::io_service::work work(_io_service);
         _io_service.run();
     });
@@ -411,7 +426,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
     }
 
     // connect in a separate thread to avoid blocking the rest of the system
-    std::thread t([this, op]() {
+    stdx::thread t([this, op]() {
         try {
             // The call to connect() will throw if:
             // - we cannot get a new connection from the pool
@@ -425,20 +440,32 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
                 return;
             }
 
-            ResponseStatus status(exceptionToStatus());
-            asio::post(_io_service, [this, op, status]() { return _completeOperation(op); });
+            auto status = exceptionToStatus();
+
+            asio::post(_io_service,
+                       [this, op, status]() {
+
+                           if (op->canceled()) {
+                               return _completeOperation(op, kCanceledStatus);
+                           }
+
+                           return _completeOperation(op, status);
+                       });
             return;
         }
 
         // send control back to main thread(pool)
         asio::post(_io_service,
                    [this, op]() {
+
+                       if (op->canceled()) {
+                           return _completeOperation(op, kCanceledStatus);
+                       }
+
                        Message* toSend = op->toSend();
                        _messageFromRequest(op->request(), toSend);
                        if (toSend->empty()) {
                            _completedWriteCallback(op);
-                       } else if (op->canceled()) {
-                           return _completeOperation(op);
                        } else {
                            // TODO: Some day we may need to support vector messages.
                            fassert(28708, toSend->buf() != 0);

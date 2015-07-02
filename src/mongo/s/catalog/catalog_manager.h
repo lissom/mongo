@@ -161,20 +161,6 @@ public:
                                                         const std::string& name) = 0;
 
     /**
-     * Creates a new database entry for the specified database name in the configuration
-     * metadata and sets the specified shard as primary.
-     *
-     * @param dbName name of the database (case sensitive)
-     *
-     * Returns Status::OK on success or any error code indicating the failure. These are some
-     * of the known failures:
-     *  - NamespaceExists - database already exists
-     *  - DatabaseDifferCase - database already exists, but with a different case
-     *  - ShardNotFound - could not find a shard to place the DB on
-     */
-    virtual Status createDatabase(const std::string& dbName) = 0;
-
-    /**
      * Updates or creates the metadata for a given database.
      */
     virtual Status updateDatabase(const std::string& dbName, const DatabaseType& db);
@@ -276,7 +262,9 @@ public:
     virtual bool isShardHost(const ConnectionString& shardConnectionString) = 0;
 
     /**
-     * Runs a user management command on the config servers.
+     * Runs a user management command on the config servers, potentially synchronizing through
+     * a distributed lock. Do not use for general write command execution.
+     *
      * @param commandName: name of command
      * @param dbname: database for which the user management command is invoked
      * @param cmdObj: command obj
@@ -289,11 +277,11 @@ public:
                                                BSONObjBuilder* result) = 0;
 
     /**
-     * Runs a read-only user management command on a single config server.
+     * Runs a read-only command on a single config server.
      */
-    virtual bool runUserManagementReadCommand(const std::string& dbname,
-                                              const BSONObj& cmdObj,
-                                              BSONObjBuilder* result) = 0;
+    virtual bool runReadCommand(const std::string& dbname,
+                                const BSONObj& cmdObj,
+                                BSONObjBuilder* result) = 0;
 
     /**
      * Applies oplog entries to the config servers.
@@ -362,6 +350,20 @@ public:
     virtual DistLockManager* getDistLockManager() const = 0;
 
     /**
+     * Creates a new database entry for the specified database name in the configuration
+     * metadata and sets the specified shard as primary.
+     *
+     * @param dbName name of the database (case sensitive)
+     *
+     * Returns Status::OK on success or any error code indicating the failure. These are some
+     * of the known failures:
+     *  - NamespaceExists - database already exists
+     *  - DatabaseDifferCase - database already exists, but with a different case
+     *  - ShardNotFound - could not find a shard to place the DB on
+     */
+    Status createDatabase(const std::string& dbName);
+
+    /**
      * Directly inserts a document in the specified namespace on the config server (only the
      * config or admin databases). If the document does not have _id field, the field will be
      * added.
@@ -405,6 +407,18 @@ protected:
      * available shards. Will return ShardNotFound if shard could not be found.
      */
     static StatusWith<ShardId> selectShardForNewDatabase(ShardRegistry* shardRegistry);
+
+private:
+    /**
+     * Checks that the given database name doesn't already exist in the config.databases
+     * collection, including under different casing.
+     *
+     * Returns OK status if the db does not exist.
+     * Some known errors include:
+     *  NamespaceExists if it exists with the same casing
+     *  DatabaseDifferCase if it exists under different casing.
+     */
+    virtual Status _checkDbDoesNotExist(const std::string& dbName) const = 0;
 };
 
 }  // namespace mongo
