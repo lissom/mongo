@@ -12,6 +12,7 @@
 
 namespace mongo {
 
+//TODO: may need to separate out client operation runner and command operation runner
 class ClientOperationRunner : public AbstractOperationRunner {
 public:
     MONGO_DISALLOW_COPYING(ClientOperationRunner);
@@ -25,24 +26,38 @@ public:
 
 protected:
     virtual void processRequest() = 0;
-    //Restore context information, should only need to be called when it's time to coalesce a reply probably
+    // Restore context information, should only need to be called when it's time to coalesce a reply probably
     void onContextStart();
-    //Save the context information
+    // Save the context information
     void onContextEnd();
 
-    void logException(int logLevel, const char* const messageStart, const DBException& ex);
+    // Log the exception, reply to the client and set the state to errored
+    // Should only be called if normal processing is no longer need
+    // (normal processing maybe be in progress)
+    void logExceptionAndReply(int logLevel, const char* const messageStart, const DBException& ex);
+    BSONObj ClientOperationRunner::buildErrReply(const DBException& ex);
+    void noSuchCommand(const std::string& commandName);
 
     network::ClientAsyncMessagePort* const port;
     Client* const _clientInfo;
-    //TODO:rename _message
+    BSONObj _cmdObjBson;
+    // TODO:rename _message
     Message _m;
-    //TODO:rename _dbMessage
+    // TODO:rename _dbMessage
     DbMessage _d;
+    // TODO:rename to _queryMessage
+    QueryMessage q;
+    // TODO:rename to _opContext
+    ServiceContext::UniqueOperationContext txn;
+    Command* _command = nullptr;
+    BSONObjBuilder _result = BSONObjBuilder(32768);
+
     std::atomic<State> _state { State::init };
-    //Save the Id out of an abundance of caution
+    // Save the Id out of an abundance of caution
     const MSGID _requestId;
     const Operations _requestOp;
     const NamespaceString _nss;
+    int _retries = 5;
 };
 
 } /* namespace mongo */

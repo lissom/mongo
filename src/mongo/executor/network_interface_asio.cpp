@@ -82,7 +82,7 @@ void NetworkInterfaceASIO::AsyncOp::connect(ConnectionPool* const pool,
     _state = OpState::kConnectionAcquired;
 
     // TODO: Add a case here for unix domain sockets.
-    int protocol = conn.get()->port().localAddr().getType();
+    int protocol = conn.get()->port().localAddrstring().getType();
     if (protocol != AF_INET && protocol != AF_INET6) {
         throw SocketException(SocketException::CONNECT_ERROR, "Unsupported family");
     }

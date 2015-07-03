@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "mongo/s/client_operation_runner.h"
+#include "client_operation_runner.h"
 
 namespace mongo {
 

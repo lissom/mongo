@@ -47,9 +47,9 @@ public:
     virtual void reply(Message& received, Message& response) = 0;
 
     virtual HostAndPort remote() const = 0;
-    virtual unsigned remotePort() const = 0;
-    virtual SockAddr remoteAddr() const = 0;
-    virtual SockAddr localAddr() const = 0;
+    virtual std::string remoteAddrString() const = 0;
+    virtual std::string localAddrString() const = 0;
+
 
     void setX509SubjectName(const std::string& x509SubjectName) {
         _x509SubjectName = x509SubjectName;
