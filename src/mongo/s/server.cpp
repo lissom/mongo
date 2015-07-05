@@ -181,10 +181,10 @@ void start(const MessageServer::Options& opts) {
 
     PeriodicTask::startRunningPeriodicTasks();
 
-    ShardedMessageHandler handler;
-    MessageServer* server = mongo::createServer(opts, &handler);
-    //MessagePipeline pipeline(std::thread::hardware_concurrency() * 2);
-    //MessageServer* server = new network::AsioAsyncServer(opts, &pipeline);
+    //ShardedMessageHandler handler;
+    //MessageServer* server = mongo::createServer(opts, &handler);
+    MessagePipeline pipeline(std::thread::hardware_concurrency() * 2);
+    MessageServer* server = new network::AsioAsyncServer(opts, &pipeline);
     server->setAsTimeTracker();
     server->setupSockets();
     server->run();

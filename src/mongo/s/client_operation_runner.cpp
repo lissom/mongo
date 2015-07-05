@@ -155,6 +155,7 @@ void ClientOperationRunner::processMessage() {
          * RESTORE AFTER SINGLE THREADED TEST IS COMPLETE
          */
         //onContextEnd();
+        setState(State::completed);
 }
 
 void ClientOperationRunner::noSuchCommand(const std::string& commandName) {

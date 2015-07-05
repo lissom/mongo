@@ -27,6 +27,13 @@ AsyncMessagePort::~AsyncMessagePort() {
     //This object should only be destroyed if a runner cannot call back into it
     //Ensure there is no possibility of a _runner that can calling back
     fassert(-1, safeToDelete() == true);
+    //TODO: wrap and log
+    _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
+    //TODO: wrap and log
+    _socket.close();
+    if (!serverGlobalParams.quiet) {
+        log() << "end connection " << _socket.remote_endpoint() << std::endl;
+    }
 }
 
 void AsyncMessagePort::asyncReceiveStart() {
@@ -92,26 +99,27 @@ void AsyncMessagePort::asyncSizeError(const char* state, const char* desc, const
 }
 
 void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code ec) {
-    log() << "Socket error during" << state << ".  Code: " << ec << ".  Remote: "
+    log() << "Socket error during " << state << ".  Code: " << ec << ".  Remote: "
             << remoteAddr() << std::endl;
     setState(State::error);
     asyncSocketShutdownRemove();
 }
 
 void AsyncMessagePort::asyncSocketShutdownRemove() {
-    _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
-    _socket.close();
     _owner->_conns.erase(this);
 }
 
 void AsyncMessagePort::SendStart(Message& toSend, MSGID responseTo) {
+    log() << "Sending: " << toSend << std::endl;
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
     toSend.header().setId(nextMessageId());
     toSend.header().setResponseTo(responseTo);
+    fassert(-3, toSend.buf() != _buf.data());
     size_t size(toSend.header().getLen());
     _buf.resize(size);
     //mongoS should only need single view
     memcpy(_buf.data(), toSend.singleData().data(), size);
+    //No more interaction with the message is required at this point
     asyncSendMessage();
 }
 

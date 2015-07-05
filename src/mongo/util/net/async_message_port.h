@@ -67,7 +67,11 @@ struct ConnStats {
 class AsyncMessagePort : public AbstractMessagingPort {
 public:
     MONGO_DISALLOW_COPYING(AsyncMessagePort);
-    //State is what is being waiting on (unless errored or completed)
+    /*
+     * State is what is being waiting on (unless errored or completed)
+     * If the socket is in state operation, then an operation runner referring to this socket
+     * is actively runner, it is not safe to delete this socket
+     */
     enum class State {
         init, receieve, send, operation, error, complete
     };
@@ -98,6 +102,9 @@ public:
         mongo::setThreadName(_threadName);
     }
 
+    /*
+     * Preserves the legacy logging method, probably need something else like [thread.op#]
+     */
     const std::string& threadName() const {
         return _threadName;
     }
@@ -140,6 +147,10 @@ public:
     bool stateGood() {
         return isValid(state());
     }
+
+    /*
+     * This function ensures there are no outstanding references to the socket
+     */
     bool safeToDelete() {
         return state() != State::operation;
     }
@@ -193,7 +204,8 @@ private:
     void asyncSizeError(const char* state, const char* desc, const size_t lenGot,
             const size_t lenExpected);
     void asyncSocketError(const char* state, const std::error_code ec);
-    void asyncSocketShutdownRemove();bool doClose() {
+    void asyncSocketShutdownRemove();
+    bool doClose() {
         return _closeOnComplete;
     }
 

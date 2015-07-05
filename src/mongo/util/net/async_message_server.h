@@ -77,7 +77,5 @@ private:
 };
 
 } /* namespace network */
-
-bool ifListenerWaitReady2();
 } /* namespace mongo */
 

@@ -77,21 +77,23 @@ void AsioAsyncServer::startAllWaits() {
 }
 
 void AsioAsyncServer::startWait(Initiator* const initiator) {
+    log() << "starting wait " << initiator->_acceptor.local_endpoint() << std::endl;
     initiator->_acceptor.async_accept(initiator->_socket, [this, initiator] (std::error_code ec) {
-        if (!ec)
+        if (!ec) {
+            if (!serverGlobalParams.quiet) {
+                log() << "connection accepted from " << initiator->_socket.remote_endpoint() << std::endl;
+            }
         	//TOOO: Ensure that move is enabled: ASIO_HAS_MOVE
         	//The connection inserts itself into the container
         	(void) new ClientAsyncMessagePort(_connections.get(), std::move(initiator->_socket));
-		else {
+        } else {
 			//Clear the socket
 			asio::ip::tcp::socket sock(std::move(initiator->_socket));
 			sock.shutdown(asio::socket_base::shutdown_type::shutdown_both);
 			sock.close();
-			log() << "Error listening for new connection. Code: " << ec
-			//TODO: add template to logstream_builder.h to take operator<< if it exists...
-			//" on port " <<
-			//initiator->_acceptor.local_endpoint()
-			<< std::endl;
+			log() << "Error listening for new connection on " << initiator->_acceptor.local_endpoint()
+			        << ". Code: " << ec
+			        << std::endl;
 		}
 		//requeue
 		startWait(initiator);
@@ -167,16 +169,32 @@ void AsioAsyncServer::updateTime() {
 }
 
 AsioAsyncServer::Initiator::Initiator(asio::io_service& service,
-        const asio::ip::tcp::endpoint& endPoint) :
-        _acceptor(service, endPoint), _socket(service) {
+        const asio::ip::tcp::endpoint& endPoint)
+try : _acceptor(service),
+        _socket(service)
+{
+    try {
+        _acceptor.open(endPoint.protocol());
+    } catch (std::exception& e) {
+        log() << "Unable to open acceptor on " << endPoint
+            << causedBy(e.what())
+            << std::endl;
+        fassert(-1, false);
+    }
+    try {
+        _acceptor.bind(endPoint);
+    } catch (std::exception& e) {
+        log() << "Unable to bind acceptor on " << endPoint
+            << causedBy(e.what())
+            << std::endl;
+        fassert(-1, false);
+    }
+    fassert(-10, _acceptor.is_open());
+} catch (std::exception &e) {
+    log() << "Unable to create AsioAsyncServer::Initiator::Initiator"
+        << causedBy(e.what())
+        << std::endl;
+    fassert(-1, false);
 }
-
 } /* namespace network */
-
-bool ifListenerWaitReady2() {
-    std::unique_lock<std::mutex> lock(ready::getReadyMutex());
-    ready::getReadyCond().wait(lock, [] {return ready::_ready;});
-    return true;
-}
-
 } /* namespace mongo */
