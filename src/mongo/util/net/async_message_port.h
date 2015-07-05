@@ -71,9 +71,11 @@ public:
      * State is what is being waiting on (unless errored or completed)
      * If the socket is in state operation, then an operation runner referring to this socket
      * is actively runner, it is not safe to delete this socket
+     * kComplete can replace anything, nothing replaces it.
+     * Nothing but kComplete can replace kError.
      */
     enum class State {
-        init, receieve, send, operation, error, complete
+        kInit, kReceieve, kSend, kOperation, kError, kComplete
     };
     using PersistantState = ServiceContext::UniqueClient;
     AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
@@ -136,11 +138,11 @@ public:
     const Timer& messageTimer() { return _messageTimer; }
 
     void reply(Message& received, Message& response, MSGID responseToId) final {
-        fassert(-1, state() == State::operation);
+        fassert(-1, state() == State::kOperation || state() == State::kError);
         SendStart(received, responseToId);
     }
     void reply(Message& received, Message& response) final {
-        fassert(-1, state() == State::operation);
+        fassert(-1, state() == State::kOperation || state() == State::kError);
         SendStart(received, response.header().getId());
     }
 
@@ -152,7 +154,7 @@ public:
      * This function ensures there are no outstanding references to the socket
      */
     bool safeToDelete() {
-        return state() != State::operation;
+        return state() != State::kOperation;
     }
     /*
      * All of the below function expose implementation details and shouldn't exist
@@ -217,7 +219,7 @@ private:
     }
 
     bool isValid(State state) {
-        return state != State::error && state != State::complete;
+        return state != State::kError && state != State::kComplete;
     }
 
     void setState(State newState);
@@ -235,7 +237,7 @@ private:
     std::string _threadName;
     //TODO: Turn this into state and verify it's correct at all stages
     std::atomic<bool> _closeOnComplete { };
-    std::atomic<State> _state { State::init };
+    std::atomic<State> _state { State::kInit };
     Timer _messageTimer;
 };
 

@@ -20,7 +20,11 @@ public:
     ClientAsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
     ~ClientAsyncMessagePort();
 
+    //Stores the opRunner, nothing is done to it
     void setOpRunner(std::unique_ptr<AbstractOperationRunner> newOpRunner);
+    // Deletes the opRunner
+    void opRunnerComplete();
+
 
 private:
     std::unique_ptr<AbstractOperationRunner> _runner;
@@ -29,4 +33,3 @@ private:
 
 } /* namespace network */
 } /* namespace mongo */
-

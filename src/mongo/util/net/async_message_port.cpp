@@ -37,7 +37,7 @@ AsyncMessagePort::~AsyncMessagePort() {
 }
 
 void AsyncMessagePort::asyncReceiveStart() {
-    setState(State::receieve);
+    setState(State::kReceieve);
     asyncReceiveHeader();
 }
 
@@ -80,8 +80,8 @@ void AsyncMessagePort::asyncReceiveMessage() {
 }
 
 void AsyncMessagePort::asyncQueueForOperation() {
-    fassert(-1, state() != State::error);
-    setState(State::operation);
+    fassert(-1, state() != State::kError);
+    setState(State::kOperation);
     _owner->handlerOperationReady(this);
 }
 
@@ -94,14 +94,14 @@ void AsyncMessagePort::asyncSizeError(const char* state, const char* desc, const
     log() << "Error during " << state << ": " << desc << " size expected( " << lenExpected
             << ") was not received" << ". Length: " << lenGot << ". Remote: " << remoteAddr()
             << std::endl;
-    setState(State::error);
+    setState(State::kError);
     asyncSocketShutdownRemove();
 }
 
 void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code ec) {
     log() << "Socket error during " << state << ".  Code: " << ec << ".  Remote: "
             << remoteAddr() << std::endl;
-    setState(State::error);
+    setState(State::kError);
     asyncSocketShutdownRemove();
 }
 
@@ -124,6 +124,8 @@ void AsyncMessagePort::SendStart(Message& toSend, MSGID responseTo) {
 }
 
 void AsyncMessagePort::asyncSendMessage() {
+	fassert(-1, state() != State::kError && state() != State::kComplete);
+	setState(State::kSend);
     size_t size = getMsgData().getLen();
     _socket.async_send(asio::buffer(_buf.data(), size),
             [this, size] (const std::error_code& ec, const size_t len) {
@@ -135,12 +137,11 @@ void AsyncMessagePort::asyncSendMessage() {
 
 void AsyncMessagePort::setState(State newState) {
     State currentState = _state;
-    do {
-        if (currentState == State::complete
-                || (currentState == State::error && newState != State::complete))
-            return;
-        //If the state moves to error or complete stop attempting the change
-    } while (!_state.compare_exchange_weak(currentState, newState));
+    while (currentState != State::kComplete &&
+    		!(currentState == State::kError && newState != State::kComplete)) {
+        if (_state.compare_exchange_weak(currentState, newState))
+        	break;
+    }
 }
 
 void Connections::handlerOperationReady(AsyncMessagePort* conn) {

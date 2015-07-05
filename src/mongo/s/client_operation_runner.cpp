@@ -57,7 +57,7 @@ void ClientOperationRunner::run() {
     std::thread([this]{
             Command::execCommandClientBasic(txn.get(), _command, *txn->getClient(), 0,
                     _nss.ns().c_str(), _cmdObjBson, _result);
-            delete this;
+            port->opRunnerComplete();
         });
 }
 
