@@ -77,7 +77,6 @@ void AsioAsyncServer::startAllWaits() {
 }
 
 void AsioAsyncServer::startWait(Initiator* const initiator) {
-    log() << "starting wait " << initiator->_acceptor.local_endpoint() << std::endl;
     initiator->_acceptor.async_accept(initiator->_socket, [this, initiator] (std::error_code ec) {
         if (!ec) {
             if (!serverGlobalParams.quiet) {
@@ -103,6 +102,7 @@ void AsioAsyncServer::startWait(Initiator* const initiator) {
 void AsioAsyncServer::serviceRun() {
     try {
         asio::error_code ec;
+        asio::io_service::work work(_ioService);
         _ioService.run(ec);
         if (ec) {
             log() << "Error running service: " << ec << std::endl;
@@ -170,26 +170,9 @@ void AsioAsyncServer::updateTime() {
 
 AsioAsyncServer::Initiator::Initiator(asio::io_service& service,
         const asio::ip::tcp::endpoint& endPoint)
-try : _acceptor(service),
+try : _acceptor(service, endPoint),
         _socket(service)
 {
-    try {
-        _acceptor.open(endPoint.protocol());
-    } catch (std::exception& e) {
-        log() << "Unable to open acceptor on " << endPoint
-            << causedBy(e.what())
-            << std::endl;
-        fassert(-1, false);
-    }
-    try {
-        _acceptor.bind(endPoint);
-    } catch (std::exception& e) {
-        log() << "Unable to bind acceptor on " << endPoint
-            << causedBy(e.what())
-            << std::endl;
-        fassert(-1, false);
-    }
-    fassert(-10, _acceptor.is_open());
 } catch (std::exception &e) {
     log() << "Unable to create AsioAsyncServer::Initiator::Initiator"
         << causedBy(e.what())
