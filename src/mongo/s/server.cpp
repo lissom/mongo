@@ -66,6 +66,7 @@
 #include "mongo/s/config.h"
 #include "mongo/s/cursors.h"
 #include "mongo/s/grid.h"
+#include "mongo/s/message_pipeline.h"
 #include "mongo/s/mongos_options.h"
 #include "mongo/s/request.h"
 #include "mongo/s/version_mongos.h"
@@ -78,7 +79,7 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/message.h"
-#include "mongo/util/net/message_server.h"
+#include "mongo/util/net/async_message_server.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/ntservice.h"
 #include "mongo/util/options_parser/startup_options.h"
@@ -181,10 +182,13 @@ void start(const MessageServer::Options& opts) {
     PeriodicTask::startRunningPeriodicTasks();
 
     ShardedMessageHandler handler;
-    MessageServer* server = createServer(opts, &handler);
+    MessageServer* server = mongo::createServer(opts, &handler);
+    //MessagePipeline pipeline(std::thread::hardware_concurrency() * 2);
+    //MessageServer* server = new network::AsioAsyncServer(opts, &pipeline);
     server->setAsTimeTracker();
     server->setupSockets();
     server->run();
+
 }
 
 DBClientBase* createDirectClient(OperationContext* txn) {

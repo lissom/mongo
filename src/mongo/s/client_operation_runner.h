@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "mongo/db/commands.h"
 #include "mongo/s/abstract_operation_runner.h"
 #include "mongo/util/net/client_async_message_port.h"
 
@@ -25,7 +26,7 @@ public:
     const MSGID& requestId() const { return _requestId; }
 
 protected:
-    virtual void processRequest() = 0;
+    virtual void processMessage();
     // Restore context information, should only need to be called when it's time to coalesce a reply probably
     void onContextStart();
     // Save the context information
@@ -35,7 +36,7 @@ protected:
     // Should only be called if normal processing is no longer need
     // (normal processing maybe be in progress)
     void logExceptionAndReply(int logLevel, const char* const messageStart, const DBException& ex);
-    BSONObj ClientOperationRunner::buildErrReply(const DBException& ex);
+    BSONObj buildErrReply(const DBException& ex);
     void noSuchCommand(const std::string& commandName);
 
     network::ClientAsyncMessagePort* const port;
@@ -50,7 +51,7 @@ protected:
     // TODO:rename to _opContext
     ServiceContext::UniqueOperationContext txn;
     Command* _command = nullptr;
-    BSONObjBuilder _result = BSONObjBuilder(32768);
+    BSONObjBuilder _result;
 
     std::atomic<State> _state { State::init };
     // Save the Id out of an abundance of caution

@@ -59,7 +59,7 @@ void AsyncMessagePort::asyncReceiveMessage() {
     if (static_cast<size_t>(msgSize) < HEADERSIZE
             || static_cast<size_t>(msgSize) > MaxMessageSizeBytes) {
         log() << "Error during receive: Got an invalid message length in the header( " << msgSize
-                << ")" << ". From: " << remoteAddrString() << std::endl;
+                << ")" << ". From: " << remoteAddr() << std::endl;
         //TODO: Should we return an error on the socket to the client?
         asyncSocketShutdownRemove();
     }
@@ -85,7 +85,7 @@ void AsyncMessagePort::asyncSendComplete() {
 void AsyncMessagePort::asyncSizeError(const char* state, const char* desc, const size_t lenGot,
         const size_t lenExpected) {
     log() << "Error during " << state << ": " << desc << " size expected( " << lenExpected
-            << ") was not received" << ". Length: " << lenGot << ". Remote: " << remoteAddrString()
+            << ") was not received" << ". Length: " << lenGot << ". Remote: " << remoteAddr()
             << std::endl;
     setState(State::error);
     asyncSocketShutdownRemove();
@@ -93,7 +93,7 @@ void AsyncMessagePort::asyncSizeError(const char* state, const char* desc, const
 
 void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code ec) {
     log() << "Socket error during" << state << ".  Code: " << ec << ".  Remote: "
-            << remoteAddrString() << std::endl;
+            << remoteAddr() << std::endl;
     setState(State::error);
     asyncSocketShutdownRemove();
 }

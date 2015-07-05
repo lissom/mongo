@@ -24,8 +24,6 @@
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/message_port.h"
 
-#include "../../s/abstract_operation_runner.h"
-
 namespace mongo {
 namespace network {
 
@@ -155,17 +153,15 @@ public:
         return HostAndPort();
     }
     //Only used for an error string for sasl logging
-    //TODO: fix sasl logging to use a string
-    std::string localAddrString() const final {
-        std::stringstream ss;
-        ss << _socket.local_endpoint();
-        return ss.str();
+    //TODO: fix sasl logging to use a string, but is in flux in other network stuff, wait for stable and replace with is really being asked
+    SockAddr localAddr() const final {
+        fassert(-2, false);
+        return SockAddr();
     }
 
-    std::string remoteAddrString() const final {
-        std::stringstream ss;
-        ss << _socket.remote_endpoint();
-        return ss.str();
+    SockAddr remoteAddr() const final {
+        fassert(-2, false);
+        return SockAddr();
     }
 
     // End AbstractMessagingPort

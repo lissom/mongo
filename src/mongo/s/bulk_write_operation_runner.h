@@ -22,7 +22,7 @@ public:
     ~BulkWriteOperationRunner();
 
 private:
-    void processRequest() final;
+    void processMessage() final;
 
     /*
      * Must be able to ran multiple times

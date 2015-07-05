@@ -7,11 +7,16 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
+#include <thread>
+
 #include "mongo/db/client.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/lasterror.h"
-#include "client_operation_runner.h"
+#include "mongo/s/client_operation_runner.h"
+#include "mongo/s/client/shard_connection.h" //remove
 #include "mongo/s/cluster_last_error_info.h"
+#include "mongo/s/stale_exception.h"
+#include "mongo/s/version_manager.h" //remove
 #include "mongo/util/log.h"
 #include "mongo/util/assert_util.h"
 
@@ -25,7 +30,9 @@ ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* co
       _clientInfo(&cc()),
       _m(*message),
       _d(std::move(*dbMessage)),
+      q(_d),
       txn(cc().makeOperationContext()),
+      _result(32738),
       _requestId(_m.header().getId()),
       _requestOp(static_cast<Operations>(_m.operation())),
       _nss(std::move(*nss)) {
@@ -40,9 +47,6 @@ ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* co
                 str::stream() << "Invalid ns [" << _nss.ns() << "]",
                 _nss.isValid());
     }
-    _d.markSet();
-    // TODO: Is it necessary to ensure that markSet is ran before initializing QueryMessage?
-    q = QueryMessage(_d);
 }
 
 ClientOperationRunner::~ClientOperationRunner() {
@@ -50,95 +54,107 @@ ClientOperationRunner::~ClientOperationRunner() {
 }
 
 void ClientOperationRunner::run() {
+    std::thread([this]{
+            Command::execCommandClientBasic(txn.get(), _command, *txn->getClient(), 0,
+                    _nss.ns().c_str(), _cmdObjBson, _result);
+            delete this;
+        });
+}
+
+void ClientOperationRunner::processMessage() {
     verify(_state == State::init);
-    try {
-        Client::initThread("conn", port);
-    } catch (std::exception& e) {
-        log() << "Failed to initialize operation runner thread specific variables: " << e.what();
-        return setErrored();
-    } catch (...) {
-        log()
-            << "Failed to initialize operation runner thread specific variables: unknown exception";
-        return setErrored();
-    }
-    // TODO: Stop setting the thread name, just set them to Pipeline_NUM?
-    port->setThreadName(getThreadName());
-    setState(State::running);
-    LOG(3) << "BasicOperationRunner::run() start ns: " << _nss << " request id: " << _requestId
-           << " op: " << _requestId << " timer: " << port->messageTimer().millis() << std::endl;
-    try {
-        ClusterLastErrorInfo::get(_clientInfo).newRequest();
-        _cmdObjBson = q.query;
-        {
-            BSONElement e = _cmdObjBson.firstElement();
-            if (e.type() == Object &&
-                (e.fieldName()[0] == '$' ? str::equals("query", e.fieldName() + 1)
-                                         : str::equals("query", e.fieldName()))) {
-                // Extract the embedded query object.
+        try {
+            Client::initThread("conn", port);
+        } catch (std::exception& e) {
+            log() << "Failed to initialize operation runner thread specific variables: " << e.what();
+            return setErrored();
+        } catch (...) {
+            log()
+                << "Failed to initialize operation runner thread specific variables: unknown exception";
+            return setErrored();
+        }
+        // TODO: Stop setting the thread name, just set them to Pipeline_NUM?
+        port->setThreadName(getThreadName());
+        setState(State::running);
+        LOG(3) << "BasicOperationRunner::run() start ns: " << _nss << " request id: " << _requestId
+               << " op: " << _requestId << " timer: " << port->messageTimer().millis() << std::endl;
+        try {
+            ClusterLastErrorInfo::get(_clientInfo).newRequest();
+            _cmdObjBson = q.query;
+            {
+                BSONElement e = _cmdObjBson.firstElement();
+                if (e.type() == Object &&
+                    (e.fieldName()[0] == '$' ? str::equals("query", e.fieldName() + 1)
+                                             : str::equals("query", e.fieldName()))) {
+                    // Extract the embedded query object.
 
-                if (_cmdObjBson.hasField(Query::ReadPrefField.name())) {
-                    // The command has a read preference setting. We don't want
-                    // to lose this information so we copy this to a new field
-                    // called $queryOptions.$readPreference
-                    BSONObjBuilder final_cmdObjBsonBuilder;
-                    final_cmdObjBsonBuilder.appendElements(e.embeddedObject());
+                    if (_cmdObjBson.hasField(Query::ReadPrefField.name())) {
+                        // The command has a read preference setting. We don't want
+                        // to lose this information so we copy this to a new field
+                        // called $queryOptions.$readPreference
+                        BSONObjBuilder final_cmdObjBsonBuilder;
+                        final_cmdObjBsonBuilder.appendElements(e.embeddedObject());
 
-                    BSONObjBuilder queryOptionsBuilder(
-                        final_cmdObjBsonBuilder.subobjStart("$queryOptions"));
-                    queryOptionsBuilder.append(_cmdObjBson[Query::ReadPrefField.name()]);
-                    queryOptionsBuilder.done();
+                        BSONObjBuilder queryOptionsBuilder(
+                            final_cmdObjBsonBuilder.subobjStart("$queryOptions"));
+                        queryOptionsBuilder.append(_cmdObjBson[Query::ReadPrefField.name()]);
+                        queryOptionsBuilder.done();
 
-                    _cmdObjBson = final_cmdObjBsonBuilder.obj();
-                } else {
-                    _cmdObjBson = e.embeddedObject();
+                        _cmdObjBson = final_cmdObjBsonBuilder.obj();
+                    } else {
+                        _cmdObjBson = e.embeddedObject();
+                    }
                 }
             }
-        }
 
-        BSONElement e = _cmdObjBson.firstElement();
-        std::string commandName = e.fieldName();
-        _command = e.type() ? Command::findCommand(commandName) : nullptr;
-        if (!_command)
-            return noSuchCommand(commandName);
+            BSONElement e = _cmdObjBson.firstElement();
+            std::string commandName = e.fieldName();
+            _command = e.type() ? Command::findCommand(commandName) : nullptr;
+            if (!_command)
+                return noSuchCommand(commandName);
 
-        //TODO: Async this: remove the loop, but keep teh assser
-        for(; _retries > 0; --_retries) {
-            try {
-                processRequest();
-                return;
-            } catch (StaleConfigException& e) {
-                if (_retries <= 0)
-                    throw e;
+            //TODO: Async this: remove the loop, but keep teh assser
+            for(; _retries > 0; --_retries) {
+                try {
+                    processMessage();
+                    return;
+                } catch (StaleConfigException& e) {
+                    if (_retries <= 0)
+                        throw e;
 
-                log() << "retrying command: " << q.query << std::endl;
+                    log() << "retrying command: " << q.query << std::endl;
 
-                //TODO: Is this still necessary?
-                // For legacy reasons, ns may not actually be set in the exception :-(
-                std::string staleNS = e.getns();
-                if (staleNS.size() == 0)
-                    staleNS = q.ns;
+                    //TODO: Is this still necessary?
+                    // For legacy reasons, ns may not actually be set in the exception :-(
+                    std::string staleNS = e.getns();
+                    if (staleNS.size() == 0)
+                        staleNS = q.ns;
 
-                //TODO: Async this
-                ShardConnection::checkMyConnectionVersions(staleNS);
-                if (_retries < 4)
                     //TODO: Async this
-                    versionManager.forceRemoteCheckShardVersionCB(staleNS);
-            } catch (AssertionException& e) {
-                Command::appendCommandStatus(_result, e.toStatus());
-                BSONObj x = _result.done();
-                replyToQuery(0, port, _m, x);
-                return;
+                    ShardConnection::checkMyConnectionVersions(staleNS);
+                    if (_retries < 4)
+                        //TODO: Async this
+                        versionManager.forceRemoteCheckShardVersionCB(staleNS);
+                } catch (AssertionException& e) {
+                    Command::appendCommandStatus(_result, e.toStatus());
+                    BSONObj x = _result.done();
+                    replyToQuery(0, port, _m, x);
+                    return;
+                }
             }
+        } catch (const AssertionException& ex) {
+            logExceptionAndReply(ex.isUserAssertion() ? 1 : 0, "Assertion failed", ex);
+        } catch (const DBException& ex) {
+            logExceptionAndReply(0, "Exception thrown", ex);
         }
-    } catch (const AssertionException& ex) {
-        logExceptionAndReply(ex.isUserAssertion() ? 1 : 0, "Assertion failed", ex);
-    } catch (const DBException& ex) {
-        logExceptionAndReply(0, "Exception thrown", ex);
-    }
-    // TODO: handle all other exceptions.  Do we want to?
-    LOG(3) << "BasicOperationRunner::run() end ns: " << _nss << " request id: " << _requestId
-           << " op: " << _requestId << " timer: " << port->messageTimer().millis() << std::endl;
-    onContextEnd();
+        // TODO: handle all other exceptions.  Do we want to?
+        LOG(3) << "BasicOperationRunner::run() end ns: " << _nss << " request id: " << _requestId
+               << " op: " << _requestId << " timer: " << port->messageTimer().millis() << std::endl;
+
+        /*
+         * RESTORE AFTER SINGLE THREADED TEST IS COMPLETE
+         */
+        //onContextEnd();
 }
 
 void ClientOperationRunner::noSuchCommand(const std::string& commandName) {

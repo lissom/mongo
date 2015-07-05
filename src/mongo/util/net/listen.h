@@ -46,6 +46,10 @@ const int DEFAULT_MAX_CONN = 1000000;
 
 class MessagingPort;
 
+namespace clock {
+    long long getElapsedTimeMillis();
+} //namespace clock
+
 class Listener {
     MONGO_DISALLOW_COPYING(Listener);
 
@@ -73,9 +77,6 @@ public:
           then have to keep waking up and maybe that helps on a developer's laptop
           battery usage...
      */
-    long long getMyElapsedTimeMillis() const {
-        return _elapsedTime;
-    }
 
     /**
      * Allocate sockets for the listener and set _setupSocketsSuccessful to true
@@ -94,12 +95,7 @@ public:
     }
 
     static long long getElapsedTimeMillis() {
-        if (_timeTracker)
-            return _timeTracker->getMyElapsedTimeMillis();
-
-        // should this assert or throw?  seems like callers may not expect to get zero back,
-        // certainly not forever.
-        return 0;
+        return clock::getElapsedTimeMillis();
     }
 
     /**
@@ -115,7 +111,6 @@ private:
     std::string _ip;
     bool _setupSocketsSuccessful;
     bool _logConnect;
-    long long _elapsedTime;
     mutable stdx::mutex _readyMutex;                   // Protects _ready
     mutable stdx::condition_variable _readyCondition;  // Used to wait for changes to _ready
     // Boolean that indicates whether this Listener is ready to accept incoming network requests
@@ -171,7 +166,4 @@ private:
 //Only current used in repl::isSelf
 bool ifListenerWaitReady();
 
-namespace clock {
-    long long getElapsedTimeMillis();
-} //namespace clock
 }

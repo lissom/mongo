@@ -57,12 +57,15 @@ void MessagePipeline::MessageProcessor::run() {
         if (newMessageConn == nullptr)
             continue;
 
-
-
+        Message message;
+        DbMessage dbMessage(message);
+        dbMessage.markSet();
+        NamespaceString nss(dbMessage.getns());
+        // TODO: Use this see if the operation is legacy and handle appropriately
 
         // TODO: turn this into a factory based on message operation
-        std::unique_ptr<AbstractOperationRunner> upRunner =
-                createOpRunnerClient(connInfo);
+        std::unique_ptr<AbstractOperationRunner> upRunner(
+                new ClientOperationRunner(newMessageConn, &message, &dbMessage, &nss));
 
 
 

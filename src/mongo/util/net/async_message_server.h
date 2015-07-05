@@ -49,6 +49,8 @@ public:
      * and capture of a message
      */
     void handlerOperationReady(AsyncMessagePort* conn);
+    void setupSockets() {}
+    void setAsTimeTracker() {};
 
 private:
     struct Initiator {

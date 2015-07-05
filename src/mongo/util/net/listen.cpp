@@ -40,6 +40,7 @@
 #include "mongo/base/owned_pointer_vector.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
+#include "mongo/util/net/clock.h"
 #include "mongo/util/net/message_port.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/scopeguard.h"
@@ -126,7 +127,6 @@ Listener::Listener(const string& name, const string& ip, int port, bool logConne
       _ip(ip),
       _setupSocketsSuccessful(false),
       _logConnect(logConnect),
-      _elapsedTime(0),
       _ready(false) {
 #ifdef MONGO_CONFIG_SSL
     _ssl = getSSLManager();
@@ -269,9 +269,9 @@ void Listener::initAndListen() {
 
         if (ret == 0) {
 #if defined(__linux__)
-            _elapsedTime += (10000 - maxSelectTime.tv_usec) / 1000;
+            clock::incElapsedTimeMillis2((10000 - maxSelectTime.tv_usec) / 1000);
 #else
-            _elapsedTime += 10;
+            clock::incElapsedTimeMillis2(10);
 #endif
             continue;
         }
@@ -290,9 +290,9 @@ void Listener::initAndListen() {
         }
 
 #if defined(__linux__)
-        _elapsedTime += std::max(ret, (int)((10000 - maxSelectTime.tv_usec) / 1000));
+        clock::incElapsedTimeMillis2(std::max(ret, (int)((10000 - maxSelectTime.tv_usec) / 1000)));
 #else
-        _elapsedTime += ret;  // assume 1ms to grab connection. very rough
+        clock::incElapsedTimeMillis2(ret);  // assume 1ms to grab connection. very rough
 #endif
 
         for (vector<SOCKET>::iterator it = _socks.begin(), end = _socks.end(); it != end; ++it) {
@@ -675,12 +675,9 @@ bool ifListenerWaitReady() {
 
 namespace clock {
 long long getElapsedTimeMillis() {
-    const Listener* timeTracker = Listener::getTimeTracker();
-    if ( timeTracker )
-        return timeTracker->getMyElapsedTimeMillis();
-    //Original comment
+    //Original comment in relation to returning 0
     // should this assert or throw?  seems like callers may not expect to get zero back, certainly not forever.
-    return 0;
+    return getElapsedTimeMillis2();
 }
 } //namespace clock
 }

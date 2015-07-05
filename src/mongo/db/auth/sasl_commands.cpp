@@ -185,7 +185,7 @@ Status doSaslStep(const ClientBasic* client,
     if (!status.isOK()) {
         log() << session->getMechanism() << " authentication failed for "
               << session->getPrincipalId() << " on " << session->getAuthenticationDatabase()
-              << " from client " << client->port()->localAddrString()
+              << " from client " << client->port()->localAddr().toString()
               << " ; " << status.toString() << std::endl;
         // All the client needs to know is that authentication has failed.
         return Status(ErrorCodes::AuthenticationFailed, "Authentication failed.");

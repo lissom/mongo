@@ -49,8 +49,8 @@ public:
 
     virtual HostAndPort remote() const;
     virtual unsigned remotePort() const;
-    virtual SockAddr remoteAddrString() const;
-    virtual SockAddr localAddrString() const;
+    virtual SockAddr remoteAddr() const;
+    virtual SockAddr localAddr() const;
 
     void setRemote(const HostAndPort& remote);
 

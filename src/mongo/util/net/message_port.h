@@ -85,8 +85,8 @@ public:
         return psock->remotePort();
     }
     virtual HostAndPort remote() const;
-    virtual std::string remoteAddrString() const;
-    virtual std::string localAddrString() const;
+    virtual SockAddr remoteAddr() const;
+    virtual SockAddr localAddr() const;
 
     std::shared_ptr<Socket> psock;
 

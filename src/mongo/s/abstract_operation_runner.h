@@ -18,13 +18,14 @@
 #include "mongo/db/service_context.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/util/factory.h"
+#include "mongo/util/net/async_message_port.h"
 
 namespace mongo {
 class AbstractOperationRunner;
 using OpRunnerPtr = std::unique_ptr<AbstractOperationRunner>;
 //This factory will only produce client ops as the creation args are different
 using OpRunnerClientCreator = std::function<OpRunnerPtr(
-        network::ClientAsyncMessagePort* const connInfo,
+        network::AsyncMessagePort* const connInfo,
         Message* const message, DbMessage* const dbMessage, NamespaceString* const nss)>;
 using OpRunnerClientFactory =  RegisterFactory<OpRunnerPtr, OpRunnerClientCreator>;
 
@@ -77,7 +78,7 @@ protected:
     std::atomic<State> _state { State::init };
 };
 
-OpRunnerPtr createOpRunnerClient(network::ClientAsyncMessagePort* const connInfo,
+OpRunnerPtr createOpRunnerClient(network::AsyncMessagePort* const connInfo,
         Message* const message, DbMessage* const dbMessage, NamespaceString* const nss);
 
 } //namespace mongo

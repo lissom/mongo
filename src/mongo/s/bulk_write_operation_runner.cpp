@@ -19,7 +19,7 @@ BulkWriteOperationRunner::~BulkWriteOperationRunner() {
 
 }
 
-void BulkWriteOperationRunner::processRequest() {
+void BulkWriteOperationRunner::processMessage() {
 
 }
 

@@ -7,7 +7,7 @@
 
 #include <atomic>
 
-#include "clock.h"
+#include "mongo/util/net/clock.h"
 
 namespace mongo {
 namespace clock {

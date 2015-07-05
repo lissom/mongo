@@ -161,7 +161,7 @@ void AsioAsyncServer::run() {
 void AsioAsyncServer::updateTime() {
     while (!inShutdown()) {
         const size_t duration = 1;
-        boost::this_thread::sleep(boost::posix_time::milliseconds(duration));
+        std::this_thread::sleep_for(std::chrono::milliseconds(duration));
         clock::incElapsedTimeMillis2(duration);
     }
 }
