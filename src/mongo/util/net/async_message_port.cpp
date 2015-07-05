@@ -20,20 +20,23 @@ AsyncMessagePort::AsyncMessagePort(Connections* const owner, asio::ip::tcp::sock
         _owner(owner), _socket(std::move(socket)), _connectionId(_owner->getNewConnId()),
 		_buf(0) {
 	_owner->_conns.emplace(this);
-    void asyncReceiveStart();
+    asyncReceiveStart();
 }
 
 AsyncMessagePort::~AsyncMessagePort() {
     //This object should only be destroyed if a runner cannot call back into it
     //Ensure there is no possibility of a _runner that can calling back
     fassert(-1, safeToDelete() == true);
+
+    //Remove visibility before logging removal so there are no funny log lines
+    _owner->_conns.release(this);
+    if (!serverGlobalParams.quiet) {
+        log() << "end connection " << _socket.remote_endpoint() << std::endl;
+    }
     //TODO: wrap and log
     _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
     //TODO: wrap and log
     _socket.close();
-    if (!serverGlobalParams.quiet) {
-        log() << "end connection " << _socket.remote_endpoint() << std::endl;
-    }
 }
 
 void AsyncMessagePort::asyncReceiveStart() {
@@ -49,7 +52,7 @@ void AsyncMessagePort::asyncReceiveHeader() {
     _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
             [this](const std::error_code& ec, const size_t len) {
                 bytesIn(len);
-                if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen()))
+                if (!asyncStatusCheck("receive", "message header", ec, len, HEADERSIZE))
                     return;
                 //Start the timer as soon as we get a good header so everything is captured
                 _messageTimer.reset();
@@ -73,8 +76,8 @@ void AsyncMessagePort::asyncReceiveMessage() {
     _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
             [this](const std::error_code& ec, const size_t len) {
                 bytesIn(len);
-                if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen()))
-                return;
+                if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen() - HEADERSIZE))
+                    return;
                 asyncQueueForOperation();
             });
 }

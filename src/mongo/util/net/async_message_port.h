@@ -82,9 +82,9 @@ public:
 
     ~AsyncMessagePort();
 
-    MsgData::View& getMsgData() {
+    MsgData::ConstView getMsgData() {
         verify(_buf.data());
-        return reinterpret_cast<MsgData::View&>(*_buf.data());
+        return MsgData::ConstView(_buf.data());
     }
 
     void closeOnComplete() {
@@ -162,19 +162,19 @@ public:
      */
     //Only used for mongoD and MessagingPort, breaks abstraction so leaving it alone
     HostAndPort remote() const final {
-        fassert(-2, false);
-        return HostAndPort();
+        return HostAndPort(_socket.remote_endpoint().address().to_string(),
+                        _socket.remote_endpoint().port());
     }
     //Only used for an error string for sasl logging
     //TODO: fix sasl logging to use a string, but is in flux in other network stuff, wait for stable and replace with is really being asked
     SockAddr localAddr() const final {
-        fassert(-2, false);
-        return SockAddr();
+        return SockAddr(_socket.local_endpoint().address().to_string().c_str(),
+                _socket.local_endpoint().port());
     }
 
     SockAddr remoteAddr() const final {
-        fassert(-2, false);
-        return SockAddr();
+        return SockAddr(_socket.remote_endpoint().address().to_string().c_str(),
+                _socket.remote_endpoint().port());
     }
 
     // End AbstractMessagingPort

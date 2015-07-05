@@ -5,6 +5,8 @@
  *      Author: charlie
  */
 
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
+
 #include "mongo/platform/basic.h"
 
 #include "mongo/s/bulk_write_operation_runner.h"
@@ -29,7 +31,6 @@ MessagePipeline::~MessagePipeline() {
 void MessagePipeline::enqueueMessage(network::ClientAsyncMessagePort* conn) {
     std::unique_lock<std::mutex> lock(_mutex);
     _newMessages.push(conn);
-    lock.release();
     _notifyNewMessages.notify_one();
 }
 
@@ -57,15 +58,16 @@ void MessagePipeline::MessageProcessor::run() {
         if (newMessageConn == nullptr)
             continue;
 
-        Message message;
+        Message message(newMessageConn->getBuffer(), false);
         DbMessage dbMessage(message);
         dbMessage.markSet();
         NamespaceString nss(dbMessage.getns());
         // TODO: Use this see if the operation is legacy and handle appropriately
 
         // TODO: turn this into a factory based on message operation
+        auto clientInfo = &cc();
         std::unique_ptr<AbstractOperationRunner> upRunner(
-                new ClientOperationRunner(newMessageConn, &message, &dbMessage, &nss));
+                new ClientOperationRunner(newMessageConn, clientInfo, &message, &dbMessage, &nss));
 
 
 

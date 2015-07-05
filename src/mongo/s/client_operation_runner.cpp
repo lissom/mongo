@@ -23,15 +23,16 @@
 namespace mongo {
 
 ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* const connInfo,
+                                               Client* clientInfo,
                                                Message* const message,
                                                DbMessage* const dbMessage,
                                                NamespaceString* const nss)
     : port(connInfo),
-      _clientInfo(&cc()),
+      _clientInfo(clientInfo),
       _m(*message),
       _d(std::move(*dbMessage)),
       q(_d),
-      txn(cc().makeOperationContext()),
+      txn(_clientInfo->makeOperationContext()),
       _result(32738),
       _requestId(_m.header().getId()),
       _requestOp(static_cast<Operations>(_m.operation())),

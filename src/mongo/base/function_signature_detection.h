@@ -31,7 +31,7 @@
 
 /*
  * Will detect normal or static functions because it doesn't check function signature
- * This should be used to detect functions that might be void or have default arguements = void
+ * This should be used to detect functions that might be void or have default arguments = void
  */
 #define OBJECT_HAS_FUNCTION(traitName, funcName) \
 template<typename T> \

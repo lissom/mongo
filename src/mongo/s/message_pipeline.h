@@ -51,7 +51,6 @@ public:
 private:
     /*
      * While MessageProcessor is private to the class there will be async call
-     *
      */
     struct MessageProcessor {
     public:
