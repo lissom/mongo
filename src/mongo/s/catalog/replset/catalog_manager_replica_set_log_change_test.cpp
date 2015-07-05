@@ -77,8 +77,8 @@ public:
 
             BatchedInsertRequest actualBatchedInsert;
             std::string errmsg;
-            ASSERT_TRUE(actualBatchedInsert.parseBSON(request.cmdObj, &errmsg));
-            ASSERT_EQUALS(ChangelogType::ConfigNS, actualBatchedInsert.getCollName());
+            ASSERT_TRUE(actualBatchedInsert.parseBSON(request.dbname, request.cmdObj, &errmsg));
+            ASSERT_EQUALS(ChangelogType::ConfigNS, actualBatchedInsert.getNS().ns());
             auto inserts = actualBatchedInsert.getDocuments();
             ASSERT_EQUALS(1U, inserts.size());
             BSONObj insert = inserts.front();
@@ -117,9 +117,7 @@ public:
 };
 
 TEST_F(LogChangeTest, LogChangeNoRetryAfterSuccessfulCreate) {
-    RemoteCommandTargeterMock* targeter =
-        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
-    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+    configTargeter()->setFindHostReturnValue(HostAndPort("TestHost1"));
 
     ChangelogType expectedChangeLog;
     expectedChangeLog.setServer(network()->getHostName());
@@ -140,7 +138,7 @@ TEST_F(LogChangeTest, LogChangeNoRetryAfterSuccessfulCreate) {
     expectChangeLogInsert(expectedChangeLog);
 
     // Now wait for the logChange call to return
-    future.wait_for(kFutureTimeout);
+    future.timed_get(kFutureTimeout);
 
     // Now log another change and confirm that we don't re-attempt to create the collection
     future = launchAsync([this, &expectedChangeLog] {
@@ -153,13 +151,11 @@ TEST_F(LogChangeTest, LogChangeNoRetryAfterSuccessfulCreate) {
     expectChangeLogInsert(expectedChangeLog);
 
     // Now wait for the logChange call to return
-    future.wait_for(kFutureTimeout);
+    future.timed_get(kFutureTimeout);
 }
 
 TEST_F(LogChangeTest, LogActionNoRetryCreateIfAlreadyExists) {
-    RemoteCommandTargeterMock* targeter =
-        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
-    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+    configTargeter()->setFindHostReturnValue(HostAndPort("TestHost1"));
 
     ChangelogType expectedChangeLog;
     expectedChangeLog.setServer(network()->getHostName());
@@ -183,7 +179,7 @@ TEST_F(LogChangeTest, LogActionNoRetryCreateIfAlreadyExists) {
     expectChangeLogInsert(expectedChangeLog);
 
     // Now wait for the logAction call to return
-    future.wait_for(kFutureTimeout);
+    future.timed_get(kFutureTimeout);
 
     // Now log another change and confirm that we don't re-attempt to create the collection
     future = launchAsync([this, &expectedChangeLog] {
@@ -196,13 +192,11 @@ TEST_F(LogChangeTest, LogActionNoRetryCreateIfAlreadyExists) {
     expectChangeLogInsert(expectedChangeLog);
 
     // Now wait for the logChange call to return
-    future.wait_for(kFutureTimeout);
+    future.timed_get(kFutureTimeout);
 }
 
 TEST_F(LogChangeTest, LogActionCreateFailure) {
-    RemoteCommandTargeterMock* targeter =
-        RemoteCommandTargeterMock::get(shardRegistry()->getShard("config")->getTargeter());
-    targeter->setFindHostReturnValue(HostAndPort("TestHost1"));
+    configTargeter()->setFindHostReturnValue(HostAndPort("TestHost1"));
 
     ChangelogType expectedChangeLog;
     expectedChangeLog.setServer(network()->getHostName());
@@ -225,7 +219,7 @@ TEST_F(LogChangeTest, LogActionCreateFailure) {
     expectChangeLogCreate(createResponseBuilder.obj());
 
     // Now wait for the logAction call to return
-    future.wait_for(kFutureTimeout);
+    future.timed_get(kFutureTimeout);
 
     // Now log another change and confirm that we *do* attempt to create the collection
     future = launchAsync([this, &expectedChangeLog] {
@@ -239,7 +233,7 @@ TEST_F(LogChangeTest, LogActionCreateFailure) {
     expectChangeLogInsert(expectedChangeLog);
 
     // Now wait for the logChange call to return
-    future.wait_for(kFutureTimeout);
+    future.timed_get(kFutureTimeout);
 }
 
 }  // namespace
