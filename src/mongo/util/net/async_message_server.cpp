@@ -27,6 +27,7 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
+#include "mongo/util/quick_exit.h"
 #include "mongo/util/net/async_message_server.h"
 #include "mongo/util/net/message.h"
 
@@ -178,7 +179,7 @@ try :
 catch (std::exception& e) {
     log() << "Unable to create AsioAsyncServer::Initiator::Initiator" << causedBy(e.what())
             << std::endl;
-    fassert(-1, false);
+    quickExit(1);
 }
 } /* namespace network */
 } /* namespace mongo */

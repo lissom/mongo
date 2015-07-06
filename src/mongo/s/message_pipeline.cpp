@@ -55,38 +55,25 @@ MessagePipeline::MessageProcessor::MessageProcessor(MessagePipeline* const owner
 
 void MessagePipeline::MessageProcessor::run() {
     while (!inShutdown()) {
-        network::ClientAsyncMessagePort* newMessageConn =
+        network::ClientAsyncMessagePort* clientConn =
                 _owner->getNextSocketWithWaitingRequest();
-        if (newMessageConn == nullptr)
+        if (clientConn == nullptr)
             continue;
 
-    	try {
-    		Client::initThread("conn", newMessageConn);
-    	} catch (std::exception& e) {
-    		log() << "Failed to initialize operation runner thread specific variables: "
-    				<< e.what();
-    		//TODO: return error and shutdown port
-    	} catch (...) {
-    		log() << "Failed to initialize operation runner thread specific variables: unknown"
-    				" exception";
-    		//TODO: return error and shutdown port
-    	}
-        Message message(newMessageConn->getBuffer(), false);
+        Message message(clientConn->getBuffer(), false);
         DbMessage dbMessage(message);
         dbMessage.markSet();
         NamespaceString nss(dbMessage.getns());
         // TODO: Use this see if the operation is legacy and handle appropriately
 
-    	// TODO: Stop setting the thread name, just set them to Pipeline_NUM?
-    	newMessageConn->setThreadName(getThreadName());
-
     	// TODO: turn this into a factory based on message operation
         std::unique_ptr<AbstractOperationRunner> upRunner(
-                new ClientOperationRunner(newMessageConn, &cc(), &message, &dbMessage, &nss));
+                new ClientOperationRunner(clientConn, clientConn->clientInfo(),
+                        &message, &dbMessage, &nss));
 
         //Take a raw pointer for general use before ownership transfer
         AbstractOperationRunner* _runner = upRunner.get();
-        newMessageConn->setOpRunner(std::move(upRunner));
+        clientConn->setOpRunner(std::move(upRunner));
         _runner->run();
     }
 }

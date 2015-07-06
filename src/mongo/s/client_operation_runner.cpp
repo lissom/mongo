@@ -41,15 +41,13 @@ ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* co
 }
 
 ClientOperationRunner::~ClientOperationRunner() {
-    port->persistClientState();
 }
 
 void ClientOperationRunner::run() {
-	port->persistClientState();
     std::thread processRequest([this] {
-		port->restoreClientState();
+        onContextStart();
 		processMessage();
-		port->persistClientState();
+		onContextEnd();
 		port->opRunnerComplete();
 	});
     processRequest.detach();
@@ -102,6 +100,15 @@ void ClientOperationRunner::processMessage() {
 			}
 			e = _cmdObjBson.firstElement();
 		}
+
+		//TODO: Move this out once more than commands can be ran
+	    fassert(-11, _nss.isCommand() || _nss.isSpecialCommand());
+	    int n = _dbMessage.getQueryNToReturn();
+	    //uassert # = 16978
+	    uassert(-20,
+	    str::stream() << "bad numberToReturn (" << n
+	                  << ") for $cmd type ns - can only be 1 or -1",
+	    n == 1 || n == -1);
 
 		std::string commandName = e.fieldName();
 		_command = e.type() ? Command::findCommand(commandName) : nullptr;

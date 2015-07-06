@@ -17,8 +17,7 @@ namespace mongo {
 namespace network {
 
 AsyncMessagePort::AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket) :
-        _owner(owner), _socket(std::move(socket)), _connectionId(_owner->getNewConnId()),
-		_buf(0) {
+        _owner(owner), _socket(std::move(socket)), _buf(0) {
 	_owner->_conns.emplace(this);
     asyncReceiveStart();
 }
@@ -66,8 +65,8 @@ void AsyncMessagePort::asyncReceiveMessage() {
     _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
     //Message size may be -1 to check endian?  Not sure if that is current spec
     fassert(-1, msgSize >= 0);
-    if (validMsgSize(msgSize)) {
-        log() << "Error during receive: Got an invalid message length in the header( " << msgSize
+    if (!validMsgSize(msgSize)) {
+        log() << "Error during receive: Got an invalid message length in the header(" << msgSize
                 << ")" << ". From: " << remoteAddr() << std::endl;
         //TODO: Should we return an error on the socket to the client?
         asyncSocketShutdownRemove();
@@ -111,17 +110,17 @@ void AsyncMessagePort::asyncSocketShutdownRemove() {
     _owner->_conns.erase(this);
 }
 
-void AsyncMessagePort::SendStart(Message& toSend, MSGID responseTo) {
-    log() << "Sending: " << toSend << std::endl;
+void AsyncMessagePort::SendStart(Message& toSend, MSGID responseToMsgId) {
+    fassert(-1, toSend.buf() != 0);
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
     toSend.header().setId(nextMessageId());
-    toSend.header().setResponseTo(responseTo);
-    //It's possible the buffer we passed was reused, if not use an owned buffer
+    toSend.header().setResponseTo(responseToMsgId);
+    //It's possible the buffer we passed was reused, if not use the port's owned buffer
     if (toSend.buf() != _buf.data()) {
 		size_t size(toSend.header().getLen());
 		_buf.resize(size);
 		//mongoS should only need single view
-		memcpy(_buf.data(), toSend.singleData().data(), size);
+		memcpy(_buf.data(), toSend.singleData().view2ptr(), size);
     }
     //No more interaction with the message is required at this point
     asyncSendMessage();

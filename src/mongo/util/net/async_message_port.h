@@ -15,14 +15,13 @@
 #include <mutex>
 #include <utility>
 
-#include "mongo/db/client.h"
-#include "mongo/db/service_context.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/message_port.h"
+#include "mongo/util/timer.h"
 
 namespace mongo {
 namespace network {
@@ -81,7 +80,6 @@ public:
     enum class State {
         kInit, kReceieve, kSend, kOperation, kError, kComplete
     };
-    using PersistantState = ServiceContext::UniqueClient;
     AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
 
     ~AsyncMessagePort();
@@ -95,31 +93,6 @@ public:
         _closeOnComplete = true;
     }
 
-    //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
-    //May need to rexamine this choice later, not sure if async will allow the release
-    //Does not store the thread name as this is a const
-    void persistClientState() {
-        _persistantState = std::move(persist::releaseClient());
-    }
-
-    void restoreClientState() {
-        persist::setClient(std::move(_persistantState));
-        //Set the mongo thread name, not the setThreadName function here
-        mongo::setThreadName(_threadName);
-    }
-
-    /*
-     * Preserves the legacy logging method, probably need something else like [thread.op#]
-     */
-    const std::string& threadName() const {
-        return _threadName;
-    }
-    void setThreadName(const std::string& threadName) {
-        verify(_threadName.empty() == true);
-        _threadName = threadName;
-    }
-
-    //In theory this shouldn't be necessary, but using to avoid double deletions if there are errors
     char* getBuffer() {
         return _buf.data();
     }
@@ -133,21 +106,18 @@ public:
     const ConnStats& getStats() const {
         return _stats;
     }
-    ConnectionId getConnectionId() {
-        return _connectionId;
-    }
-
-    // Begin AbstractMessagingPort
 
     const Timer& messageTimer() { return _messageTimer; }
 
-    void reply(Message& received, Message& response, MSGID responseToId) final {
+    // Begin AbstractMessagingPort
+
+    void reply(Message& received, Message& response, MSGID responseToMsgId) final {
         fassert(-1, state() == State::kOperation || state() == State::kError);
-        SendStart(received, responseToId);
+        SendStart(response, responseToMsgId);
     }
     void reply(Message& received, Message& response) final {
         fassert(-1, state() == State::kOperation || state() == State::kError);
-        SendStart(received, response.header().getId());
+        SendStart(response, received.header().getId());
     }
 
     bool stateGood() {
@@ -238,14 +208,10 @@ private:
     Connections* const _owner;
     ConnStats _stats;
     asio::ip::tcp::socket _socket;
-    const ConnectionId _connectionId;
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector<char> _buf;
     std::vector<asio::const_buffer> _ioBuf;
     BufferSet _buffers;
-    //Not sure this value is safe to non-barrier
-    PersistantState _persistantState;
-    std::string _threadName;
     //TODO: Turn this into state and verify it's correct at all stages
     std::atomic<bool> _closeOnComplete { };
     std::atomic<State> _state { State::kInit };
@@ -276,14 +242,10 @@ private:
     friend class AsyncMessagePort;
     using ConnectionHolder = UnboundedContainer<network::AsyncMessagePort*>;
 
-    ConnectionId getNewConnId() { return ++_connectionCount; }
-
     AsioAsyncServer* const _server;
     MessageReadyHandler _messageReadyHandler;
     ConnectionHolder _conns;
     ConnStats _stats;
-    //TODO: more concurrent
-    uint64_t _connectionCount { };
 };
 
 } //namespace mongo

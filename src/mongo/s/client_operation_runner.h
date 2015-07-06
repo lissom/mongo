@@ -55,6 +55,7 @@ protected:
     // Save the Id out of an abundance of caution
     const MSGID _requestId;
     const Operations _requestOp;
+    // TODO: Move this out, only applies to query operations
     const NamespaceString _nss;
     int _retries = 5;
     //What version the runner cases about results for.  State shard states should ++ this
