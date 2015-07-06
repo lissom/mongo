@@ -38,8 +38,18 @@ using OpRunnerClientFactory =  RegisterFactory<OpRunnerPtr, OpRunnerClientCreato
  */
 class AbstractOperationRunner {
 public:
+	/*
+	 * kInit - starting
+	 * kRunning - processing outgoing requests
+	 * kWait - waiting for io requests to complete
+	 * kError - A fatal event took place, the operation should end as soon as possible
+	 * kComplete - all operations are complete
+	 *
+	 * kError should be treated as a modified kWait where operations can be canceled and results
+	 * can be thrown away.
+	 */
     enum class State {
-        init, running, completed, errored, finished
+        kInit, kRunning, kWait, kError, kComplete
     };
     AbstractOperationRunner() { }
     virtual ~AbstractOperationRunner() {
@@ -52,30 +62,26 @@ public:
 
     //TODO: Test to see if we are waiting on return values
     bool operationsActive() {
-        return _state != State::finished;
+        return _state != State::kComplete;
     }
 
 protected:
     //All functions below this line are async, so they must be able to be ran concurrently
     void setState(State state) {
         State currentState = _state.load(std::memory_order_consume);
-        verify(currentState != State::finished);
-        while (!_state.compare_exchange_weak(currentState, state, std::memory_order_acquire)) {
-            verify(currentState != State::finished);
-            if (currentState == State::errored)
-                break;
-        }
+        while ( (currentState == State::kError && state != State::kComplete )
+        		|| !_state.compare_exchange_weak(currentState, state, std::memory_order_acquire)) { };
     }
 
     // Must be multithreaded safe
     virtual void OnErrored() { };
 
     void setErrored() {
-        _state = State::errored;
+        _state = State::kError;
         OnErrored();
     }
 
-    std::atomic<State> _state { State::init };
+    std::atomic<State> _state { State::kInit };
 };
 
 OpRunnerPtr createOpRunnerClient(network::AsyncMessagePort* const connInfo,

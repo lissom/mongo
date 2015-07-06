@@ -44,18 +44,14 @@ protected:
     network::ClientAsyncMessagePort* const port;
     Client* const _clientInfo;
     BSONObj _cmdObjBson;
-    // TODO:rename _message
-    Message _m;
-    // TODO:rename _dbMessage
-    DbMessage _d;
-    // TODO:rename to _queryMessage
-    QueryMessage q;
-    // TODO:rename to _opContext
-    ServiceContext::UniqueOperationContext txn;
+    Message _protocolMessage;
+    DbMessage _dbMessage;
+    QueryMessage _queryMessage;
+    ServiceContext::UniqueOperationContext _operationCtx;
     Command* _command = nullptr;
     BSONObjBuilder _result;
 
-    std::atomic<State> _state { State::init };
+    std::atomic<State> _state { State::kInit };
     // Save the Id out of an abundance of caution
     const MSGID _requestId;
     const Operations _requestOp;

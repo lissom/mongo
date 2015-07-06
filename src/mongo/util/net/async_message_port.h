@@ -67,10 +67,14 @@ struct ConnStats {
 class AsyncMessagePort : public AbstractMessagingPort {
 public:
     MONGO_DISALLOW_COPYING(AsyncMessagePort);
+    using MessageSize = int32_t;
+
     /*
      * State is what is being waiting on (unless errored or completed)
      * If the socket is in state operation, then an operation runner referring to this socket
      * is actively runner, it is not safe to delete this socket
+     * kError signals that it is no longer possible to use the socket successfully
+     * kComplete signals that no further operations are expected on the socket, ever
      * kComplete can replace anything, nothing replaces it.
      * Nothing but kComplete can replace kError.
      */
@@ -209,6 +213,13 @@ private:
     void asyncSocketShutdownRemove();
     bool doClose() {
         return _closeOnComplete;
+    }
+
+    bool validMsgSize(MessageSize msgSize) {
+    	//static_cast signed to unsigned with number < 0 is implementation defined, check > 0
+    	return msgSize > 0
+    			&& static_cast<size_t>(msgSize) >= HEADERSIZE
+                && static_cast<size_t>(msgSize) <= MaxMessageSizeBytes;
     }
 
     void bytesIn(uint64_t bytesIn) {

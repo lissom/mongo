@@ -66,8 +66,7 @@ void AsyncMessagePort::asyncReceiveMessage() {
     _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
     //Message size may be -1 to check endian?  Not sure if that is current spec
     fassert(-1, msgSize >= 0);
-    if (static_cast<size_t>(msgSize) < HEADERSIZE
-            || static_cast<size_t>(msgSize) > MaxMessageSizeBytes) {
+    if (validMsgSize(msgSize)) {
         log() << "Error during receive: Got an invalid message length in the header( " << msgSize
                 << ")" << ". From: " << remoteAddr() << std::endl;
         //TODO: Should we return an error on the socket to the client?
@@ -117,11 +116,13 @@ void AsyncMessagePort::SendStart(Message& toSend, MSGID responseTo) {
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
     toSend.header().setId(nextMessageId());
     toSend.header().setResponseTo(responseTo);
-    fassert(-3, toSend.buf() != _buf.data());
-    size_t size(toSend.header().getLen());
-    _buf.resize(size);
-    //mongoS should only need single view
-    memcpy(_buf.data(), toSend.singleData().data(), size);
+    //It's possible the buffer we passed was reused, if not use an owned buffer
+    if (toSend.buf() != _buf.data()) {
+		size_t size(toSend.header().getLen());
+		_buf.resize(size);
+		//mongoS should only need single view
+		memcpy(_buf.data(), toSend.singleData().data(), size);
+    }
     //No more interaction with the message is required at this point
     asyncSendMessage();
 }
@@ -129,10 +130,11 @@ void AsyncMessagePort::SendStart(Message& toSend, MSGID responseTo) {
 void AsyncMessagePort::asyncSendMessage() {
 	fassert(-1, state() != State::kError && state() != State::kComplete);
 	setState(State::kSend);
-    size_t size = getMsgData().getLen();
-    _socket.async_send(asio::buffer(_buf.data(), size),
-            [this, size] (const std::error_code& ec, const size_t len) {
-                if (!asyncStatusCheck("send", "message body", ec, len, size))
+    MessageSize msgSize = getMsgData().getLen();
+    fassert(-1, validMsgSize(msgSize));
+    _socket.async_send(asio::buffer(_buf.data(), msgSize),
+            [this, msgSize] (const std::error_code& ec, const size_t len) {
+                if (!asyncStatusCheck("send", "message body", ec, len, msgSize))
                 return;
                 asyncSendComplete();
             });
