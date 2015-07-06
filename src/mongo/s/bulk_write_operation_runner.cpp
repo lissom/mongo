@@ -11,8 +11,9 @@
 
 namespace mongo {
 BulkWriteOperationRunner::BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo,
-        Message* const message, DbMessage* const dbMessage, NamespaceString* const nss) :
-		ClientOperationRunner(connInfo, &cc(), message, dbMessage, nss) {
+        Client* clientInfo, Message* const message, DbMessage* const dbMessage,
+		NamespaceString* const nss) :
+		ClientOperationRunner(connInfo, clientInfo, message, dbMessage, nss) {
 }
 
 BulkWriteOperationRunner::~BulkWriteOperationRunner() {

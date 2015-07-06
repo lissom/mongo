@@ -26,6 +26,8 @@ public:
     const MSGID& requestId() const { return _requestId; }
 
 protected:
+    //This function exists just to make it more readable
+    void intializeRun();
     virtual void processMessage();
     // Restore context information, should only need to be called when it's time to coalesce a reply probably
     void onContextStart();
@@ -59,6 +61,8 @@ protected:
     const Operations _requestOp;
     const NamespaceString _nss;
     int _retries = 5;
+    //What version the runner cases about results for.  State shard states should ++ this
+    std::atomic<size_t> _runnerEpoch{};
 };
 
 } /* namespace mongo */

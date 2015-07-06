@@ -413,14 +413,14 @@ public:
     // vector swap() so this is fast
     Message& operator=(Message& r) {
         verify(empty());
-        verify(r._freeIt);
+        //verify(r._freeIt);
         _buf = r._buf;
         r._buf = 0;
         if (r._data.size() > 0) {
             _data.swap(r._data);
         }
+        _freeIt = r._freeIt;
         r._freeIt = false;
-        _freeIt = true;
         return *this;
     }
 

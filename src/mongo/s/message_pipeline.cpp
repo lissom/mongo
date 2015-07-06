@@ -9,8 +9,10 @@
 
 #include "mongo/platform/basic.h"
 
+#include "mongo/db/client.h"
 #include "mongo/s/bulk_write_operation_runner.h"
 #include "mongo/s/message_pipeline.h"
+#include "mongo/util/log.h"
 #include "mongo/util/net/client_async_message_port.h"
 
 namespace mongo {
@@ -58,18 +60,29 @@ void MessagePipeline::MessageProcessor::run() {
         if (newMessageConn == nullptr)
             continue;
 
+    	try {
+    		Client::initThread("conn", newMessageConn);
+    	} catch (std::exception& e) {
+    		log() << "Failed to initialize operation runner thread specific variables: "
+    				<< e.what();
+    		//TODO: return error and shutdown port
+    	} catch (...) {
+    		log() << "Failed to initialize operation runner thread specific variables: unknown"
+    				" exception";
+    		//TODO: return error and shutdown port
+    	}
         Message message(newMessageConn->getBuffer(), false);
         DbMessage dbMessage(message);
         dbMessage.markSet();
         NamespaceString nss(dbMessage.getns());
         // TODO: Use this see if the operation is legacy and handle appropriately
 
-        // TODO: turn this into a factory based on message operation
-        auto clientInfo = &cc();
+    	// TODO: Stop setting the thread name, just set them to Pipeline_NUM?
+    	newMessageConn->setThreadName(getThreadName());
+
+    	// TODO: turn this into a factory based on message operation
         std::unique_ptr<AbstractOperationRunner> upRunner(
-                new ClientOperationRunner(newMessageConn, clientInfo, &message, &dbMessage, &nss));
-
-
+                new ClientOperationRunner(newMessageConn, &cc(), &message, &dbMessage, &nss));
 
         //Take a raw pointer for general use before ownership transfer
         AbstractOperationRunner* _runner = upRunner.get();
