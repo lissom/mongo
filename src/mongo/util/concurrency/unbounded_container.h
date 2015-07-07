@@ -41,6 +41,11 @@ public:
         verify(_container.emplace(std::move(value)).second == true);
     }
 
+    void insert(Value value) {
+        UniqueLock lock(_mutex);
+        verify(_container.emplace(std::move(value)).second == true);
+    }
+
     void erase(const Value& key) {
         UniqueLock lock(_mutex);
         _container.erase(key);
@@ -52,6 +57,6 @@ public:
     }
 
 private:
-    std::mutex _mutex;
+    mutable std::mutex _mutex;
     std::unordered_set<Value> _container;
 };
