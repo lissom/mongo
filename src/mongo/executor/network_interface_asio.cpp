@@ -32,13 +32,13 @@
 
 #include "mongo/executor/network_interface_asio.h"
 
-#include <chrono>
 #include <utility>
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/client.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/operation_context_impl.h"
+#include "mongo/stdx/chrono.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/hostandport.h"
@@ -51,12 +51,24 @@ using ResponseStatus = TaskExecutor::ResponseStatus;
 using asio::ip::tcp;
 using RemoteCommandCompletionFn = stdx::function<void(const ResponseStatus&)>;
 
-NetworkInterfaceASIO::AsyncConnection::AsyncConnection(
-    ConnectionPool::ConnectionPtr&& bootstrapConn, asio::ip::tcp::socket&& sock)
-    : _bootstrapConn{std::move(bootstrapConn)}, _sock(std::move(sock)) {}
+NetworkInterfaceASIO::AsyncConnection::AsyncConnection(asio::ip::tcp::socket&& sock,
+                                                       rpc::ProtocolSet protocols)
+    : _sock(std::move(sock)), _protocols(protocols) {}
 
-tcp::socket* NetworkInterfaceASIO::AsyncConnection::sock() {
-    return &_sock;
+#if defined(_MSC_VER) && _MSC_VER < 1900
+NetworkInterfaceASIO::AsyncConnection::AsyncConnection(AsyncConnection&& other)
+    : _sock(std::move(other._sock)), _protocols(other._protocols) {}
+
+NetworkInterfaceASIO::AsyncConnection& NetworkInterfaceASIO::AsyncConnection::operator=(
+    AsyncConnection&& other) {
+    _sock = std::move(other._sock);
+    _protocols = other._protocols;
+    return *this;
+}
+#endif
+
+tcp::socket& NetworkInterfaceASIO::AsyncConnection::sock() {
+    return _sock;
 }
 
 NetworkInterfaceASIO::AsyncOp::AsyncOp(const TaskExecutor::CallbackHandle& cbHandle,
@@ -92,7 +104,7 @@ void NetworkInterfaceASIO::AsyncOp::connect(ConnectionPool* const pool,
     tcp::socket sock{
         *service, protocol == AF_INET ? tcp::v4() : tcp::v6(), conn.get()->port().psock->rawFD()};
 
-    _connection.emplace(std::move(conn), std::move(sock));
+    _connection.emplace(std::move(sock), conn.get()->getServerRPCProtocols());
 
     _state = OpState::kConnected;
 }
@@ -100,6 +112,12 @@ void NetworkInterfaceASIO::AsyncOp::connect(ConnectionPool* const pool,
 NetworkInterfaceASIO::AsyncConnection* NetworkInterfaceASIO::AsyncOp::connection() {
     invariant(_connection.is_initialized());
     return _connection.get_ptr();
+}
+
+void NetworkInterfaceASIO::AsyncOp::setConnection(AsyncConnection&& conn) {
+    invariant(!_connection.is_initialized());
+    _connection = std::move(conn);
+    _state = OpState::kConnected;
 }
 
 std::string NetworkInterfaceASIO::AsyncOp::toString() const {
@@ -176,7 +194,11 @@ Message* NetworkInterfaceASIO::AsyncOp::toSend() {
 }
 
 NetworkInterfaceASIO::NetworkInterfaceASIO()
-    : _io_service(), _state(State::kReady), _isExecutorRunnable(false), _numOps(0) {
+    : _io_service(),
+      _resolver(_io_service),
+      _state(State::kReady),
+      _isExecutorRunnable(false),
+      _numOps(0) {
     _connPool = stdx::make_unique<ConnectionPool>(kMessagingPortKeepOpen);
 }
 
@@ -217,7 +239,7 @@ void NetworkInterfaceASIO::_messageFromRequest(const RemoteCommandRequest& reque
 }
 
 void NetworkInterfaceASIO::_asyncSendSimpleMessage(AsyncOp* op, const asio::const_buffer& buf) {
-    asio::async_write(*(op->connection()->sock()),
+    asio::async_write(op->connection()->sock(),
                       asio::buffer(buf),
                       [this, op](std::error_code ec, std::size_t bytes) {
 
@@ -279,7 +301,7 @@ void NetworkInterfaceASIO::_recvMessageBody(AsyncOp* op) {
     invariant(bodyLength >= 0);
 
     // receive remaining data into md->data
-    asio::async_read(*(op->connection()->sock()),
+    asio::async_read(op->connection()->sock(),
                      asio::buffer(mdView.data(), bodyLength),
                      [this, op, mdView](asio::error_code ec, size_t bytes) {
 
@@ -297,7 +319,7 @@ void NetworkInterfaceASIO::_recvMessageBody(AsyncOp* op) {
 }
 
 void NetworkInterfaceASIO::_recvMessageHeader(AsyncOp* op) {
-    asio::async_read(*(op->connection()->sock()),
+    asio::async_read(op->connection()->sock(),
                      asio::buffer(reinterpret_cast<char*>(op->header()), sizeof(MSGHEADER::Value)),
                      [this, op](asio::error_code ec, size_t bytes) {
 
@@ -405,26 +427,7 @@ Date_t NetworkInterfaceASIO::now() {
     return Date_t::now();
 }
 
-void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHandle,
-                                        const RemoteCommandRequest& request,
-                                        const RemoteCommandCompletionFn& onFinish) {
-    LOG(3) << "running command " << request.cmdObj << " against database " << request.dbname
-           << " across network to " << request.target.toString();
-
-    if (inShutdown()) {
-        return;
-    }
-
-    auto ownedOp =
-        stdx::make_unique<AsyncOp>(cbHandle, request, onFinish, now(), _numOps.fetchAndAdd(1));
-
-    AsyncOp* op = ownedOp.get();
-
-    {
-        stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
-        _inProgress.emplace(op, std::move(ownedOp));
-    }
-
+void NetworkInterfaceASIO::_connectWithDBClientConnection(AsyncOp* op) {
     // connect in a separate thread to avoid blocking the rest of the system
     stdx::thread t([this, op]() {
         try {
@@ -455,26 +458,107 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         }
 
         // send control back to main thread(pool)
-        asio::post(_io_service,
-                   [this, op]() {
-
-                       if (op->canceled()) {
-                           return _completeOperation(op, kCanceledStatus);
-                       }
-
-                       Message* toSend = op->toSend();
-                       _messageFromRequest(op->request(), toSend);
-                       if (toSend->empty()) {
-                           _completedWriteCallback(op);
-                       } else {
-                           // TODO: Some day we may need to support vector messages.
-                           fassert(28708, toSend->buf() != 0);
-                           asio::const_buffer buf(toSend->buf(), toSend->size());
-                           return _asyncSendSimpleMessage(op, buf);
-                       }
-                   });
+        asio::post(_io_service, [this, op]() { _beginCommunication(op); });
     });
+
     t.detach();
+}
+
+void NetworkInterfaceASIO::_beginCommunication(AsyncOp* op) {
+    if (op->canceled()) {
+        return _completeOperation(op, kCanceledStatus);
+    }
+
+    Message* toSend = op->toSend();
+    _messageFromRequest(op->request(), toSend);
+
+    if (toSend->empty())
+        return _completedWriteCallback(op);
+
+    // TODO: Some day we may need to support vector messages.
+    fassert(28708, toSend->buf() != 0);
+    asio::const_buffer buf(toSend->buf(), toSend->size());
+    return _asyncSendSimpleMessage(op, buf);
+}
+
+void NetworkInterfaceASIO::_authenticate(AsyncOp* op) {
+    // TODO: Implement asynchronous authentication, SERVER-19155
+    asio::post(_io_service, [this, op]() { _beginCommunication(op); });
+}
+
+void NetworkInterfaceASIO::_sslHandshake(AsyncOp* op) {
+    // TODO: Implement asynchronous SSL, SERVER-19221
+    _authenticate(op);
+}
+
+void NetworkInterfaceASIO::_setupSocket(AsyncOp* op, const tcp::resolver::iterator& endpoints) {
+    tcp::socket sock(_io_service);
+    AsyncConnection conn(std::move(sock), rpc::supports::kOpQueryOnly);
+
+    // TODO: Consider moving this call to post-auth so we only assign completed connections.
+    op->setConnection(std::move(conn));
+
+    asio::async_connect(op->connection()->sock(),
+                        std::move(endpoints),
+                        [this, op](std::error_code ec, tcp::resolver::iterator iter) {
+                            if (ec) {
+                                LOG(3) << "could not connect to host at " << iter->host_name()
+                                       << ":" << iter->endpoint().port() << ", " << ec.message();
+                                return _networkErrorCallback(op, ec);
+                            }
+
+                            if (op->canceled())
+                                return _completeOperation(op, kCanceledStatus);
+
+                            _sslHandshake(op);
+                        });
+}
+
+void NetworkInterfaceASIO::_connectASIO(AsyncOp* op) {
+    tcp::resolver::query query(op->request().target.host(),
+                               std::to_string(op->request().target.port()));
+    // TODO: Investigate how we might hint or use shortcuts to resolve when possible.
+    _resolver.async_resolve(
+        query,
+        [this, op](std::error_code ec, asio::ip::basic_resolver_iterator<tcp> endpoints) {
+            if (ec) {
+                LOG(3) << "could not resolve address " << op->request().target.host() << ":"
+                       << std::to_string(op->request().target.port()) << ", " << ec.message();
+                return _networkErrorCallback(op, ec);
+            }
+
+            if (op->canceled())
+                return _completeOperation(op, kCanceledStatus);
+
+            _setupSocket(op, endpoints);
+        });
+}
+
+void NetworkInterfaceASIO::_asyncRunCommand(AsyncOp* op) {
+    LOG(3) << "running command " << op->request().cmdObj << " against database "
+           << op->request().dbname << " across network to " << op->request().target.toString();
+    if (inShutdown()) {
+        return;
+    }
+
+    // _connect...() will continue the state machine.
+    _connectWithDBClientConnection(op);
+}
+
+void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHandle,
+                                        const RemoteCommandRequest& request,
+                                        const RemoteCommandCompletionFn& onFinish) {
+    auto ownedOp =
+        stdx::make_unique<AsyncOp>(cbHandle, request, onFinish, now(), _numOps.fetchAndAdd(1));
+
+    AsyncOp* op = ownedOp.get();
+
+    {
+        stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
+        _inProgress.emplace(op, std::move(ownedOp));
+    }
+
+    asio::post(_io_service, [this, op]() { _asyncRunCommand(op); });
 }
 
 void NetworkInterfaceASIO::cancelCommand(const TaskExecutor::CallbackHandle& cbHandle) {

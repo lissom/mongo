@@ -29,16 +29,15 @@
 #pragma once
 
 #include <asio.hpp>
-#include <atomic>
 #include <boost/optional.hpp>
 #include <system_error>
-#include <thread>
 #include <unordered_map>
 
 #include "mongo/client/connection_pool.h"
 #include "mongo/client/remote_command_runner.h"
 #include "mongo/executor/network_interface.h"
 #include "mongo/platform/atomic_word.h"
+#include "mongo/rpc/protocol.h"
 #include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/stdx/thread.h"
@@ -77,14 +76,22 @@ private:
      */
     class AsyncConnection {
     public:
-        AsyncConnection(ConnectionPool::ConnectionPtr&& booststrapConn,
-                        asio::ip::tcp::socket&& sock);
+        AsyncConnection(asio::ip::tcp::socket&& sock, rpc::ProtocolSet protocols);
 
-        asio::ip::tcp::socket* sock();
+        asio::ip::tcp::socket& sock();
+
+// Explicit move construction and assignment to support MSVC
+#if defined(_MSC_VER) && _MSC_VER < 1900
+        AsyncConnection(AsyncConnection&&);
+        AsyncConnection& operator=(AsyncConnection&&);
+#else
+        AsyncConnection(AsyncConnection&&) = default;
+        AsyncConnection& operator=(AsyncConnection&&) = default;
+#endif
 
     private:
-        ConnectionPool::ConnectionPtr _bootstrapConn;
         asio::ip::tcp::socket _sock;
+        rpc::ProtocolSet _protocols;
     };
 
     /**
@@ -108,6 +115,7 @@ private:
         AsyncConnection* connection();
 
         void connect(ConnectionPool* const pool, asio::io_service* service, Date_t now);
+        void setConnection(AsyncConnection&& conn);
         bool connected() const;
 
         void finish(const TaskExecutor::ResponseStatus& status);
@@ -153,12 +161,23 @@ private:
         const int _id;
     };
 
+    void _asyncRunCommand(AsyncOp* op);
+
     void _messageFromRequest(const RemoteCommandRequest& request,
                              Message* toSend,
                              bool useOpCommand = false);
 
     void _asyncSendSimpleMessage(AsyncOp* op, const asio::const_buffer& buf);
 
+    // Connection
+    void _connectASIO(AsyncOp* op);
+    void _connectWithDBClientConnection(AsyncOp* op);
+    void _setupSocket(AsyncOp* op, const asio::ip::tcp::resolver::iterator& endpoints);
+    void _authenticate(AsyncOp* op);
+    void _sslHandshake(AsyncOp* op);
+
+    // Communication state machine
+    void _beginCommunication(AsyncOp* op);
     void _completedWriteCallback(AsyncOp* op);
     void _networkErrorCallback(AsyncOp* op, const std::error_code& ec);
 
@@ -168,10 +187,13 @@ private:
     void _recvMessageHeader(AsyncOp* op);
     void _recvMessageBody(AsyncOp* op);
     void _receiveResponse(AsyncOp* op);
+
     void _signalWorkAvailable_inlock();
 
     asio::io_service _io_service;
     stdx::thread _serviceRunner;
+
+    asio::ip::tcp::resolver _resolver;
 
     std::atomic<State> _state;
 
