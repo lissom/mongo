@@ -16,10 +16,12 @@
 namespace mongo {
 namespace network {
 
+std::atomic<uint64_t> connectionCount{};
+
 AsyncMessagePort::AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket) :
         _owner(owner), _socket(std::move(socket)), _buf(0) {
 	_owner->_conns.emplace(this);
-    asyncReceiveStart();
+	setConnectionId(++connectionCount);
 }
 
 AsyncMessagePort::~AsyncMessagePort() {
@@ -29,9 +31,6 @@ AsyncMessagePort::~AsyncMessagePort() {
 
     //Remove visibility before logging removal so there are no funny log lines
     _owner->_conns.release(this);
-    if (!serverGlobalParams.quiet) {
-        log() << "end connection " << _socket.remote_endpoint() << std::endl;
-    }
     //TODO: wrap and log
     _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
     //TODO: wrap and log
@@ -52,7 +51,7 @@ void AsyncMessagePort::asyncReceiveHeader() {
             [this](const std::error_code& ec, const size_t len) {
                 bytesIn(len);
                 if (!asyncStatusCheck("receive", "message header", ec, len, HEADERSIZE))
-                    return;
+                    return onReceiveError();
                 //Start the timer as soon as we get a good header so everything is captured
                 _messageTimer.reset();
                 asyncReceiveMessage();
@@ -69,25 +68,16 @@ void AsyncMessagePort::asyncReceiveMessage() {
         log() << "Error during receive: Got an invalid message length in the header(" << msgSize
                 << ")" << ". From: " << remoteAddr() << std::endl;
         //TODO: Should we return an error on the socket to the client?
-        asyncSocketShutdownRemove();
+        asyncErrorReceive();
     }
     _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
             [this](const std::error_code& ec, const size_t len) {
                 bytesIn(len);
                 if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen() - HEADERSIZE))
-                    return;
-                asyncQueueForOperation();
+                    return onReceiveError();
+                setState(State::kOperation);
+                asyncDoneReceievedMessage();
             });
-}
-
-void AsyncMessagePort::asyncQueueForOperation() {
-    fassert(-1, state() != State::kError);
-    setState(State::kOperation);
-    _owner->handlerOperationReady(this);
-}
-
-void AsyncMessagePort::asyncSendComplete() {
-    doClose() ? asyncSocketShutdownRemove() : asyncReceiveStart();
 }
 
 void AsyncMessagePort::asyncSizeError(const char* state, const char* desc, const size_t lenGot,
@@ -96,21 +86,19 @@ void AsyncMessagePort::asyncSizeError(const char* state, const char* desc, const
             << ") was not received" << ". Length: " << lenGot << ". Remote: " << remoteAddr()
             << std::endl;
     setState(State::kError);
-    asyncSocketShutdownRemove();
 }
 
 void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code ec) {
     log() << "Socket error during " << state << ".  Code: " << ec << ".  Remote: "
             << remoteAddr() << std::endl;
     setState(State::kError);
-    asyncSocketShutdownRemove();
 }
 
 void AsyncMessagePort::asyncSocketShutdownRemove() {
-    _owner->_conns.erase(this);
+    _owner->portClosed(this);
 }
 
-void AsyncMessagePort::SendStart(Message& toSend, MSGID responseToMsgId) {
+void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {
     fassert(-1, toSend.buf() != 0);
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
     toSend.header().setId(nextMessageId());
@@ -134,8 +122,9 @@ void AsyncMessagePort::asyncSendMessage() {
     _socket.async_send(asio::buffer(_buf.data(), msgSize),
             [this, msgSize] (const std::error_code& ec, const size_t len) {
                 if (!asyncStatusCheck("send", "message body", ec, len, msgSize))
-                return;
-                asyncSendComplete();
+                    onSendError();
+                setState(State::kOperation);
+                asyncDoneSendMessage();
             });
 }
 

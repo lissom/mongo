@@ -78,7 +78,7 @@ public:
      * Nothing but kComplete can replace kError.
      */
     enum class State {
-        kInit, kReceieve, kSend, kOperation, kError, kComplete
+        kInit, kWait, kReceieve, kSend, kOperation, kError, kComplete
     };
     AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
 
@@ -87,10 +87,6 @@ public:
     MsgData::ConstView getMsgData() {
         verify(_buf.data());
         return MsgData::ConstView(_buf.data());
-    }
-
-    void closeOnComplete() {
-        _closeOnComplete = true;
     }
 
     char* getBuffer() {
@@ -109,16 +105,18 @@ public:
 
     const Timer& messageTimer() { return _messageTimer; }
 
-    // Begin AbstractMessagingPort
-
     void reply(Message& received, Message& response, MSGID responseToMsgId) final {
         fassert(-1, state() == State::kOperation || state() == State::kError);
-        SendStart(response, responseToMsgId);
+        asyncSendStart(response, responseToMsgId);
     }
     void reply(Message& received, Message& response) final {
         fassert(-1, state() == State::kOperation || state() == State::kError);
-        SendStart(response, received.header().getId());
+        asyncSendStart(response, received.header().getId());
     }
+
+    //Preferred functions to use
+    void asyncReceiveStart();
+    void asyncSendStart(Message& toSend, MSGID responseTo);
 
     bool stateGood() {
         return isValid(state());
@@ -154,17 +152,23 @@ public:
     // End AbstractMessagingPort
 protected:
     const State state() const { return _state; }
+    virtual void asyncDoneReceievedMessage() = 0;
+    virtual void asyncDoneSendMessage() = 0;
+    virtual void asyncErrorSend() { };
+    virtual void asyncErrorReceive() { };
+    void complete() { setState(State::kComplete); }
+    //Used when returning the connection the pool for instance
+    void wait() { setState(State::kWait); }
+    const asio::ip::tcp::socket& socket() const { return _socket; }
+
+    Connections* const _owner;
 
 private:
     //Send start assumes a synchronous sender that needs to be detached from
-    void SendStart(Message& toSend, MSGID responseTo);
     void asyncSendMessage();
-    void asyncSendComplete();
 
-    void asyncReceiveStart();
     void asyncReceiveHeader();
     void asyncReceiveMessage();
-    void asyncQueueForOperation();
     inline bool asyncStatusCheck(const char* state, const char* desc, const std::error_code ec,
             const size_t lenGot, const size_t lenExpected) {
         if (ec) {
@@ -180,10 +184,20 @@ private:
     void asyncSizeError(const char* state, const char* desc, const size_t lenGot,
             const size_t lenExpected);
     void asyncSocketError(const char* state, const std::error_code ec);
+    //Deletes this, there must be no re-entry into the class after calling asyncSocketShutdownRemove
     void asyncSocketShutdownRemove();
-    bool doClose() {
-        return _closeOnComplete;
+    void onReceiveError() {
+        setState(State::kError);
+        asyncErrorReceive();
+        asyncSocketShutdownRemove();
     }
+    void onSendError() {
+        setState(State::kError);
+        asyncErrorSend();
+        asyncSocketShutdownRemove();
+    }
+
+
 
     bool validMsgSize(MessageSize msgSize) {
     	//static_cast signed to unsigned with number < 0 is implementation defined, check > 0
@@ -205,15 +219,12 @@ private:
 
     void setState(State newState);
 
-    Connections* const _owner;
     ConnStats _stats;
     asio::ip::tcp::socket _socket;
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector<char> _buf;
     std::vector<asio::const_buffer> _ioBuf;
     BufferSet _buffers;
-    //TODO: Turn this into state and verify it's correct at all stages
-    std::atomic<bool> _closeOnComplete { };
     std::atomic<State> _state { State::kInit };
     Timer _messageTimer;
 };
@@ -241,6 +252,12 @@ public:
 private:
     friend class AsyncMessagePort;
     using ConnectionHolder = UnboundedContainer<network::AsyncMessagePort*>;
+
+    void portClosed(AsyncMessagePort* port) {
+        //TODO: Async queue this
+        _conns.erase(port);
+        _server->
+    }
 
     AsioAsyncServer* const _server;
     MessageReadyHandler _messageReadyHandler;

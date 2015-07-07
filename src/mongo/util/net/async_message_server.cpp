@@ -81,10 +81,6 @@ void AsioAsyncServer::startAllWaits() {
 void AsioAsyncServer::startWait(Initiator* const initiator) {
     initiator->_acceptor.async_accept(initiator->_socket, [this, initiator](std::error_code ec) {
         if (!ec) {
-            if (!serverGlobalParams.quiet) {
-                log() << "connection accepted from " << initiator->_socket.remote_endpoint()
-                << std::endl;
-            }
             // TOOO: Ensure that move is enabled: ASIO_HAS_MOVE
             // The connection inserts itself into the container
             (void)new ClientAsyncMessagePort(_connections.get(), std::move(initiator->_socket));

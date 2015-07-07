@@ -15,16 +15,17 @@
 namespace mongo {
 namespace network {
 
-std::atomic<uint64_t> connectionCount{};
-
 ClientAsyncMessagePort::ClientAsyncMessagePort(Connections* const owner,
-		asio::ip::tcp::socket socket) :
-    	AsyncMessagePort(owner, std::move(socket)), _connectionId(++connectionCount) {
+		asio::ip::tcp::socket socket__) :
+    	AsyncMessagePort(owner, std::move(socket__)) {
     try {
         Client::initThread("conn", this);
-        // TODO: Stop setting the thread name, just set them to Pipeline_NUM?
         setThreadName(getThreadName());
+        if (!serverGlobalParams.quiet) {
+            log() << "connection accepted from " << socket().remote_endpoint() << std::endl;
+        }
         persistClientState();
+
     } catch (std::exception& e) {
         log() << "Failed to initialize operation runner thread specific variables: "
                 << e.what();
@@ -36,12 +37,25 @@ ClientAsyncMessagePort::ClientAsyncMessagePort(Connections* const owner,
         //TODO: return error and shutdown port
         fassert(-1, false);
     }
+    asyncReceiveStart();
 }
 
 ClientAsyncMessagePort::~ClientAsyncMessagePort() {
+    mongo::setThreadName(_threadName.c_str());
+    if (!serverGlobalParams.quiet) {
+        log() << "end connection " << socket().remote_endpoint() << std::endl;
+    }
 	//The operation should be gone if we are dumping the port, otherwise it will call back into
 	//a deleted object
 	fassert(-1, _runner.get() == nullptr);
+}
+
+void ClientAsyncMessagePort::asyncDoneReceievedMessage() {
+    _owner->handlerOperationReady(this);
+}
+
+void ClientAsyncMessagePort::asyncDoneSendMessage() {
+    asyncReceiveStart();
 }
 
 void ClientAsyncMessagePort::setOpRunner(std::unique_ptr<AbstractOperationRunner> newOpRunner) {
