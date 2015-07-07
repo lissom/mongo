@@ -104,8 +104,10 @@ void AsyncMessagePort::asyncSizeError(const char* state, const char* desc, const
 }
 
 void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code ec) {
-    log() << "Socket error during " << state << ".  Code: " << ec << ".  Remote: "
-            << remoteAddr() << std::endl;
+    log() << "Socket error during " << state << ".  Code: " << ec << ".  "
+            <<" Message: " << ec.message()
+            << "Remote: " << remoteAddr()
+            << std::endl;
     setState(State::kError);
 }
 

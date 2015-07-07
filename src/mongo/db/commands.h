@@ -101,6 +101,10 @@ public:
                      std::string& errmsg,
                      BSONObjBuilder& result) = 0;
 
+    virtual bool hasCompletion() { return false; }
+
+    virtual bool complete() { fassert(-1, false); return false; }
+
     /**
      * Translation point between the new request/response types and the legacy types.
      *
@@ -238,7 +242,7 @@ public:
 
     virtual ~Command() {}
 
-protected:
+//protected:
     /**
      * Appends to "*out" the privileges required to run this command on database "dbname" with
      * the invocation described by "cmdObj".  New commands shouldn't implement this, they should
@@ -405,7 +409,7 @@ public:
      */
     static void registerError(OperationContext* txn, const DBException& exception);
 
-private:
+//private:
     /**
      * Checks to see if the client is authorized to run the given command with the given
      * parameters on the given named database.

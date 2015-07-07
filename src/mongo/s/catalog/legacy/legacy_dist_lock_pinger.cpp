@@ -74,7 +74,7 @@ void LegacyDistLockPinger::_distLockPingThread(ConnectionString addr,
             const auto elapsed = pingTime - lastPingTime;
             if (elapsed > 10 * sleepTime) {
                 warning() << "Lock pinger for addr: " << addr << ", proc: " << process
-                          << " was inactive for " << elapsed;
+                          << " was inactive for " << elapsed.count();
             }
 
             lastPingTime = pingTime;

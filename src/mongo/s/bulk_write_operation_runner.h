@@ -11,6 +11,7 @@
 
 namespace mongo {
 
+//Not sure I'm going to use this arch, kept here just in case so I don't have to retype it
 class BulkWriteOperationRunner final : public ClientOperationRunner {
 public:
     MONGO_DISALLOW_COPYING(BulkWriteOperationRunner);
@@ -22,8 +23,6 @@ public:
     ~BulkWriteOperationRunner();
 
 private:
-    void processMessage() final;
-
     /*
      * Must be able to ran multiple times
      */

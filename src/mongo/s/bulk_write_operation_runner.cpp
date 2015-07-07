@@ -20,8 +20,4 @@ BulkWriteOperationRunner::~BulkWriteOperationRunner() {
 
 }
 
-void BulkWriteOperationRunner::processMessage() {
-
-}
-
 } // namespace mongo

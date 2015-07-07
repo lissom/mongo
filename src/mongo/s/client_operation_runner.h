@@ -28,7 +28,8 @@ public:
 protected:
     //This function exists just to make it more readable
     void intializeRun();
-    virtual void processMessage();
+    void processMessage();
+    void runCommand();
     // Restore context information, should only need to be called when it's time to coalesce a reply probably
     void onContextStart();
     // Save the context information

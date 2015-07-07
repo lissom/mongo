@@ -7,11 +7,13 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
+#include <iosfwd>
 #include <thread>
 
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/lasterror.h"
+#include "mongo/db/stats/counters.h"
 #include "mongo/s/client_operation_runner.h"
 #include "mongo/s/client/shard_connection.h" //remove
 #include "mongo/s/cluster_last_error_info.h"
@@ -167,6 +169,55 @@ void ClientOperationRunner::processMessage() {
 	 */
 	//onContextEnd();
 	setState(State::kComplete);
+}
+
+void ClientOperationRunner::runCommand() {
+    std::string dbname = nsToDatabase(_nss.ns());
+
+        if (_cmdObjBson.getBoolField("help")) {
+            std::stringstream help;
+            help << "help for: " << _command->name << " ";
+            _command->help(help);
+            _result.append("help", help.str());
+            _result.append("lockType", _command->isWriteCommandForConfigServer() ? 1 : 0);
+            Command::appendCommandStatus(_result, true, "");
+            return;
+        }
+
+        Status status = Command::_checkAuthorization(_command, _clientInfo, dbname, _cmdObjBson);
+        if (!status.isOK()) {
+            Command::appendCommandStatus(_result, status);
+            return;
+        }
+
+        _command->_commandsExecuted.increment();
+
+        if (_command->shouldAffectCommandCounter()) {
+            globalOpCounters.gotCommand();
+        }
+
+        std::string errmsg;
+        bool ok;
+        try {
+            ok = _command->run(_operationCtx.get(), dbname, _cmdObjBson, 0, errmsg, _result);
+            if (ok && _command->hasCompletion())
+                ok = _command->complete();
+        } catch (const DBException& e) {
+            ok = false;
+            int code = e.getCode();
+            if (code == RecvStaleConfigCode) {  // code for StaleConfigException
+                throw;
+            }
+
+            errmsg = e.what();
+            _result.append("code", code);
+        }
+
+        if (!ok) {
+            _command->_commandsFailed.increment();
+        }
+
+        Command::appendCommandStatus(_result, ok, errmsg);
 }
 
 void ClientOperationRunner::noSuchCommand(const std::string& commandName) {
