@@ -39,8 +39,9 @@ const std::string NETWORK_PREFIX = "conn";
 AsioAsyncServer::AsioAsyncServer(Options options, AbstractMessagePipeline* const pipeline) :
         _connections(
                 new Connections(this,
-                        [this](AsyncMessagePort* const port) {this->handlerOperationReady(port);})), _pipeline(
-                pipeline), _options(std::move(options)), _timerThread([this] {updateTime();}) {
+                        [this](AsyncMessagePort* const port) {this->handlerMessageReady(port);})),
+						_pipeline(pipeline), _options(std::move(options)),
+						_timerThread([this] {updateTime();}) {
     // If ipList is specified bind on those ips, otherwise bind to all ips for that port
     if (_options.ipList.size()) {
         const char* start = _options.ipList.c_str();
@@ -68,8 +69,8 @@ AsioAsyncServer::~AsioAsyncServer() {
     _timerThread.join();
 }
 
-void AsioAsyncServer::handlerOperationReady(AsyncMessagePort* conn) {
-    _pipeline->enqueueMessage(checked_cast<network::ClientAsyncMessagePort*>(conn));
+void AsioAsyncServer::handlerMessageReady(AsyncMessagePort* port) {
+    _pipeline->enqueueMessage(checked_cast<network::ClientAsyncMessagePort*>(port));
 }
 
 void AsioAsyncServer::startAllWaits() {
@@ -83,7 +84,12 @@ void AsioAsyncServer::startWait(Initiator* const initiator) {
         if (!ec) {
             // TOOO: Ensure that move is enabled: ASIO_HAS_MOVE
             // The connection inserts itself into the container
-            (void)new ClientAsyncMessagePort(_connections.get(), std::move(initiator->_socket));
+        	AsyncMessagePort* port;
+            if (!_connections->getCachedConn(&port))
+            	//New AsyncMessagePorts take care of RAII on themselves
+            	(void)new ClientAsyncMessagePort(_connections.get(), std::move(initiator->_socket));
+            else
+            	port->initialize(std::move(initiator->_socket));
         } else {
             // Clear the socket
             asio::ip::tcp::socket sock(std::move(initiator->_socket));

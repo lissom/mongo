@@ -48,7 +48,7 @@ public:
      * Connections call this to initiate listening on their client connection
      * and capture of a message
      */
-    void handlerOperationReady(AsyncMessagePort* conn);
+    void handlerMessageReady(AsyncMessagePort* port);
     void setupSockets() {}
     void setAsTimeTracker() {};
 

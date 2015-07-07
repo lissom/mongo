@@ -18,23 +18,38 @@ namespace network {
 
 std::atomic<uint64_t> connectionCount{};
 
-AsyncMessagePort::AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket) :
+AsyncMessagePort::AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket&& socket) :
         _owner(owner), _socket(std::move(socket)), _buf(0) {
-	_owner->_conns.emplace(this);
-	setConnectionId(++connectionCount);
+	rawInit();
 }
 
 AsyncMessagePort::~AsyncMessagePort() {
     //This object should only be destroyed if a runner cannot call back into it
     //Ensure there is no possibility of a _runner that can calling back
     fassert(-1, safeToDelete() == true);
+}
 
-    //Remove visibility before logging removal so there are no funny log lines
-    _owner->_conns.release(this);
+void AsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
+	_socket = std::move(socket);
+	rawInit();
+}
+
+void AsyncMessagePort::rawInit() {
+	setConnectionId(++connectionCount);
+	_state = State::kInit;
+	_owner->_activeConns.emplace(std::move(this));
+}
+
+void AsyncMessagePort::retire() {
+    //This object should only be destroyed if a runner cannot call back into it
+    //Ensure there is no possibility of a _runner that can calling back
+    fassert(-1, safeToDelete() == true);
+
     //TODO: wrap and log
     _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
     //TODO: wrap and log
     _socket.close();
+    setConnectionId(-1);
 }
 
 void AsyncMessagePort::asyncReceiveStart() {
@@ -95,7 +110,7 @@ void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code
 }
 
 void AsyncMessagePort::asyncSocketShutdownRemove() {
-    _owner->portClosed(this);
+    _owner->handlerPortClosed(this);
 }
 
 void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {
@@ -137,8 +152,24 @@ void AsyncMessagePort::setState(State newState) {
     }
 }
 
+Connections::~Connections() {
+	fassert(-1, _activeConns.empty());
+	FreeQueue::Container toFree;
+	_freeConns.swap(&toFree);
+	while(!toFree.empty()) {
+		delete toFree.front();
+		toFree.pop();
+	}
+}
+
 void Connections::handlerOperationReady(AsyncMessagePort* conn) {
     _messageReadyHandler(conn);
+}
+
+void Connections::handlerPortClosed(AsyncMessagePort* port) {
+	_activeConns.erase(port);
+	port->retire();
+	_freeConns.emplace(std::move(port));
 }
 
 } //namespace mongo

@@ -64,7 +64,8 @@ using std::string;
 #define mmm(x)
 
 void AbstractMessagingPort::setConnectionId(long long connectionId) {
-    verify(_connectionId == 0);
+	//On retire ports connectionId is set to -1 and queued for reuse
+    verify(_connectionId <= 0 || connectionId < 0);
     _connectionId = connectionId;
 }
 

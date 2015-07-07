@@ -18,6 +18,7 @@
 #include "mongo/platform/platform_specific.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/unbounded_container.h"
+#include "mongo/util/concurrency/queue.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/message_port.h"
@@ -80,9 +81,12 @@ public:
     enum class State {
         kInit, kWait, kReceieve, kSend, kOperation, kError, kComplete
     };
-    AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
+    AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket&& socket);
 
     ~AsyncMessagePort();
+
+    virtual void initialize(asio::ip::tcp::socket&& socket);
+    virtual void retire();
 
     MsgData::ConstView getMsgData() {
         verify(_buf.data());
@@ -164,6 +168,8 @@ protected:
     Connections* const _owner;
 
 private:
+    void rawInit();
+
     //Send start assumes a synchronous sender that needs to be detached from
     void asyncSendMessage();
 
@@ -242,26 +248,27 @@ public:
     Connections(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
             _server(server), _messageReadyHandler(messageReadyHandler) {
     }
+    ~Connections();
     void newConnHandler(asio::ip::tcp::socket&& socket);
     //Passing message, which shouldn't allocate any buffers
-    void handlerOperationReady(AsyncMessagePort* conn);
+    void handlerOperationReady(AsyncMessagePort* port);
+    bool getCachedConn(AsyncMessagePort** port) {
+    	return _freeConns.pop(port);
+    }
     const ConnStats& getStats() const {
         return _stats;
     }
 
 private:
     friend class AsyncMessagePort;
-    using ConnectionHolder = UnboundedContainer<network::AsyncMessagePort*>;
+    using FreeQueue = ThreadSafeQueue<AsyncMessagePort*>;
 
-    void portClosed(AsyncMessagePort* port) {
-        //TODO: Async queue this
-        _conns.erase(port);
-        _server->
-    }
+    void handlerPortClosed(AsyncMessagePort* port);
 
     AsioAsyncServer* const _server;
     MessageReadyHandler _messageReadyHandler;
-    ConnectionHolder _conns;
+    UnboundedContainer<AsyncMessagePort*> _activeConns;
+    FreeQueue _freeConns;
     ConnStats _stats;
 };
 

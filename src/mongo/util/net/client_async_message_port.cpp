@@ -16,38 +16,51 @@ namespace mongo {
 namespace network {
 
 ClientAsyncMessagePort::ClientAsyncMessagePort(Connections* const owner,
-		asio::ip::tcp::socket socket__) :
-    	AsyncMessagePort(owner, std::move(socket__)) {
-    try {
-        Client::initThread("conn", this);
-        setThreadName(getThreadName());
-        if (!serverGlobalParams.quiet) {
-            log() << "connection accepted from " << socket().remote_endpoint() << std::endl;
-        }
-        persistClientState();
-
-    } catch (std::exception& e) {
-        log() << "Failed to initialize operation runner thread specific variables: "
-                << e.what();
-        //TODO: return error and shutdown port
-        fassert(-1, false);
-    } catch (...) {
-        log() << "Failed to initialize operation runner thread specific variables: unknown"
-                " exception";
-        //TODO: return error and shutdown port
-        fassert(-1, false);
-    }
-    asyncReceiveStart();
+		asio::ip::tcp::socket socket) :
+    	AsyncMessagePort(owner, std::move(socket)) {
+	rawInit();
 }
 
 ClientAsyncMessagePort::~ClientAsyncMessagePort() {
-    mongo::setThreadName(_threadName.c_str());
-    if (!serverGlobalParams.quiet) {
-        log() << "end connection " << socket().remote_endpoint() << std::endl;
-    }
-	//The operation should be gone if we are dumping the port, otherwise it will call back into
-	//a deleted object
-	fassert(-1, _runner.get() == nullptr);
+	//This class should be deleted in the cache
+	fassert(-1, state() == State::kWait);
+}
+
+void ClientAsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
+	AsyncMessagePort::initialize(std::move(socket));
+	rawInit();
+}
+
+void ClientAsyncMessagePort::rawInit() {
+	try {
+		Client::initThread("conn", this);
+		setThreadName(getThreadName());
+		if (!serverGlobalParams.quiet) {
+			log() << "connection accepted from " << socket().remote_endpoint() << std::endl;
+		}
+		persistClientState();
+
+	} catch (std::exception& e) {
+		log() << "Failed to initialize operation runner thread specific variables: "
+				<< e.what();
+		//TODO: return error and shutdown port
+		fassert(-1, false);
+	} catch (...) {
+		log() << "Failed to initialize operation runner thread specific variables: unknown"
+				" exception";
+		//TODO: return error and shutdown port
+		fassert(-1, false);
+	}
+	asyncReceiveStart();
+}
+
+void ClientAsyncMessagePort::retire() {
+	restoreThreadname();
+	if (!serverGlobalParams.quiet) {
+		log() << "ended connection from " << socket().remote_endpoint() << std::endl;
+	}
+    _persistantState.release();
+    AsyncMessagePort::retire();
 }
 
 void ClientAsyncMessagePort::asyncDoneReceievedMessage() {

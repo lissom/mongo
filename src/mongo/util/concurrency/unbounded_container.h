@@ -28,11 +28,7 @@ class UnboundedContainer {
     using Mutex = std::mutex;
     using UniqueLock = std::unique_lock<Mutex>;
 public:
-    UnboundedContainer() {
-    }
-    //TODO: Implement a delete policy, needed for other uses
-    ~UnboundedContainer() {
-    }
+    UnboundedContainer() = default;
 
     //Cannot be moved or copied
     UnboundedContainer(const UnboundedContainer&) = delete;
@@ -40,21 +36,19 @@ public:
     UnboundedContainer& operator=(const UnboundedContainer&) = delete;
     UnboundedContainer& operator=(UnboundedContainer&&) = delete;
 
-    void emplace(Value value) {
+    void emplace(Value&& value) {
         UniqueLock lock(_mutex);
-        verify(_container.emplace(value).second == true);
+        verify(_container.emplace(std::move(value)).second == true);
     }
 
-    void erase(Value key) {
+    void erase(const Value& key) {
         UniqueLock lock(_mutex);
         _container.erase(key);
-        //Delete may be expensive, drop the lock
-        lock.release();
-        delete key;
     }
 
-    void release(const Value key) {
-        _container.erase(key);
+    bool empty() const {
+    	UniqueLock lock(_mutex);
+    	return _container.empty();
     }
 
 private:

@@ -22,6 +22,8 @@ public:
 
     ClientAsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
     ~ClientAsyncMessagePort();
+    void initialize(asio::ip::tcp::socket&& socket) override;
+    void retire() override;
 
     //Stores the opRunner, nothing is done to it
     void setOpRunner(std::unique_ptr<AbstractOperationRunner> newOpRunner);
@@ -39,21 +41,24 @@ public:
     void restoreClientState() {
         persist::setClient(std::move(_persistantState));
         //Set the mongo thread name, not the setThreadName function here
-        mongo::setThreadName(_threadName);
+        restoreThreadname();
     }
     /*
      * Preserves the legacy logging method, probably need something else like [thread.op#]
      */
+    void restoreThreadname() const {
+    	mongo::setThreadName(_threadName);
+    }
     const std::string& threadName() const {
         return _threadName;
     }
     void setThreadName(const std::string& threadName) {
-        verify(_threadName.empty() == true);
         _threadName = threadName;
     }
 
 
 private:
+    void rawInit();
     void asyncDoneReceievedMessage() override;
     void asyncDoneSendMessage() override;
 
