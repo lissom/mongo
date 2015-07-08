@@ -35,6 +35,7 @@ void AsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
 }
 
 void AsyncMessagePort::rawInit() {
+	_messageTimer.reset();
 	setConnectionId(++connectionCount);
 	_state = State::kInit;
 	_owner->_activeConns.insert(this);

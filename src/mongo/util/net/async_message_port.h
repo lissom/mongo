@@ -229,7 +229,6 @@ private:
     asio::ip::tcp::socket _socket;
     //TODO: Might have to turn this into a char*, currently trying to back Message with _freeIt = false
     std::vector<char> _buf;
-    std::vector<asio::const_buffer> _ioBuf;
     BufferSet _buffers;
     std::atomic<State> _state { State::kInit };
     Timer _messageTimer;
@@ -241,6 +240,7 @@ private:
  * take locks if at all possible
  */
 //TODO: MONGO_ALIGN_TO_CACHE
+//TODO: Init function to create 1000 idle ports, maybe based on shards?
 class Connections {
 public:
 	MONGO_DISALLOW_COPYING(Connections);
