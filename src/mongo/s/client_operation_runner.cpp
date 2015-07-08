@@ -123,8 +123,10 @@ void ClientOperationRunner::processMessage() {
 		//This loop only retries on StateConfigException
 		for(;; --_retries) {
 			try {
-	            Command::execCommandClientBasic(_operationCtx.get(), _command, *_operationCtx->getClient(), 0,
-	                    _nss.ns().c_str(), _cmdObjBson, _result);
+	            runCommand();
+	            //If the state isn't equal to kRunning the command has async'd
+	            if (state() != State::kRunning)
+	            	return;
 				BSONObj reply = _result.done();
 				replyToQuery(0, port, _protocolMessage, reply);
 				setState(State::kComplete);
@@ -199,9 +201,15 @@ void ClientOperationRunner::runCommand() {
         std::string errmsg;
         bool ok;
         try {
-            ok = _command->run(_operationCtx.get(), dbname, _cmdObjBson, 0, errmsg, _result);
-            if (ok && _command->hasCompletion())
-                ok = _command->complete();
+        	if (!_command->pipelineEnabled()) {
+        		ok = _command->run(_operationCtx.get(), dbname, _cmdObjBson, 0, errmsg, _result);
+        	} else {
+        		if (_command->pipelineInitialize(_operationCtx.get(), dbname, _cmdObjBson, 0,
+        				errmsg, _result)) {
+					setState(kWait);
+					return;
+        		}
+        	}
         } catch (const DBException& e) {
             ok = false;
             int code = e.getCode();

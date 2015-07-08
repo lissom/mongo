@@ -101,9 +101,22 @@ public:
                      std::string& errmsg,
                      BSONObjBuilder& result) = 0;
 
-    virtual bool hasCompletion() { return false; }
+    //Can this command be pipelined?
+    virtual bool pipelineEnabled() { return false; }
 
-    virtual bool complete() { fassert(-1, false); return false; }
+    // Returns true if the command has gone async
+    virtual bool pipelineInitialize(OperationContext* txn,
+            				const std::string& db,
+							BSONObj& cmdObj,
+							int options,
+							std::string& errmsg,
+							BSONObjBuilder& result) { fassert(-1, false);  return false; }
+
+    /*
+     * Run this function after the async is complete, true means complete, false
+     * means run again.
+     */
+    virtual bool pipelineFinish() { fassert(-1, false); return false; }
 
     /**
      * Translation point between the new request/response types and the legacy types.
