@@ -27,7 +27,6 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
-#include "mongo/util/quick_exit.h"
 #include "mongo/util/net/async_message_server.h"
 #include "mongo/util/net/message.h"
 
@@ -114,10 +113,10 @@ void AsioAsyncServer::serviceRun() {
         }
     } catch (std::exception& e) {
         log() << "Exception running io_service: " << e.what() << std::endl;
-        dbexit(EXIT_UNCAUGHT);
+        throw e;
     } catch (...) {
         log() << "unknown error running io_service" << std::endl;
-        dbexit(EXIT_UNCAUGHT);
+        throw;
     }
 }
 }  // namespace network
@@ -156,11 +155,11 @@ void AsioAsyncServer::run() {
 
         mongo::ready::signalReady();
     } catch (std::exception& e) {
-        log() << "can't create new thread for listening, shutting down" << std::endl;
-        fassert(-101, false);
+        log() << "can't create new thread for listening" << std::endl;
+        throw e;
     } catch (...) {
         log() << "unknown error accepting new socket" << std::endl;
-        dbexit(EXIT_UNCAUGHT);
+        throw;
     }
     serviceRun();  // ensure we don't return until the listening is complete
 }
@@ -181,7 +180,7 @@ try :
 catch (std::exception& e) {
     log() << "Unable to create AsioAsyncServer::Initiator::Initiator" << causedBy(e.what())
             << std::endl;
-    quickExit(1);
+    throw e;
 }
 } /* namespace network */
 } /* namespace mongo */

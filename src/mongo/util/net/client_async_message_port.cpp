@@ -28,7 +28,7 @@ void ClientAsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
 
 void ClientAsyncMessagePort::rawInit() {
 	try {
-		Client::initThread("conn", this);
+		Client::initThread("conn", getGlobalServiceContext(), this);
 		setThreadName(getThreadName());
 		if (!serverGlobalParams.quiet) {
 			log() << "connection accepted from " << socket().remote_endpoint() << std::endl;
