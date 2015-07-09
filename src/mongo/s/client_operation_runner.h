@@ -29,7 +29,11 @@ public:
 
 protected:
     static const size_t logLevelOp = 0;
+    void initializeCommand();
+
+
     //Runs the command synchronously - consider for cheap commands
+    void runLegacyCommand();
     void runCommand();
     void processMessage();
     void runLegacyRequest();

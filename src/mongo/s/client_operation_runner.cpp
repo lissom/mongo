@@ -55,6 +55,68 @@ void ClientOperationRunner::run() {
 	fassert(-20, _port->state() == network::AsyncMessagePort::State::kOperation);
 	fassert(-21, state() == State::kInit);
 	setState(State::kRunning);
+	//TODO: Derive AsyncClientOperationRunner
+	asyncAvailable() ? asyncStart() : runLegacyCommand();
+}
+
+void ClientOperationRunner::initializeCommand() {
+	LOG(logLevelOp) << "ClientOperationRunner begin ns: " << _nss << " request id: " << _requestId
+		   << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
+
+	LastError::get(_clientInfo).startRequest();
+	ClusterLastErrorInfo::get(_clientInfo).newRequest();
+
+	if (_dbMessage.messageShouldHaveNs()) {
+		uassert(ErrorCodes::IllegalOperation,
+				"can't use 'local' database through mongos",
+				_nss.db() != "local");
+
+		uassert(ErrorCodes::InvalidNamespace,
+				str::stream() << "Invalid ns [" << _nss.ns() << "]",
+				_nss.isValid());
+	}
+
+	_cmdObjBson = _queryMessage.query;
+	BSONElement e = _cmdObjBson.firstElement();
+	if (e.type() == Object &&
+		(e.fieldName()[0] == '$' ? str::equals("query", e.fieldName() + 1)
+								 : str::equals("query", e.fieldName()))) {
+		// Extract the embedded query object.
+
+		if (_cmdObjBson.hasField(Query::ReadPrefField.name())) {
+			// The command has a read preference setting. We don't want
+			// to lose this information so we copy this to a new field
+			// called $queryOptions.$readPreference
+			BSONObjBuilder final_cmdObjBsonBuilder;
+			final_cmdObjBsonBuilder.appendElements(e.embeddedObject());
+
+			BSONObjBuilder queryOptionsBuilder(
+				final_cmdObjBsonBuilder.subobjStart("$queryOptions"));
+			queryOptionsBuilder.append(_cmdObjBson[Query::ReadPrefField.name()]);
+			queryOptionsBuilder.done();
+
+			_cmdObjBson = final_cmdObjBsonBuilder.obj();
+		} else {
+			_cmdObjBson = e.embeddedObject();
+		}
+		e = _cmdObjBson.firstElement();
+	}
+
+	int n = _dbMessage.getQueryNToReturn();
+	uassert(-16978,
+	str::stream() << "bad numberToReturn (" << n
+				  << ") for $cmd type ns - can only be 1 or -1",
+	n == 1 || n == -1);
+
+	std::string commandName = e.fieldName();
+	_command = e.type() ? Command::findCommand(commandName) : nullptr;
+	if (!_command)
+		return noSuchCommand(commandName);
+
+	AuthorizationSession::get(_clientInfo)->startRequest(NULL);
+}
+
+void ClientOperationRunner::runLegacyCommand() {
     std::thread processRequest([this] {
         onContextStart();
         processMessage();
@@ -79,62 +141,9 @@ void ClientOperationRunner::processMessage() {
 			return runLegacyRequest();
 		}
 
-		LOG(logLevelOp) << "ClientOperationRunner begin ns: " << _nss << " request id: " << _requestId
-			   << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
-
-		LastError::get(_clientInfo).startRequest();
-		ClusterLastErrorInfo::get(_clientInfo).newRequest();
-
-		if (_dbMessage.messageShouldHaveNs()) {
-			uassert(ErrorCodes::IllegalOperation,
-					"can't use 'local' database through mongos",
-					_nss.db() != "local");
-
-			uassert(ErrorCodes::InvalidNamespace,
-					str::stream() << "Invalid ns [" << _nss.ns() << "]",
-					_nss.isValid());
-		}
-
-		AuthorizationSession::get(_clientInfo)->startRequest(NULL);
-
-		_cmdObjBson = _queryMessage.query;
-		BSONElement e = _cmdObjBson.firstElement();
-		if (e.type() == Object &&
-			(e.fieldName()[0] == '$' ? str::equals("query", e.fieldName() + 1)
-									 : str::equals("query", e.fieldName()))) {
-			// Extract the embedded query object.
-
-			if (_cmdObjBson.hasField(Query::ReadPrefField.name())) {
-				// The command has a read preference setting. We don't want
-				// to lose this information so we copy this to a new field
-				// called $queryOptions.$readPreference
-				BSONObjBuilder final_cmdObjBsonBuilder;
-				final_cmdObjBsonBuilder.appendElements(e.embeddedObject());
-
-				BSONObjBuilder queryOptionsBuilder(
-					final_cmdObjBsonBuilder.subobjStart("$queryOptions"));
-				queryOptionsBuilder.append(_cmdObjBson[Query::ReadPrefField.name()]);
-				queryOptionsBuilder.done();
-
-				_cmdObjBson = final_cmdObjBsonBuilder.obj();
-			} else {
-				_cmdObjBson = e.embeddedObject();
-			}
-			e = _cmdObjBson.firstElement();
-		}
-
-		int n = _dbMessage.getQueryNToReturn();
-	    uassert(-16978,
-	    str::stream() << "bad numberToReturn (" << n
-	                  << ") for $cmd type ns - can only be 1 or -1",
-	    n == 1 || n == -1);
-
-		std::string commandName = e.fieldName();
-		_command = e.type() ? Command::findCommand(commandName) : nullptr;
+		initializeCommand();
 		if (!_command)
-			return noSuchCommand(commandName);
-
-		setState(State::kRunning);
+			return;
 
 		//TODO: Async this: remove the loop
 		//This loop only retries on StateConfigException
@@ -182,47 +191,47 @@ void ClientOperationRunner::processMessage() {
 void ClientOperationRunner::runCommand() {
     std::string _dbname = nsToDatabase(_nss.ns());
 
-        if (_cmdObjBson.getBoolField("help")) {
-            std::stringstream help;
-            help << "help for: " << _command->name << " ";
-            _command->help(help);
-            _result.append("help", help.str());
-            _result.append("lockType", _command->isWriteCommandForConfigServer() ? 1 : 0);
-            Command::appendCommandStatus(_result, true, "");
-            return;
-        }
+	if (_cmdObjBson.getBoolField("help")) {
+		std::stringstream help;
+		help << "help for: " << _command->name << " ";
+		_command->help(help);
+		_result.append("help", help.str());
+		_result.append("lockType", _command->isWriteCommandForConfigServer() ? 1 : 0);
+		Command::appendCommandStatus(_result, true, "");
+		return;
+	}
 
-        Status status = Command::_checkAuthorization(_command, _clientInfo, _dbname, _cmdObjBson);
-        if (!status.isOK()) {
-            Command::appendCommandStatus(_result, status);
-            return;
-        }
+	Status status = Command::_checkAuthorization(_command, _clientInfo, _dbname, _cmdObjBson);
+	if (!status.isOK()) {
+		Command::appendCommandStatus(_result, status);
+		return;
+	}
 
-        _command->_commandsExecuted.increment();
+	_command->_commandsExecuted.increment();
 
-        if (_command->shouldAffectCommandCounter()) {
-            globalOpCounters.gotCommand();
-        }
+	if (_command->shouldAffectCommandCounter()) {
+		globalOpCounters.gotCommand();
+	}
 
-        bool ok;
-        try {
-            ok = _command->run(_operationCtx.get(), _dbname, _cmdObjBson, 0, _errorMsg, _result);
-        } catch (const DBException& e) {
-            ok = false;
-            int code = e.getCode();
-            if (code == RecvStaleConfigCode) {  // code for StaleConfigException
-                throw;
-            }
+	bool ok;
+	try {
+		ok = _command->run(_operationCtx.get(), _dbname, _cmdObjBson, 0, _errorMsg, _result);
+	} catch (const DBException& e) {
+		ok = false;
+		int code = e.getCode();
+		if (code == RecvStaleConfigCode) {  // code for StaleConfigException
+			throw;
+		}
 
-            _errorMsg = e.what();
-            _result.append("code", code);
-        }
+		_errorMsg = e.what();
+		_result.append("code", code);
+	}
 
-        if (!ok) {
-            _command->_commandsFailed.increment();
-        }
+	if (!ok) {
+		_command->_commandsFailed.increment();
+	}
 
-        Command::appendCommandStatus(_result, ok, _errorMsg);
+	Command::appendCommandStatus(_result, ok, _errorMsg);
 }
 
 void ClientOperationRunner::runLegacyRequest() {

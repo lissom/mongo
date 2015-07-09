@@ -19,7 +19,7 @@ BulkWriteOperationRunner::BulkWriteOperationRunner(network::ClientAsyncMessagePo
         Client* clientInfo, Message* const message, DbMessage* const dbMessage,
 		NamespaceString* const nss, BatchedCommandRequest::BatchType writeType) :
 		ClientOperationRunner(connInfo, clientInfo, message, dbMessage, nss),
-		_writer(true, 0), _request(writeType), _writeType(writeType) {
+		_request(writeType), _writeType(writeType) {
 }
 
 void BulkWriteOperationRunner::asyncStart() {
@@ -31,13 +31,11 @@ void BulkWriteOperationRunner::asyncStart() {
         // TODO: if we do namespace parsing, push this to the type
         if (!_request.parseBSON(_dbName, _cmdObjBson, &_errorMsg) ||
         		!_request.isValid(&_errorMsg)) {
-            // Batch parse failure
-            _response.setOk(false);
-            _response.setErrCode(ErrorCodes::FailedToParse);
-            _response.setErrMessage(_errorMsg);
-        } else {
-            _writer.write(_request, &_response);
+            buildBatchError(ErrorCodes::FailedToParse);
+            setState(State::kReadyResults);
+            return;
         }
+            //_writer.write(_request, &_response);
 
         dassert(_response.isValid(NULL));
     }
@@ -76,9 +74,9 @@ void BulkWriteOperationRunner::asyncProcessResults() {
     }
 
     // Save the last opTimes written on each shard for this client, to allow GLE to work
-    if (_writer.getStats().hasShardStats()) {
+    if (_stats.hasShardStats()) {
         ClusterLastErrorInfo::get(_clientInfo)
-            .addHostOpTimes(_writer.getStats().getShardStats().getWriteOpTimes());
+            .addHostOpTimes(_stats.getShardStats().getWriteOpTimes());
     }
 
     // TODO
@@ -95,4 +93,9 @@ void BulkWriteOperationRunner::asyncProcessResults() {
     asyncSendResponse();
 }
 
+void BulkWriteOperationRunner::buildBatchError(ErrorCodes::Error error) {
+    _response.setOk(false);
+	_response.setErrCode(error);
+	_response.setErrMessage(_errorMsg);
+}
 } // namespace mongo

@@ -22,6 +22,13 @@ public:
             Message* const message, DbMessage* const dbMessage, NamespaceString* const nss,
 			BatchedCommandRequest::BatchType writeType);
 
+	BatchedCommandRequest::BatchType writeType() const {
+		return _writeType;
+	}
+
+protected:
+	void buildBatchError(ErrorCodes::Error error);
+
 private:
     bool asyncAvailable() { return true; }
     void asyncStart() override;
@@ -40,9 +47,9 @@ private:
 
     }
 
-    ClusterWriter _writer;
     BatchedCommandRequest _request;
 	BatchedCommandResponse _response;
+	ClusterWriterStats _stats;
     BatchedCommandRequest::BatchType _writeType;
 };
 
