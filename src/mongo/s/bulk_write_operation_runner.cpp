@@ -91,8 +91,8 @@ void BulkWriteOperationRunner::asyncProcessResults() {
 
 
 
-
-    asyncSendResponse(); setState(State::kComplete);
+    setState(State::kComplete);
+    asyncSendResponse();
 }
 
 } // namespace mongo

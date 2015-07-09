@@ -118,7 +118,6 @@ void AsyncMessagePort::asyncSocketShutdownRemove() {
 }
 
 void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {
-    log() << "Start send" << std::endl;
     fassert(-3, toSend.buf() != 0);
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
     toSend.header().setId(nextMessageId());

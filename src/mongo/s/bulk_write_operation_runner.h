@@ -31,7 +31,6 @@ private:
      * Must be able to ran multiple times
      */
     void cleanup() {
-
         if (!operationActive()) {
             remove();
         }

@@ -54,7 +54,6 @@ void ClientAsyncMessagePort::retire() {
 	if (!serverGlobalParams.quiet) {
 		log() << "ended connection from " << socket().remote_endpoint() << std::endl;
 	}
-	log() << "Retiring client" << std::endl;
     _persistantState.release();
     AsyncMessagePort::retire();
 }

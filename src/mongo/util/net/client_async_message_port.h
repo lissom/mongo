@@ -35,7 +35,6 @@ public:
     }
 
     void persistClientState() {
-        log() << "Persisting client state" << std::endl;
         fassert(-34, _persistantState.get() == nullptr);
         _persistantState = persist::releaseClient();
         fassert(-35, _persistantState.get() != nullptr);

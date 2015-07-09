@@ -32,6 +32,7 @@ protected:
     //Runs the command synchronously - consider for cheap commands
     void runCommand();
     void processMessage();
+    void runLegacyRequest();
 
     //Runs the async version of the command
     virtual bool asyncAvailable() { return false; }
@@ -73,6 +74,7 @@ protected:
     //What version the runner cases about results for.  State shard states should ++ this
     std::atomic<size_t> _runnerEpoch{};
     Timer operationRunTimer;
+    bool _usedLegacy{};
 };
 
 } /* namespace mongo */

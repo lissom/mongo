@@ -18,7 +18,8 @@
 #include "mongo/s/client_operation_runner.h"
 #include "mongo/s/client/shard_connection.h" //remove
 #include "mongo/s/cluster_last_error_info.h"
-#include "mongo/s/stale_exception.h"
+#include "mongo/s/request.h" //remove when legacy operations are no longer needed
+#include "mongo/s/stale_exception.h" //remove, should be handled by the callback machinery, maybe versionedClientRequest?
 #include "mongo/s/version_manager.h" //remove
 #include "mongo/util/log.h"
 #include "mongo/util/assert_util.h"
@@ -37,11 +38,12 @@ ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* co
       _dbMessage(_protocolMessage),
       _queryMessage(_dbMessage),
       _operationCtx(_clientInfo->makeOperationContext()),
-      _result(32738),
+      _result(32768),
       _requestId(_protocolMessage.header().getId()),
       _requestOp(static_cast<Operations>(_protocolMessage.operation())),
       _nss(std::move(*nss)),
 	  _dbName(_nss.ns()) {
+	// TODO: b.skip(sizeof(QueryResult::Value)); on the full async skip this
 }
 
 ClientOperationRunner::~ClientOperationRunner() {
@@ -50,10 +52,18 @@ ClientOperationRunner::~ClientOperationRunner() {
 }
 
 void ClientOperationRunner::run() {
+	fassert(-20, _port->state() == network::AsyncMessagePort::State::kOperation);
+	fassert(-21, state() == State::kInit);
+	setState(State::kRunning);
     std::thread processRequest([this] {
         onContextStart();
-        log() << "Starting synchronous request thread" << std::endl;
         processMessage();
+        if (!_usedLegacy) {
+			LOG(logLevelOp) << "ClientOperationRunner end ns: " << _nss << " request id: " << _requestId
+					<< " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
+        }
+        setState(State::kComplete);
+		ShardConnection::releaseMyConnections();
         onContextEnd();
         // Deletes the operation runner
         _port->opRunnerComplete();
@@ -63,11 +73,14 @@ void ClientOperationRunner::run() {
 
 void ClientOperationRunner::processMessage() {
 	try {
-	    fassert(-20, _port->state() == network::AsyncMessagePort::State::kOperation);
-		fassert(-21, state() == State::kInit);
+		// Funnel non-commands and special commands to the legacy runner
+		if (!_nss.isCommand()) {
+			_usedLegacy = true;
+			return runLegacyRequest();
+		}
 
-		LOG(logLevelOp) << "BasicOperationRunner::run() start ns: " << _nss << " request id: " << _requestId
-			   << " op: " << _requestId << " timer: " << _port->messageTimer().millis() << std::endl;
+		LOG(logLevelOp) << "ClientOperationRunner begin ns: " << _nss << " request id: " << _requestId
+			   << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
 
 		LastError::get(_clientInfo).startRequest();
 		ClusterLastErrorInfo::get(_clientInfo).newRequest();
@@ -110,9 +123,7 @@ void ClientOperationRunner::processMessage() {
 			e = _cmdObjBson.firstElement();
 		}
 
-		//TODO: Move this out once more than commands can be ran
-	    fassert(-11, _nss.isCommand() || _nss.isSpecialCommand());
-	    int n = _dbMessage.getQueryNToReturn();
+		int n = _dbMessage.getQueryNToReturn();
 	    uassert(-16978,
 	    str::stream() << "bad numberToReturn (" << n
 	                  << ") for $cmd type ns - can only be 1 or -1",
@@ -133,9 +144,7 @@ void ClientOperationRunner::processMessage() {
 			    /*Command::execCommandClientBasic(_operationCtx.get(), _command, *_clientInfo,
 			            _queryOptions, _queryMessage.ns, _cmdObjBson, _result);*/
 	            runCommand();
-	            //If the state isn't equal to kRunning the command has async'd
-				BSONObj reply = _result.done();
-				replyToQuery(0, _port, _protocolMessage, reply);
+	            asyncSendResponse();
 				break;
 			//TODO: remove this, these should be handled by the completion handlers
 			} catch (StaleConfigException& e) {
@@ -168,10 +177,6 @@ void ClientOperationRunner::processMessage() {
 		logExceptionAndReply(0, "Exception thrown", ex);
 	}
 	// TODO: handle all other exceptions.  Do we want to?
-	LOG(logLevelOp) << "BasicOperationRunner::run() end ns: " << _nss << " request id: " << _requestId
-		   << " op: " << _requestId << " timer: " << _port->messageTimer().millis() << std::endl;
-	setState(State::kComplete);
-	ShardConnection::releaseMyConnections();
 }
 
 void ClientOperationRunner::runCommand() {
@@ -220,6 +225,12 @@ void ClientOperationRunner::runCommand() {
         Command::appendCommandStatus(_result, ok, _errorMsg);
 }
 
+void ClientOperationRunner::runLegacyRequest() {
+	Request request(_protocolMessage, _port);
+	request.init();
+	request.process();
+}
+
 void ClientOperationRunner::noSuchCommand(const std::string& commandName) {
     Command::appendCommandStatus(
         _result, false, str::stream() << "no such cmd: " << commandName);
@@ -256,7 +267,8 @@ void ClientOperationRunner::logExceptionAndReply(int logLevel,
 }
 
 void ClientOperationRunner::asyncSendResponse() {
-
+	BSONObj reply = _result.done();
+	replyToQuery(0, _port, _protocolMessage, reply);
 }
 
 void ClientOperationRunner::onContextStart() {
