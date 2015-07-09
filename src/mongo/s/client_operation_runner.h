@@ -51,13 +51,14 @@ protected:
     ServiceContext::UniqueOperationContext _operationCtx;
     Command* _command = nullptr;
     BSONObjBuilder _result;
-
-    std::atomic<State> _state { State::kInit };
     // Save the Id out of an abundance of caution
     const MSGID _requestId;
     const Operations _requestOp;
     // TODO: Move this out, only applies to query operations
     const NamespaceString _nss;
+    const std::string _dbName;
+    std::string _errorMsg;
+    int options{};
     int _retries = 5;
     //What version the runner cases about results for.  State shard states should ++ this
     std::atomic<size_t> _runnerEpoch{};

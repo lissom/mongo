@@ -81,6 +81,7 @@ protected:
         OnErrored();
     }
 
+private:
     std::atomic<State> _state { State::kInit };
 };
 
