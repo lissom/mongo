@@ -14,6 +14,8 @@
 namespace mongo {
 
 //TODO: may need to separate out client operation runner and command operation runner
+//TODO: Pool these
+//TODO: Align, both on the object and check the data ordering
 class ClientOperationRunner : public AbstractOperationRunner {
 public:
     MONGO_DISALLOW_COPYING(ClientOperationRunner);
@@ -24,6 +26,8 @@ public:
     void run() final;
 
     const MSGID& requestId() const { return _requestId; }
+
+    State state() { return _state; }
 
 protected:
     //This function exists just to make it more readable
@@ -61,6 +65,7 @@ protected:
     int _retries = 5;
     //What version the runner cases about results for.  State shard states should ++ this
     std::atomic<size_t> _runnerEpoch{};
+    Timer operationRunTimer;
 };
 
 } /* namespace mongo */

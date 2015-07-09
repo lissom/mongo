@@ -35,7 +35,7 @@ void AsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
 }
 
 void AsyncMessagePort::rawInit() {
-	_messageTimer.reset();
+    _networkMessageTimer.reset();
 	setConnectionId(++connectionCount);
 	_state = State::kInit;
 	_owner->_activeConns.insert(this);
@@ -60,7 +60,7 @@ void AsyncMessagePort::asyncReceiveStart() {
 
 void AsyncMessagePort::asyncReceiveHeader() {
     static_assert(NETWORK_MIN_MESSAGE_SIZE > HEADERSIZE, "Min alloc must be > message header size");
-    //TODO: capture average message size and use that if > min
+    _networkMessageTimer.reset();
     _buf.clear();
     _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
     _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
@@ -69,7 +69,6 @@ void AsyncMessagePort::asyncReceiveHeader() {
                 if (!asyncStatusCheck("receive", "message header", ec, len, HEADERSIZE))
                     return onReceiveError();
                 //Start the timer as soon as we get a good header so everything is captured
-                _messageTimer.reset();
                 asyncReceiveMessage();
             });
 }
@@ -78,13 +77,14 @@ void AsyncMessagePort::asyncReceiveMessage() {
     const auto msgSize = getMsgData().getLen();
     //Forcing into the nearest 1024 size block.  Assuming this was to always hit a tcmalloc size?
     _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
-    //Message size may be -1 to check endian?  Not sure if that is current spec
+    //Message size may be -1 to check endian
     fassert(-1, msgSize >= 0);
     if (!validMsgSize(msgSize)) {
         log() << "Error during receive: Got an invalid message length in the header(" << msgSize
                 << ")" << ". From: " << remoteAddr() << std::endl;
         //TODO: Should we return an error on the socket to the client?
         asyncErrorReceive();
+        asyncSocketShutdownRemove();
     }
     _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
             [this](const std::error_code& ec, const size_t len) {

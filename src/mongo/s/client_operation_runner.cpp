@@ -49,8 +49,8 @@ void ClientOperationRunner::run() {
     std::thread processRequest([this] {
         onContextStart();
 		processMessage();
-		onContextEnd();
 		port->opRunnerComplete();
+		onContextEnd();
 	});
     processRequest.detach();
 }
@@ -166,10 +166,6 @@ void ClientOperationRunner::processMessage() {
 	LOG(3) << "BasicOperationRunner::run() end ns: " << _nss << " request id: " << _requestId
 		   << " op: " << _requestId << " timer: " << port->messageTimer().millis() << std::endl;
 
-	/*
-	 * RESTORE AFTER SINGLE THREADED TEST IS COMPLETE
-	 */
-	//onContextEnd();
 	setState(State::kComplete);
 }
 

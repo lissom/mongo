@@ -107,7 +107,7 @@ public:
         return _stats;
     }
 
-    const Timer& messageTimer() { return _messageTimer; }
+    const Timer& messageTimer() { return _networkMessageTimer; }
 
     void reply(Message& received, Message& response, MSGID responseToMsgId) final {
         fassert(-1, state() == State::kOperation || state() == State::kError);
@@ -203,8 +203,6 @@ private:
         asyncSocketShutdownRemove();
     }
 
-
-
     bool validMsgSize(MessageSize msgSize) {
     	//static_cast signed to unsigned with number < 0 is implementation defined, check > 0
     	return msgSize > 0
@@ -231,7 +229,9 @@ private:
     std::vector<char> _buf;
     BufferSet _buffers;
     std::atomic<State> _state { State::kInit };
-    Timer _messageTimer;
+    // TODO: Use a message timer we can mark things in stages with, i.e. mark(char*)->mark("receive complete")
+    // TODO: Loglevel 5 print timing for the message
+    Timer _networkMessageTimer;
 };
 
 /*
