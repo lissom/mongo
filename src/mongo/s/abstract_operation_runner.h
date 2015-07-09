@@ -51,17 +51,18 @@ public:
     enum class State {
         kInit, kRunning, kWait, kError, kComplete
     };
+
     AbstractOperationRunner() { }
     virtual ~AbstractOperationRunner() {
     	//Ensure no dangling operations
-		fassert(-1, operationsActive() == false);
+		fassert(-666, operationActive() == false);
     }
-
 
     virtual void run() = 0;
 
+    State state() const { return _state; }
     //TODO: Test to see if we are waiting on return values
-    bool operationsActive() {
+    bool operationActive() {
         return _state != State::kComplete;
     }
 

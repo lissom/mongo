@@ -26,7 +26,7 @@ AsyncMessagePort::AsyncMessagePort(Connections* const owner, asio::ip::tcp::sock
 AsyncMessagePort::~AsyncMessagePort() {
     //This object should only be destroyed if a runner cannot call back into it
     //Ensure there is no possibility of a _runner that can calling back
-    fassert(-1, safeToDelete() == true);
+    fassert(-6, safeToDelete() == true);
 }
 
 void AsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
@@ -44,12 +44,13 @@ void AsyncMessagePort::rawInit() {
 void AsyncMessagePort::retire() {
     //This object should only be destroyed if a runner cannot call back into it
     //Ensure there is no possibility of a _runner that can calling back
-    fassert(-1, safeToDelete() == true);
+    fassert(-7, safeToDelete() == true);
 
     //TODO: wrap and log
     _socket.shutdown(asio::socket_base::shutdown_type::shutdown_both);
     //TODO: wrap and log
     _socket.close();
+    _threadName.insert(0, "retired: ");
     setConnectionId(-1);
 }
 
@@ -60,7 +61,6 @@ void AsyncMessagePort::asyncReceiveStart() {
 
 void AsyncMessagePort::asyncReceiveHeader() {
     static_assert(NETWORK_MIN_MESSAGE_SIZE > HEADERSIZE, "Min alloc must be > message header size");
-    _networkMessageTimer.reset();
     _buf.clear();
     _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
     _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
@@ -78,13 +78,14 @@ void AsyncMessagePort::asyncReceiveMessage() {
     //Forcing into the nearest 1024 size block.  Assuming this was to always hit a tcmalloc size?
     _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
     //Message size may be -1 to check endian
-    fassert(-1, msgSize >= 0);
+    fassert(-8, msgSize >= 0);
+    if (!_socket.is_open())
+        log() << "Socket is closed" << std::endl;
     if (!validMsgSize(msgSize)) {
         log() << "Error during receive: Got an invalid message length in the header(" << msgSize
                 << ")" << ". From: " << remoteAddr() << std::endl;
         //TODO: Should we return an error on the socket to the client?
-        asyncErrorReceive();
-        asyncSocketShutdownRemove();
+        onReceiveError();
     }
     _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
             [this](const std::error_code& ec, const size_t len) {
@@ -117,7 +118,8 @@ void AsyncMessagePort::asyncSocketShutdownRemove() {
 }
 
 void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {
-    fassert(-1, toSend.buf() != 0);
+    log() << "Start send" << std::endl;
+    fassert(-3, toSend.buf() != 0);
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
     toSend.header().setId(nextMessageId());
     toSend.header().setResponseTo(responseToMsgId);
@@ -133,10 +135,10 @@ void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {
 }
 
 void AsyncMessagePort::asyncSendMessage() {
-	fassert(-1, state() != State::kError && state() != State::kComplete);
+	fassert(-4, state() != State::kError && state() != State::kComplete);
 	setState(State::kSend);
     MessageSize msgSize = getMsgData().getLen();
-    fassert(-1, validMsgSize(msgSize));
+    fassert(-5, validMsgSize(msgSize));
     _socket.async_send(asio::buffer(_buf.data(), msgSize),
             [this, msgSize] (const std::error_code& ec, const size_t len) {
                 if (!asyncStatusCheck("send", "message body", ec, len, msgSize))
@@ -147,6 +149,7 @@ void AsyncMessagePort::asyncSendMessage() {
 }
 
 void AsyncMessagePort::setState(State newState) {
+
     State currentState = _state;
     while (currentState != State::kComplete &&
     		!(currentState == State::kError && newState != State::kComplete)) {
@@ -156,7 +159,7 @@ void AsyncMessagePort::setState(State newState) {
 }
 
 Connections::~Connections() {
-	fassert(-1, _activeConns.empty());
+	fassert(-6, _activeConns.empty());
 	FreeQueue::Container toFree;
 	_freeConns.swap(&toFree);
 	while(!toFree.empty()) {

@@ -15,6 +15,7 @@
 #include <mutex>
 #include <utility>
 
+#include "mongo/logger/logstream_builder.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/unbounded_container.h"
@@ -81,12 +82,16 @@ public:
     enum class State {
         kInit, kWait, kReceieve, kSend, kOperation, kError, kComplete
     };
+
     AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket&& socket);
-
-    ~AsyncMessagePort();
-
+    virtual ~AsyncMessagePort();
+    /*
+     * initialize and retire implement pooling ctor and dtor
+     */
     virtual void initialize(asio::ip::tcp::socket&& socket);
     virtual void retire();
+
+    const State state() const { return _state; }
 
     MsgData::ConstView getMsgData() {
         verify(_buf.data());
@@ -114,7 +119,7 @@ public:
         asyncSendStart(response, responseToMsgId);
     }
     void reply(Message& received, Message& response) final {
-        fassert(-1, state() == State::kOperation || state() == State::kError);
+        fassert(-2, state() == State::kOperation || state() == State::kError);
         asyncSendStart(response, received.header().getId());
     }
 
@@ -152,10 +157,15 @@ public:
         return SockAddr(_socket.remote_endpoint().address().to_string().c_str(),
                 _socket.remote_endpoint().port());
     }
-
     // End AbstractMessagingPort
+
+    /*
+     * Preserves the naming scheme per thread (now operation) for logging (only for logging?)
+     */
+    void restoreThreadName() const {
+        mongo::setThreadName(_threadName);
+    }
 protected:
-    const State state() const { return _state; }
     virtual void asyncDoneReceievedMessage() = 0;
     virtual void asyncDoneSendMessage() = 0;
     virtual void asyncErrorSend() { };
@@ -164,6 +174,23 @@ protected:
     //Used when returning the connection the pool for instance
     void wait() { setState(State::kWait); }
     const asio::ip::tcp::socket& socket() const { return _socket; }
+    asio::ip::tcp::socket& socket() { return _socket; }
+
+    const std::string& threadName() const {
+        return _threadName;
+    }
+    void setThreadName(const std::string& threadName) {
+        _threadName = threadName;
+    }
+
+    /*
+     * Ensure that the proper thread name is used
+     */
+    inline logger::LogstreamBuilder log() {
+        return logger::LogstreamBuilder(logger::globalLogDomain(),
+                                _threadName,
+                                logger::LogSeverity::Log());
+    }
 
     Connections* const _owner;
 
@@ -232,6 +259,7 @@ private:
     // TODO: Use a message timer we can mark things in stages with, i.e. mark(char*)->mark("receive complete")
     // TODO: Loglevel 5 print timing for the message
     Timer _networkMessageTimer;
+    std::string _threadName;
 };
 
 /*

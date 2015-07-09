@@ -21,7 +21,7 @@ public:
     MONGO_DISALLOW_COPYING(ClientAsyncMessagePort);
 
     ClientAsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
-    ~ClientAsyncMessagePort();
+    ~ClientAsyncMessagePort() { /* All tear down should be in retire*/ };
     void initialize(asio::ip::tcp::socket&& socket) override;
     void retire() override;
 
@@ -35,27 +35,19 @@ public:
     }
 
     void persistClientState() {
-        _persistantState = std::move(persist::releaseClient());
-        invariant(_persistantState.get() != nullptr);
+        log() << "Persisting client state" << std::endl;
+        fassert(-34, _persistantState.get() == nullptr);
+        _persistantState = persist::releaseClient();
+        fassert(-35, _persistantState.get() != nullptr);
+        fassert(-36, !haveClient());
+
     }
     void restoreClientState() {
+        restoreThreadName();
+        fassert(668, _persistantState.get());
         persist::setClient(std::move(_persistantState));
         //Set the mongo thread name, not the setThreadName function here
-        restoreThreadname();
     }
-    /*
-     * Preserves the legacy logging method, probably need something else like [thread.op#]
-     */
-    void restoreThreadname() const {
-    	mongo::setThreadName(_threadName);
-    }
-    const std::string& threadName() const {
-        return _threadName;
-    }
-    void setThreadName(const std::string& threadName) {
-        _threadName = threadName;
-    }
-
 
 private:
     void rawInit();
@@ -63,7 +55,6 @@ private:
     void asyncDoneSendMessage() override;
 
     PersistantState _persistantState;
-    std::string _threadName;
     std::unique_ptr<AbstractOperationRunner> _runner;
 };
 } /* namespace network */

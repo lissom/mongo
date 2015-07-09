@@ -7,7 +7,12 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
+#include "mongo/db/lasterror.h"
+#include "mongo/db/stats/counters.h"
 #include "mongo/s/bulk_write_operation_runner.h"
+#include "mongo/s/cluster_last_error_info.h"
+#include "mongo/s/write_ops/batch_upconvert.h"
+
 
 namespace mongo {
 BulkWriteOperationRunner::BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo,
@@ -21,7 +26,7 @@ BulkWriteOperationRunner::~BulkWriteOperationRunner() {
 
 }
 
-void BulkWriteOperationRunner::start() {
+void BulkWriteOperationRunner::asyncStart() {
 
 
     LastError* cmdLastError = &LastError::get(_clientInfo);
@@ -45,7 +50,7 @@ void BulkWriteOperationRunner::start() {
     }
 }
 
-void BulkWriteOperationRunner::complete() {
+void BulkWriteOperationRunner::asyncProcessResults() {
     LastError* cmdLastError = &LastError::get(_clientInfo);
     // Populate the lastError object based on the write response
     cmdLastError->reset();

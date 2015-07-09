@@ -110,7 +110,7 @@ void AsioAsyncServer::serviceRun() {
         _ioService.run(ec);
         if (ec) {
             log() << "Error running service: " << ec << std::endl;
-            fassert(-1, !ec);
+            fassert(-102, !ec);
         }
     } catch (std::exception& e) {
         log() << "Exception running io_service: " << e.what() << std::endl;
@@ -157,7 +157,7 @@ void AsioAsyncServer::run() {
         mongo::ready::signalReady();
     } catch (std::exception& e) {
         log() << "can't create new thread for listening, shutting down" << std::endl;
-        fassert(-1, false);
+        fassert(-101, false);
     } catch (...) {
         log() << "unknown error accepting new socket" << std::endl;
         dbexit(EXIT_UNCAUGHT);

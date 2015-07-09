@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "mongo/db/auth/authorization_session.h"
+#include "mongo/db/commands.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/db/stats/counters.h"
@@ -29,7 +30,7 @@ ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* co
                                                Message* const message,
                                                DbMessage* const dbMessage,
                                                NamespaceString* const nss)
-    : port(connInfo),
+    : _port(connInfo),
       _clientInfo(clientInfo),
       _protocolMessage(*message),
 	  //dbmessage references message, so it has to be constructed here
@@ -44,24 +45,29 @@ ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* co
 }
 
 ClientOperationRunner::~ClientOperationRunner() {
+    // The client should always be pushed back to the socket on close
+    fassert(-667, !haveClient());
 }
 
 void ClientOperationRunner::run() {
     std::thread processRequest([this] {
         onContextStart();
-		processMessage();
-		port->opRunnerComplete();
-		onContextEnd();
-	});
+        log() << "Starting synchronous request thread" << std::endl;
+        processMessage();
+        onContextEnd();
+        // Deletes the operation runner
+        _port->opRunnerComplete();
+    });
     processRequest.detach();
 }
 
 void ClientOperationRunner::processMessage() {
 	try {
-		verify(_state == State::kInit);
+	    fassert(-20, _port->state() == network::AsyncMessagePort::State::kOperation);
+		fassert(-21, state() == State::kInit);
 
-		LOG(3) << "BasicOperationRunner::run() start ns: " << _nss << " request id: " << _requestId
-			   << " op: " << _requestId << " timer: " << port->messageTimer().millis() << std::endl;
+		LOG(logLevelOp) << "BasicOperationRunner::run() start ns: " << _nss << " request id: " << _requestId
+			   << " op: " << _requestId << " timer: " << _port->messageTimer().millis() << std::endl;
 
 		LastError::get(_clientInfo).startRequest();
 		ClusterLastErrorInfo::get(_clientInfo).newRequest();
@@ -108,7 +114,7 @@ void ClientOperationRunner::processMessage() {
 	    fassert(-11, _nss.isCommand() || _nss.isSpecialCommand());
 	    int n = _dbMessage.getQueryNToReturn();
 	    //uassert # = 16978
-	    uassert(-20,
+	    uassert(-16978,
 	    str::stream() << "bad numberToReturn (" << n
 	                  << ") for $cmd type ns - can only be 1 or -1",
 	    n == 1 || n == -1);
@@ -124,14 +130,14 @@ void ClientOperationRunner::processMessage() {
 		//This loop only retries on StateConfigException
 		for(;; --_retries) {
 			try {
-	            runCommand();
+			    log() << "_cmdObjBson: " << _cmdObjBson << std::endl;
+			    Command::execCommandClientBasic(_operationCtx.get(), _command, *_clientInfo,
+			            _queryOptions, _queryMessage.ns, _cmdObjBson, _result);
+	            //runCommand();
 	            //If the state isn't equal to kRunning the command has async'd
-	            if (state() != State::kRunning)
-	            	return;
 				BSONObj reply = _result.done();
-				replyToQuery(0, port, _protocolMessage, reply);
-				setState(State::kComplete);
-				return;
+				replyToQuery(0, _port, _protocolMessage, reply);
+				break;
 			//TODO: remove this, these should be handled by the completion handlers
 			} catch (StaleConfigException& e) {
 				if (_retries <= 0)
@@ -153,9 +159,8 @@ void ClientOperationRunner::processMessage() {
 			} catch (AssertionException& e) {
 				Command::appendCommandStatus(_result, e.toStatus());
 				BSONObj x = _result.done();
-				replyToQuery(0, port, _protocolMessage, x);
-				setState(State::kComplete);
-				return;
+				replyToQuery(0, _port, _protocolMessage, x);
+				break;
 			}
 		}
 	} catch (const AssertionException& ex) {
@@ -164,10 +169,10 @@ void ClientOperationRunner::processMessage() {
 		logExceptionAndReply(0, "Exception thrown", ex);
 	}
 	// TODO: handle all other exceptions.  Do we want to?
-	LOG(3) << "BasicOperationRunner::run() end ns: " << _nss << " request id: " << _requestId
-		   << " op: " << _requestId << " timer: " << port->messageTimer().millis() << std::endl;
-
+	LOG(logLevelOp) << "BasicOperationRunner::run() end ns: " << _nss << " request id: " << _requestId
+		   << " op: " << _requestId << " timer: " << _port->messageTimer().millis() << std::endl;
 	setState(State::kComplete);
+	ShardConnection::releaseMyConnections();
 }
 
 void ClientOperationRunner::runCommand() {
@@ -195,18 +200,9 @@ void ClientOperationRunner::runCommand() {
             globalOpCounters.gotCommand();
         }
 
-        std::string errmsg;
         bool ok;
         try {
-        	if (!_command->pipelineEnabled()) {
-        		ok = _command->run(_operationCtx.get(), _dbname, _cmdObjBson, 0, errmsg, _result);
-        	} else {
-        		if (_command->pipelineInitialize(_operationCtx.get(), _dbname, _cmdObjBson, 0,
-        				errmsg, _result)) {
-					setState(kWait);
-					return;
-        		}
-        	}
+            ok = _command->run(_operationCtx.get(), _dbname, _cmdObjBson, 0, _errorMsg, _result);
         } catch (const DBException& e) {
             ok = false;
             int code = e.getCode();
@@ -214,7 +210,7 @@ void ClientOperationRunner::runCommand() {
                 throw;
             }
 
-            errmsg = e.what();
+            _errorMsg = e.what();
             _result.append("code", code);
         }
 
@@ -222,7 +218,7 @@ void ClientOperationRunner::runCommand() {
             _command->_commandsFailed.increment();
         }
 
-        Command::appendCommandStatus(_result, ok, errmsg);
+        Command::appendCommandStatus(_result, ok, _errorMsg);
 }
 
 void ClientOperationRunner::noSuchCommand(const std::string& commandName) {
@@ -230,7 +226,7 @@ void ClientOperationRunner::noSuchCommand(const std::string& commandName) {
         _result, false, str::stream() << "no such cmd: " << commandName);
     _result.append("code", ErrorCodes::CommandNotFound);
     Command::unknownCommands.increment();
-    replyToQuery(ResultFlag_ErrSet, port, _protocolMessage, _result.obj());
+    replyToQuery(ResultFlag_ErrSet, _port, _protocolMessage, _result.obj());
     setState(State::kComplete);
     return;
 }
@@ -253,19 +249,23 @@ void ClientOperationRunner::logExceptionAndReply(int logLevel,
     if (doesOpGetAResponse(_requestOp)) {
         //_message is passed just to extract the response to ID, so make sure it's set
         _protocolMessage.header().setId(_requestId);
-        replyToQuery(ResultFlag_ErrSet, port, _protocolMessage, buildErrReply(ex));
+        replyToQuery(ResultFlag_ErrSet, _port, _protocolMessage, buildErrReply(ex));
     }
     // We *always* populate the last error for now
     LastError::get(cc()).setLastError(ex.getCode(), ex.what());
     setState(State::kError);
 }
 
+void ClientOperationRunner::asyncSendResponse() {
+
+}
+
 void ClientOperationRunner::onContextStart() {
-    port->restoreClientState();
+    _port->restoreClientState();
 }
 
 void ClientOperationRunner::onContextEnd() {
-    port->persistClientState();
+    _port->persistClientState();
 }
 
 } /* namespace mongo */

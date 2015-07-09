@@ -8,7 +8,9 @@
 #pragma once
 
 #include "mongo/s/client_operation_runner.h"
+#include "mongo/s/cluster_write.h"
 #include "mongo/s/write_ops/batched_command_request.h"
+#include "mongo/s/write_ops/batched_command_response.h"
 
 namespace mongo {
 
@@ -22,15 +24,16 @@ public:
     ~BulkWriteOperationRunner();
 
 private:
-    void start();
-    void complete();
+    bool asyncAvailable() { return true; }
+    void asyncStart() override;
+    void asyncProcessResults() override;
 
     /*
      * Must be able to ran multiple times
      */
     void cleanup() {
 
-        if (!operationsActive()) {
+        if (!operationActive()) {
             remove();
         }
     }

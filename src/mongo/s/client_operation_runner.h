@@ -27,13 +27,19 @@ public:
 
     const MSGID& requestId() const { return _requestId; }
 
-    State state() { return _state; }
-
 protected:
-    //This function exists just to make it more readable
-    void intializeRun();
-    void processMessage();
+    static const size_t logLevelOp = 0;
+    //Runs the command synchronously - consider for cheap commands
     void runCommand();
+    void processMessage();
+
+    //Runs the async version of the command
+    virtual bool asyncAvailable() { return false; }
+    virtual void asyncStart() { fassert(-100, false); }
+    virtual void asyncProcessResults() { fassert(-100, false); }
+    //by default expects results in _result to be sent
+    void asyncSendResponse();
+
     // Restore context information, should only need to be called when it's time to coalesce a reply probably
     void onContextStart();
     // Save the context information
@@ -46,7 +52,7 @@ protected:
     BSONObj buildErrReply(const DBException& ex);
     void noSuchCommand(const std::string& commandName);
 
-    network::ClientAsyncMessagePort* const port;
+    network::ClientAsyncMessagePort* const _port;
     Client* const _clientInfo;
     BSONObj _cmdObjBson;
     Message _protocolMessage;
@@ -62,7 +68,7 @@ protected:
     const NamespaceString _nss;
     const std::string _dbName;
     std::string _errorMsg;
-    int options{};
+    int _queryOptions{};
     int _retries = 5;
     //What version the runner cases about results for.  State shard states should ++ this
     std::atomic<size_t> _runnerEpoch{};

@@ -21,11 +21,6 @@ ClientAsyncMessagePort::ClientAsyncMessagePort(Connections* const owner,
 	rawInit();
 }
 
-ClientAsyncMessagePort::~ClientAsyncMessagePort() {
-	//This class should be deleted in the cache
-	fassert(-1, state() == State::kWait);
-}
-
 void ClientAsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
 	AsyncMessagePort::initialize(std::move(socket));
 	rawInit();
@@ -44,21 +39,22 @@ void ClientAsyncMessagePort::rawInit() {
 		log() << "Failed to initialize operation runner thread specific variables: "
 				<< e.what();
 		//TODO: return error and shutdown port
-		fassert(-1, false);
+		fassert(-82, false);
 	} catch (...) {
 		log() << "Failed to initialize operation runner thread specific variables: unknown"
 				" exception";
 		//TODO: return error and shutdown port
-		fassert(-1, false);
+		fassert(-83, false);
 	}
 	asyncReceiveStart();
 }
 
 void ClientAsyncMessagePort::retire() {
-	restoreThreadname();
+    fassert(-89, safeToDelete());
 	if (!serverGlobalParams.quiet) {
 		log() << "ended connection from " << socket().remote_endpoint() << std::endl;
 	}
+	log() << "Retiring client" << std::endl;
     _persistantState.release();
     AsyncMessagePort::retire();
 }
@@ -68,11 +64,20 @@ void ClientAsyncMessagePort::asyncDoneReceievedMessage() {
 }
 
 void ClientAsyncMessagePort::asyncDoneSendMessage() {
+    // If the processing thread hasn't returned the state information, wait on it to do so
+    // TODO: Set a max check
+    if (!_persistantState.get()) {
+        log() << "Ready to receive without a persistent state, waiting for state to be persisted" << std::endl;
+        socket().get_io_service().post([this] {
+            asyncDoneSendMessage();
+        });
+       return;
+    }
     asyncReceiveStart();
 }
 
 void ClientAsyncMessagePort::setOpRunner(std::unique_ptr<AbstractOperationRunner> newOpRunner) {
-	fassert(-1, state() == State::kOperation);
+	fassert(-84, state() == State::kOperation);
 	_runner = std::move(newOpRunner);
 }
 

@@ -64,8 +64,9 @@ void MessagePipeline::MessageProcessor::run() {
         DbMessage dbMessage(message);
         dbMessage.markSet();
         NamespaceString nss(dbMessage.getns());
-        // TODO: Use this see if the operation is legacy and handle appropriately
 
+        clientConn->restoreThreadName();
+        fassert(-37, clientConn->clientInfo());
     	// TODO: turn this into a factory based on message operation
         std::unique_ptr<AbstractOperationRunner> upRunner(
                 new ClientOperationRunner(clientConn, clientConn->clientInfo(),
