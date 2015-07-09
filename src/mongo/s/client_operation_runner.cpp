@@ -39,7 +39,8 @@ ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* co
       _result(32738),
       _requestId(_protocolMessage.header().getId()),
       _requestOp(static_cast<Operations>(_protocolMessage.operation())),
-      _nss(std::move(*nss)) {
+      _nss(std::move(*nss)),
+	  _dbName(_nss.ns()) {
 }
 
 ClientOperationRunner::~ClientOperationRunner() {
@@ -170,7 +171,7 @@ void ClientOperationRunner::processMessage() {
 }
 
 void ClientOperationRunner::runCommand() {
-    std::string dbname = nsToDatabase(_nss.ns());
+    std::string _dbname = nsToDatabase(_nss.ns());
 
         if (_cmdObjBson.getBoolField("help")) {
             std::stringstream help;
@@ -182,7 +183,7 @@ void ClientOperationRunner::runCommand() {
             return;
         }
 
-        Status status = Command::_checkAuthorization(_command, _clientInfo, dbname, _cmdObjBson);
+        Status status = Command::_checkAuthorization(_command, _clientInfo, _dbname, _cmdObjBson);
         if (!status.isOK()) {
             Command::appendCommandStatus(_result, status);
             return;
@@ -198,9 +199,9 @@ void ClientOperationRunner::runCommand() {
         bool ok;
         try {
         	if (!_command->pipelineEnabled()) {
-        		ok = _command->run(_operationCtx.get(), dbname, _cmdObjBson, 0, errmsg, _result);
+        		ok = _command->run(_operationCtx.get(), _dbname, _cmdObjBson, 0, errmsg, _result);
         	} else {
-        		if (_command->pipelineInitialize(_operationCtx.get(), dbname, _cmdObjBson, 0,
+        		if (_command->pipelineInitialize(_operationCtx.get(), _dbname, _cmdObjBson, 0,
         				errmsg, _result)) {
 					setState(kWait);
 					return;

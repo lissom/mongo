@@ -7,7 +7,8 @@
 
 #pragma once
 
-#include "client_operation_runner.h"
+#include "mongo/s/client_operation_runner.h"
+#include "mongo/s/write_ops/batched_command_request.h"
 
 namespace mongo {
 
@@ -15,14 +16,15 @@ namespace mongo {
 class BulkWriteOperationRunner final : public ClientOperationRunner {
 public:
     MONGO_DISALLOW_COPYING(BulkWriteOperationRunner);
-    enum class State {
-        init, running, completed, errored, finished
-    };
     BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo, Client* clientInfo,
-            Message* const message, DbMessage* const dbMessage, NamespaceString* const nss);
+            Message* const message, DbMessage* const dbMessage, NamespaceString* const nss,
+			BatchedCommandRequest::BatchType writeType);
     ~BulkWriteOperationRunner();
 
 private:
+    void start();
+    void complete();
+
     /*
      * Must be able to ran multiple times
      */
@@ -36,6 +38,11 @@ private:
     void remove() {
 
     }
+
+    ClusterWriter _writer;
+    BatchedCommandRequest _request;
+	BatchedCommandResponse _response;
+    BatchedCommandRequest::BatchType _writeType;
 };
 
 } // namespace mongo
