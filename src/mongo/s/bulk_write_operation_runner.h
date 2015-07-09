@@ -21,7 +21,6 @@ public:
     BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo, Client* clientInfo,
             Message* const message, DbMessage* const dbMessage, NamespaceString* const nss,
 			BatchedCommandRequest::BatchType writeType);
-    ~BulkWriteOperationRunner();
 
 private:
     bool asyncAvailable() { return true; }

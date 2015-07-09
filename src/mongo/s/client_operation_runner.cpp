@@ -113,7 +113,6 @@ void ClientOperationRunner::processMessage() {
 		//TODO: Move this out once more than commands can be ran
 	    fassert(-11, _nss.isCommand() || _nss.isSpecialCommand());
 	    int n = _dbMessage.getQueryNToReturn();
-	    //uassert # = 16978
 	    uassert(-16978,
 	    str::stream() << "bad numberToReturn (" << n
 	                  << ") for $cmd type ns - can only be 1 or -1",
@@ -131,9 +130,9 @@ void ClientOperationRunner::processMessage() {
 		for(;; --_retries) {
 			try {
 			    log() << "_cmdObjBson: " << _cmdObjBson << std::endl;
-			    Command::execCommandClientBasic(_operationCtx.get(), _command, *_clientInfo,
-			            _queryOptions, _queryMessage.ns, _cmdObjBson, _result);
-	            //runCommand();
+			    /*Command::execCommandClientBasic(_operationCtx.get(), _command, *_clientInfo,
+			            _queryOptions, _queryMessage.ns, _cmdObjBson, _result);*/
+	            runCommand();
 	            //If the state isn't equal to kRunning the command has async'd
 				BSONObj reply = _result.done();
 				replyToQuery(0, _port, _protocolMessage, reply);
@@ -252,7 +251,7 @@ void ClientOperationRunner::logExceptionAndReply(int logLevel,
         replyToQuery(ResultFlag_ErrSet, _port, _protocolMessage, buildErrReply(ex));
     }
     // We *always* populate the last error for now
-    LastError::get(cc()).setLastError(ex.getCode(), ex.what());
+    LastError::get(_port->clientInfo()).setLastError(ex.getCode(), ex.what());
     setState(State::kError);
 }
 

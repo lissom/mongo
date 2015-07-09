@@ -22,15 +22,8 @@ BulkWriteOperationRunner::BulkWriteOperationRunner(network::ClientAsyncMessagePo
 		_writer(true, 0), _request(writeType), _writeType(writeType) {
 }
 
-BulkWriteOperationRunner::~BulkWriteOperationRunner() {
-
-}
-
 void BulkWriteOperationRunner::asyncStart() {
-
-
     LastError* cmdLastError = &LastError::get(_clientInfo);
-
     {
         // Disable the last error object for the duration of the write
         LastError::Disabled disableLastError(cmdLastError);

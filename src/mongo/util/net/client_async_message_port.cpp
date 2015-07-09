@@ -62,7 +62,6 @@ void ClientAsyncMessagePort::retire() {
 void ClientAsyncMessagePort::asyncDoneReceievedMessage() {
     // This is the latest possible place we can wait for the prior handler to finish
     if (!_persistantState.get()) {
-        log() << "Message received, but cleanup from the prior message hasn't persisted state yet" << std::endl;
         // Post is used instead of dispatch so the loop wait yields (dispatch would spin)
         socket().get_io_service().post([this] {
             asyncDoneReceievedMessage();
