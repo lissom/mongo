@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "mongo/s/abstract_operation_runner.h"
+#include "../../s/abstract_operation_executor.h"
 #include "mongo/util/net/async_message_port.h"
 
 namespace mongo {
@@ -26,7 +26,7 @@ public:
     void retire() override;
 
     //Stores the opRunner, nothing is done to it
-    void setOpRunner(std::unique_ptr<AbstractOperationRunner> newOpRunner);
+    void setOpRunner(std::unique_ptr<AbstractOperationExecutor> newOpRunner);
     // Deletes the opRunner
     void opRunnerComplete();
 
@@ -54,7 +54,7 @@ private:
     void asyncDoneSendMessage() override;
 
     PersistantState _persistantState;
-    std::unique_ptr<AbstractOperationRunner> _runner;
+    std::unique_ptr<AbstractOperationExecutor> _runner;
 };
 } /* namespace network */
 } /* namespace mongo */

@@ -233,8 +233,6 @@ env.Library(
     target='mongoscore',
     source=[
         'balance.cpp',
-        "bulk_write_operation_runner.cpp",
-        "client_operation_runner.cpp",
         'cluster_last_error_info.cpp',
         'cursors.cpp',
         "message_pipeline.cpp",

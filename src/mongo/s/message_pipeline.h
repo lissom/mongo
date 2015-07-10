@@ -14,7 +14,7 @@
 #include <thread>
 #include <unordered_set>
 
-#include "abstract_operation_runner.h"
+#include "abstract_operation_executor.h"
 #include "mongo/s/abstract_message_pipeline.h"
 
 namespace mongo {

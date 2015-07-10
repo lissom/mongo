@@ -21,8 +21,8 @@
 #include "mongo/util/net/async_message_port.h"
 
 namespace mongo {
-class AbstractOperationRunner;
-using OpRunnerPtr = std::unique_ptr<AbstractOperationRunner>;
+class AbstractOperationExecutor;
+using OpRunnerPtr = std::unique_ptr<AbstractOperationExecutor>;
 //This factory will only produce client ops as the creation args are different
 using OpRunnerClientCreator = std::function<OpRunnerPtr(
         network::AsyncMessagePort* const connInfo,
@@ -36,7 +36,7 @@ using OpRunnerClientFactory =  RegisterFactory<OpRunnerPtr, OpRunnerClientCreato
  * AMP should not be in State::send without an OperationRUnner active
  * AMP shall delete the OperationRunner at the end of the send and retain any needed client state
  */
-class AbstractOperationRunner {
+class AbstractOperationExecutor {
 public:
 	/*
 	 * kInit - starting
@@ -52,8 +52,8 @@ public:
         kInit, kRunning, kWait, kError, kComplete
     };
 
-    AbstractOperationRunner() { }
-    virtual ~AbstractOperationRunner() {
+    AbstractOperationExecutor() { }
+    virtual ~AbstractOperationExecutor() {
     	//Ensure no dangling operations
 		fassert(-666, operationActive() == false);
     }

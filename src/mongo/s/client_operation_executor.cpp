@@ -15,7 +15,7 @@
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/db/stats/counters.h"
-#include "mongo/s/client_operation_runner.h"
+#include "client_operation_executor.h"
 #include "mongo/s/client/shard_connection.h" //remove
 #include "mongo/s/cluster_last_error_info.h"
 #include "mongo/s/request.h" //remove when legacy operations are no longer needed
@@ -26,7 +26,7 @@
 
 namespace mongo {
 
-ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* const connInfo,
+ClientOperationExecutor::ClientOperationExecutor(network::ClientAsyncMessagePort* const connInfo,
                                                Client* clientInfo,
                                                Message* const message,
                                                DbMessage* const dbMessage,
@@ -46,12 +46,12 @@ ClientOperationRunner::ClientOperationRunner(network::ClientAsyncMessagePort* co
 	// TODO: b.skip(sizeof(QueryResult::Value)); on the full async skip this
 }
 
-ClientOperationRunner::~ClientOperationRunner() {
+ClientOperationExecutor::~ClientOperationExecutor() {
     // The client should always be pushed back to the socket on close
     fassert(-667, !haveClient());
 }
 
-void ClientOperationRunner::run() {
+void ClientOperationExecutor::run() {
 	fassert(-20, _port->state() == network::AsyncMessagePort::State::kOperation);
 	fassert(-21, state() == State::kInit);
 	setState(State::kRunning);
@@ -59,7 +59,7 @@ void ClientOperationRunner::run() {
 	asyncAvailable() ? asyncStart() : runLegacyCommand();
 }
 
-void ClientOperationRunner::initializeCommand() {
+void ClientOperationExecutor::initializeCommand() {
 	LOG(logLevelOp) << "ClientOperationRunner begin ns: " << _nss << " request id: " << _requestId
 		   << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
 
@@ -116,7 +116,7 @@ void ClientOperationRunner::initializeCommand() {
 	AuthorizationSession::get(_clientInfo)->startRequest(NULL);
 }
 
-void ClientOperationRunner::runLegacyCommand() {
+void ClientOperationExecutor::runLegacyCommand() {
     std::thread processRequest([this] {
         onContextStart();
         processMessage();
@@ -133,7 +133,7 @@ void ClientOperationRunner::runLegacyCommand() {
     processRequest.detach();
 }
 
-void ClientOperationRunner::processMessage() {
+void ClientOperationExecutor::processMessage() {
 	try {
 		// Funnel non-commands and special commands to the legacy runner
 		if (!_nss.isCommand()) {
@@ -188,7 +188,7 @@ void ClientOperationRunner::processMessage() {
 	// TODO: handle all other exceptions.  Do we want to?
 }
 
-void ClientOperationRunner::runCommand() {
+void ClientOperationExecutor::runCommand() {
     std::string _dbname = nsToDatabase(_nss.ns());
 
 	if (_cmdObjBson.getBoolField("help")) {
@@ -234,13 +234,13 @@ void ClientOperationRunner::runCommand() {
 	Command::appendCommandStatus(_result, ok, _errorMsg);
 }
 
-void ClientOperationRunner::runLegacyRequest() {
+void ClientOperationExecutor::runLegacyRequest() {
 	Request request(_protocolMessage, _port);
 	request.init();
 	request.process();
 }
 
-void ClientOperationRunner::noSuchCommand(const std::string& commandName) {
+void ClientOperationExecutor::noSuchCommand(const std::string& commandName) {
     Command::appendCommandStatus(
         _result, false, str::stream() << "no such cmd: " << commandName);
     _result.append("code", ErrorCodes::CommandNotFound);
@@ -250,7 +250,7 @@ void ClientOperationRunner::noSuchCommand(const std::string& commandName) {
     return;
 }
 
-BSONObj ClientOperationRunner::buildErrReply(const DBException& ex) {
+BSONObj ClientOperationExecutor::buildErrReply(const DBException& ex) {
     BSONObjBuilder errB;
     errB.append("$err", ex.what());
     errB.append("code", ex.getCode());
@@ -260,7 +260,7 @@ BSONObj ClientOperationRunner::buildErrReply(const DBException& ex) {
     return errB.obj();
 }
 
-void ClientOperationRunner::logExceptionAndReply(int logLevel,
+void ClientOperationExecutor::logExceptionAndReply(int logLevel,
                                                   const char* const messageStart,
                                                   const DBException& ex) {
     LOG(logLevel) << messageStart << " while processing op " << _requestOp << " for " << _nss
@@ -275,16 +275,16 @@ void ClientOperationRunner::logExceptionAndReply(int logLevel,
     setState(State::kError);
 }
 
-void ClientOperationRunner::asyncSendResponse() {
+void ClientOperationExecutor::asyncSendResponse() {
 	BSONObj reply = _result.done();
 	replyToQuery(0, _port, _protocolMessage, reply);
 }
 
-void ClientOperationRunner::onContextStart() {
+void ClientOperationExecutor::onContextStart() {
     _port->restoreClientState();
 }
 
-void ClientOperationRunner::onContextEnd() {
+void ClientOperationExecutor::onContextEnd() {
     _port->persistClientState();
 }
 

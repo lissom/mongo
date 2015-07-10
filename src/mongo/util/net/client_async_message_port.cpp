@@ -74,7 +74,7 @@ void ClientAsyncMessagePort::asyncDoneSendMessage() {
     asyncReceiveStart();
 }
 
-void ClientAsyncMessagePort::setOpRunner(std::unique_ptr<AbstractOperationRunner> newOpRunner) {
+void ClientAsyncMessagePort::setOpRunner(std::unique_ptr<AbstractOperationExecutor> newOpRunner) {
 	fassert(-84, state() == State::kOperation);
 	_runner = std::move(newOpRunner);
 }

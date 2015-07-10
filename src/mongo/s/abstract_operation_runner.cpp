@@ -7,7 +7,7 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
 
-#include "mongo/s/abstract_operation_runner.h"
+#include "abstract_operation_executor.h"
 
 namespace mongo {
 OpRunnerPtr createOpRunnerClient(network::ClientAsyncMessagePort* const connInfo,

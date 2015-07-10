@@ -204,7 +204,6 @@ void ClusterWriter::write(const BatchedCommandRequest& origRequest,
     unique_ptr<BatchedCommandRequest> idRequest(BatchedCommandRequest::cloneWithIds(origRequest));
     const BatchedCommandRequest& request = NULL != idRequest.get() ? *idRequest : origRequest;
 
-    // Cannot get here if nss isn't valid?
     const NamespaceString& nss = request.getNS();
     if (!nss.isValid()) {
         toBatchError(Status(ErrorCodes::InvalidNamespace, nss.ns() + " is not a valid namespace"),

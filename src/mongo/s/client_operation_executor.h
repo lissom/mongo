@@ -7,8 +7,8 @@
 
 #pragma once
 
+#include "mongo/s/abstract_operation_executor.h"
 #include "mongo/db/commands.h"
-#include "mongo/s/abstract_operation_runner.h"
 #include "mongo/util/net/client_async_message_port.h"
 
 namespace mongo {
@@ -16,16 +16,18 @@ namespace mongo {
 //TODO: may need to separate out client operation runner and command operation runner
 //TODO: Pool these
 //TODO: Align, both on the object and check the data ordering
-class ClientOperationRunner : public AbstractOperationRunner {
+class ClientOperationExecutor : public AbstractOperationExecutor {
 public:
-    MONGO_DISALLOW_COPYING(ClientOperationRunner);
-    ClientOperationRunner(network::ClientAsyncMessagePort* const connInfo, Client* clientInfo,
+    MONGO_DISALLOW_COPYING(ClientOperationExecutor);
+    ClientOperationExecutor(network::ClientAsyncMessagePort* const connInfo, Client* clientInfo,
             Message* const message, DbMessage* const dbMessage, NamespaceString* const nss);
-    ~ClientOperationRunner();
+    ~ClientOperationExecutor();
 
     void run() final;
 
     const MSGID& requestId() const { return _requestId; }
+
+    Client* cc() = delete;  //cc() should never be called in a COE
 
 protected:
     static const size_t logLevelOp = 0;

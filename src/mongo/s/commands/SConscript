@@ -17,6 +17,8 @@ env.Library(
 env.Library(
     target='cluster_commands',
     source=[
+	'bulk_write_cmd_executor',
+	'client_operation_executor',
         'cluster_add_shard_cmd.cpp',
         'cluster_commands_common.cpp',
         'cluster_count_cmd.cpp',

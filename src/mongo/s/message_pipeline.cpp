@@ -10,7 +10,7 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/db/client.h"
-#include "mongo/s/bulk_write_operation_runner.h"
+#include "bulk_write_cmd_executor.h"
 #include "mongo/s/message_pipeline.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/client_async_message_port.h"
@@ -68,12 +68,12 @@ void MessagePipeline::MessageProcessor::run() {
         clientConn->restoreThreadName();
         fassert(-37, clientConn->clientInfo());
     	// TODO: turn this into a factory based on message operation
-        std::unique_ptr<AbstractOperationRunner> upRunner(
-                new ClientOperationRunner(clientConn, clientConn->clientInfo(),
+        std::unique_ptr<AbstractOperationExecutor> upRunner(
+                new ClientOperationExecutor(clientConn, clientConn->clientInfo(),
                         &message, &dbMessage, &nss));
 
         //Take a raw pointer for general use before ownership transfer
-        AbstractOperationRunner* _runner = upRunner.get();
+        AbstractOperationExecutor* _runner = upRunner.get();
         clientConn->setOpRunner(std::move(upRunner));
         _runner->run();
     }

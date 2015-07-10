@@ -9,20 +9,23 @@
 
 #include "mongo/db/lasterror.h"
 #include "mongo/db/stats/counters.h"
-#include "mongo/s/bulk_write_operation_runner.h"
+#include "bulk_write_cmd_executor.h"
 #include "mongo/s/cluster_last_error_info.h"
 #include "mongo/s/write_ops/batch_upconvert.h"
 
 
 namespace mongo {
-BulkWriteOperationRunner::BulkWriteOperationRunner(network::ClientAsyncMessagePort* const connInfo,
-        Client* clientInfo, Message* const message, DbMessage* const dbMessage,
-		NamespaceString* const nss, BatchedCommandRequest::BatchType writeType) :
-		ClientOperationRunner(connInfo, clientInfo, message, dbMessage, nss),
-		_request(writeType), _writeType(writeType) {
-}
+BulkWriteCmdExecutor::BulkWriteCmdExecutor(network::ClientAsyncMessagePort* const connInfo,
+                                                   Client* clientInfo,
+                                                   Message* const message,
+                                                   DbMessage* const dbMessage,
+                                                   NamespaceString* const nss,
+                                                   BatchedCommandRequest::BatchType writeType)
+    : ClientOperationExecutor(connInfo, clientInfo, message, dbMessage, nss),
+      _request(writeType),
+      _writeType(writeType) {}
 
-void BulkWriteOperationRunner::asyncStart() {
+void BulkWriteCmdExecutor::asyncStart() {
     LastError* cmdLastError = &LastError::get(_clientInfo);
     {
         // Disable the last error object for the duration of the write
@@ -30,18 +33,17 @@ void BulkWriteOperationRunner::asyncStart() {
 
         // TODO: if we do namespace parsing, push this to the type
         if (!_request.parseBSON(_dbName, _cmdObjBson, &_errorMsg) ||
-        		!_request.isValid(&_errorMsg)) {
+            !_request.isValid(&_errorMsg)) {
             buildBatchError(ErrorCodes::FailedToParse);
-            setState(State::kReadyResults);
             return;
         }
-            //_writer.write(_request, &_response);
+        //_writer.write(_request, &_response);
 
         dassert(_response.isValid(NULL));
     }
 }
 
-void BulkWriteOperationRunner::asyncProcessResults() {
+void BulkWriteCmdExecutor::asyncProcessResults() {
     LastError* cmdLastError = &LastError::get(_clientInfo);
     // Populate the lastError object based on the write response
     cmdLastError->reset();
@@ -87,15 +89,13 @@ void BulkWriteOperationRunner::asyncProcessResults() {
     _result.appendElements(_response.toBSON());
 
 
-
-
     setState(State::kComplete);
     asyncSendResponse();
 }
 
-void BulkWriteOperationRunner::buildBatchError(ErrorCodes::Error error) {
+void BulkWriteCmdExecutor::buildBatchError(ErrorCodes::Error error) {
     _response.setOk(false);
-	_response.setErrCode(error);
-	_response.setErrMessage(_errorMsg);
+    _response.setErrCode(error);
+    _response.setErrMessage(_errorMsg);
 }
-} // namespace mongo
+}  // namespace mongo
