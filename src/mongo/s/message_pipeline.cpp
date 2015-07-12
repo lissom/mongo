@@ -10,7 +10,7 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/db/client.h"
-#include "mongo/s/bulk_write_cmd_executor.h"
+#include "commands/bulk_write_cmd_executor.h"
 #include "mongo/s/message_pipeline.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/client_async_message_port.h"

@@ -120,7 +120,7 @@ template<typename ObjectPtr, typename Factory, typename Key = std::string,
 RegisterFactory = RegisterFactoryImpl<ObjectPtr, Factory, Key, Map>;
 
 // TODO: Type checking so we print pretty errors
-#define REGISETER_FACTORY_DECLARE(POINTERTYPE, CREATETYPE, ...) \
+#define REGISTER_FACTORY_DECLARE(POINTERTYPE, CREATETYPE, ...) \
 using CREATETYPE##Ptr = POINTERTYPE<CREATETYPE>; \
 using CREATETYPE##Creator = std::function<CREATETYPE##Ptr(__VA_ARGS__)>; \
 using CREATETYPE##Factory = mongo::RegisterFactory<CREATETYPE##Ptr, CREATETYPE##Creator>; \

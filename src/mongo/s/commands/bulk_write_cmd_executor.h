@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "mongo/s/commands/abstract_cmd_executor.h"
 #include "mongo/s/fast_sync_container.h"
 #include "mongo/s/chunk_manager_targeter.h"
 #include "mongo/s/client_operation_executor.h"
@@ -16,10 +17,10 @@
 
 namespace mongo {
 
-class BulkWriteCmdExecutor : public ClientOperationExecutor {
+class BulkWriteCmdExecutor : public AbstractCmdExecutor {
 public:
     MONGO_DISALLOW_COPYING(BulkWriteCmdExecutor);
-    BulkWriteCmdExecutor(InitFrame* const frame, BatchedCommandRequest::BatchType writeType);
+    BulkWriteCmdExecutor(BatchedCommandRequest::BatchType writeType);
 
 	BatchedCommandRequest::BatchType writeType() const {
 		return _writeType;

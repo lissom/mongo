@@ -38,8 +38,8 @@ ClientOperationExecutor::ClientOperationExecutor(network::ClientAsyncMessagePort
       _result(32768),
       _requestId(_protocolMessage.header().getId()),
       _requestOp(static_cast<Operations>(_protocolMessage.operation())),
-      _executionNss(_dbMessage.getns()),
-	  _dbName(_executionNss.ns()) {
+      _nss(_dbMessage.getns()),
+	  _dbName(_nss.ns()) {
 	// TODO: b.skip(sizeof(QueryResult::Value)); on the full async skip this
 }
 
@@ -50,29 +50,41 @@ ClientOperationExecutor::~ClientOperationExecutor() {
 
 void ClientOperationExecutor::run() {
 	fassert(-20, _port->state() == network::AsyncMessagePort::State::kOperation);
-	fassert(-21, state() == State::kInit);
-	setState(State::kRunning);
-	//TODO: Derive AsyncClientOperationRunner
-	asyncAvailable() ? asyncStart() : runLegacyCommand();
+	fassert(-21, _state == AsyncState::State::kInit);
+	_state.setState(AsyncState::State::kRunning);
+	// TODO: Expand this to handle more types without going to legacy
+	switch (_requestOp) {
+    case Operations::dbQuery :
+        if (_nss.isCommand()) {
+            processCommand();
+            return;
+        }
+    }
+	runLegacyRequest();
+}
+
+void ClientOperationExecutor::initializeCommon() {
+    LOG(logLevelOp) << "ClientOperationRunner begin ns: " << _nss << " request id: " << _requestId
+               << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
+
+    LastError::get(_clientInfo).startRequest();
+    ClusterLastErrorInfo::get(_clientInfo).newRequest();
+    AuthorizationSession::get(_clientInfo)->startRequest(NULL);
 }
 
 void ClientOperationExecutor::initializeCommand() {
-	LOG(logLevelOp) << "ClientOperationRunner begin ns: " << _executionNss << " request id: " << _requestId
-		   << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
 
-	LastError::get(_clientInfo).startRequest();
-	ClusterLastErrorInfo::get(_clientInfo).newRequest();
-
-	if (_dbMessage.messageShouldHaveNs()) {
+    if (_dbMessage.messageShouldHaveNs()) {
 		uassert(ErrorCodes::IllegalOperation,
 				"can't use 'local' database through mongos",
-				_executionNss.db() != "local");
+				_nss.db() != "local");
 
 		uassert(ErrorCodes::InvalidNamespace,
-				str::stream() << "Invalid ns [" << _executionNss.ns() << "]",
-				_executionNss.isValid());
+				str::stream() << "Invalid ns [" << _nss.ns() << "]",
+				_nss.isValid());
 	}
 
+	// Change, assuming that _cmdObjBSON is never changed by the command for retries
 	_cmdObjBson = _queryMessage.query;
 	BSONElement e = _cmdObjBson.firstElement();
 	if (e.type() == Object &&
@@ -110,43 +122,26 @@ void ClientOperationExecutor::initializeCommand() {
 	if (!_command)
 		return noSuchCommand(commandName);
 
-	AuthorizationSession::get(_clientInfo)->startRequest(NULL);
+
+
 }
 
-void ClientOperationExecutor::runLegacyCommand() {
-    std::thread processRequest([this] {
-        onContextStart();
-        processMessage();
-        if (!_usedLegacy) {
-			LOG(logLevelOp) << "ClientOperationRunner end ns: " << _executionNss << " request id: " << _requestId
-					<< " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
-        }
-        setState(State::kComplete);
-		ShardConnection::releaseMyConnections();
-        onContextEnd();
-        // Deletes the operation runner
-        _port->opRunnerComplete();
-    });
-    processRequest.detach();
-}
-
-void ClientOperationExecutor::processMessage() {
+void ClientOperationExecutor::processCommand() {
 	try {
-		// Funnel non-commands and special commands to the legacy runner
-		if (!_executionNss.isCommand()) {
-			_usedLegacy = true;
-			return runLegacyRequest();
-		}
-
+	    initializeCommon();
 		initializeCommand();
 		if (!_command)
 			return;
+
+
+
+
 
 		//TODO: Async this: remove the loop
 		//This loop only retries on StateConfigException
 		for(;; --_retries) {
 			try {
-			    log() << "_cmdObjBson: " << _cmdObjBson << std::endl;
+			    //In theory here we should break out into a thread here, but we aren't
 			    /*Command::execCommandClientBasic(_operationCtx.get(), _command, *_clientInfo,
 			            _queryOptions, _queryMessage.ns, _cmdObjBson, _result);*/
 	            runCommand();
@@ -182,59 +177,6 @@ void ClientOperationExecutor::processMessage() {
 	} catch (const DBException& ex) {
 		logExceptionAndReply(0, "Exception thrown", ex);
 	}
-	// TODO: handle all other exceptions.  Do we want to?
-}
-
-void ClientOperationExecutor::runCommand() {
-    std::string _dbname = nsToDatabase(_executionNss.ns());
-
-	if (_cmdObjBson.getBoolField("help")) {
-		std::stringstream help;
-		help << "help for: " << _command->name << " ";
-		_command->help(help);
-		_result.append("help", help.str());
-		_result.append("lockType", _command->isWriteCommandForConfigServer() ? 1 : 0);
-		Command::appendCommandStatus(_result, true, "");
-		return;
-	}
-
-	Status status = Command::_checkAuthorization(_command, _clientInfo, _dbname, _cmdObjBson);
-	if (!status.isOK()) {
-		Command::appendCommandStatus(_result, status);
-		return;
-	}
-
-	_command->_commandsExecuted.increment();
-
-	if (_command->shouldAffectCommandCounter()) {
-		globalOpCounters.gotCommand();
-	}
-
-	bool ok;
-	try {
-		ok = _command->run(_operationCtx.get(), _dbname, _cmdObjBson, 0, _errorMsg, _result);
-	} catch (const DBException& e) {
-		ok = false;
-		int code = e.getCode();
-		if (code == RecvStaleConfigCode) {  // code for StaleConfigException
-			throw;
-		}
-
-		_errorMsg = e.what();
-		_result.append("code", code);
-	}
-
-	if (!ok) {
-		_command->_commandsFailed.increment();
-	}
-
-	Command::appendCommandStatus(_result, ok, _errorMsg);
-}
-
-void ClientOperationExecutor::runLegacyRequest() {
-	Request request(_protocolMessage, _port);
-	request.init();
-	request.process();
 }
 
 void ClientOperationExecutor::noSuchCommand(const std::string& commandName) {
@@ -243,7 +185,7 @@ void ClientOperationExecutor::noSuchCommand(const std::string& commandName) {
     _result.append("code", ErrorCodes::CommandNotFound);
     Command::unknownCommands.increment();
     replyToQuery(ResultFlag_ErrSet, _port, _protocolMessage, _result.obj());
-    setState(State::kComplete);
+    _state.setState(AsyncState::State::kComplete);
     return;
 }
 
@@ -260,7 +202,7 @@ BSONObj ClientOperationExecutor::buildErrReply(const DBException& ex) {
 void ClientOperationExecutor::logExceptionAndReply(int logLevel,
                                                   const char* const messageStart,
                                                   const DBException& ex) {
-    LOG(logLevel) << messageStart << " while processing op " << _requestOp << " for " << _executionNss
+    LOG(logLevel) << messageStart << " while processing op " << _requestOp << " for " << _nss
                   << causedBy(ex);
     if (doesOpGetAResponse(_requestOp)) {
         //_message is passed just to extract the response to ID, so make sure it's set
@@ -269,12 +211,81 @@ void ClientOperationExecutor::logExceptionAndReply(int logLevel,
     }
     // We *always* populate the last error for now
     LastError::get(_port->clientInfo()).setLastError(ex.getCode(), ex.what());
-    setState(State::kError);
 }
 
 void ClientOperationExecutor::asyncSendResponse() {
 	BSONObj reply = _result.done();
 	replyToQuery(0, _port, _protocolMessage, reply);
+}
+
+void ClientOperationExecutor::runCommand() {
+    std::string _dbname = nsToDatabase(_nss.ns());
+
+    if (_cmdObjBson.getBoolField("help")) {
+        std::stringstream help;
+        help << "help for: " << _command->name << " ";
+        _command->help(help);
+        _result.append("help", help.str());
+        _result.append("lockType", _command->isWriteCommandForConfigServer() ? 1 : 0);
+        Command::appendCommandStatus(_result, true, "");
+        return;
+    }
+
+    Status status = Command::_checkAuthorization(_command, _clientInfo, _dbname, _cmdObjBson);
+    if (!status.isOK()) {
+        Command::appendCommandStatus(_result, status);
+        return;
+    }
+
+    _command->_commandsExecuted.increment();
+
+    if (_command->shouldAffectCommandCounter()) {
+        globalOpCounters.gotCommand();
+    }
+
+    bool ok;
+    try {
+        ok = _command->run(_operationCtx.get(), _dbname, _cmdObjBson, 0, _errorMsg, _result);
+    } catch (const DBException& e) {
+        ok = false;
+        int code = e.getCode();
+        if (code == RecvStaleConfigCode) {  // code for StaleConfigException
+            throw;
+        }
+
+        _errorMsg = e.what();
+        _result.append("code", code);
+    }
+
+    if (!ok) {
+        _command->_commandsFailed.increment();
+    }
+
+    Command::appendCommandStatus(_result, ok, _errorMsg);
+}
+
+void ClientOperationExecutor::runLegacyRequest() {
+    // TODO: Consider using boost thread or the native handle to cut down the stack size to 2M
+    // The synchronous impl in mongoS uses 2M
+    std::thread processRequest([this] {
+        onContextStart();
+        try {
+            Request request(_protocolMessage, _port);
+            request.init();
+            request.process();
+        } catch (const AssertionException& ex) {
+            logExceptionAndReply(ex.isUserAssertion() ? 1 : 0, "Assertion failed", ex);
+        } catch (const DBException& ex) {
+            logExceptionAndReply(0, "Exception thrown", ex);
+        }
+        // Request shipped results
+        _state.setState(AsyncState::State::kComplete);
+        ShardConnection::releaseMyConnections();
+        onContextEnd();
+        // Deletes the operation runner
+        _port->opRunnerComplete();
+    });
+    processRequest.detach();
 }
 
 void ClientOperationExecutor::onContextStart() {

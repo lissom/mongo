@@ -18,6 +18,7 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/service_context.h"
 #include "mongo/platform/platform_specific.h"
+#include "mongo/s/async_state.h"
 #include "mongo/util/factory.h"
 #include "mongo/util/net/async_message_port.h"
 
@@ -39,62 +40,21 @@ using OpRunnerClientFactory =  RegisterFactory<OpRunnerPtr, OpRunnerClientCreato
  */
 class AbstractOperationExecutor {
 public:
-	/*
-	 * kInit - starting
-	 * kRunning - processing outgoing requests
-	 * kWait - waiting for io requests to complete
-	 * kError - A fatal event took place, the operation should end as soon as possible
-	 * kComplete - all operations are complete
-	 *
-	 * kError should be treated as a modified kWait where operations can be canceled and results
-	 * can be thrown away.
-	 */
-    enum class State {
-        kInit, kRunning, kWait, kError, kComplete
-    };
-
     AbstractOperationExecutor() { }
     virtual ~AbstractOperationExecutor() {
     	//Ensure no dangling operations
-		fassert(-666, operationActive() == false);
+		fassert(-666, _state.active() == false);
     }
 
     virtual void run() = 0;
-
-    State state() const { return _state; }
-    //TODO: Test to see if we are waiting on return values
-    bool operationActive() {
-        return _state != State::kComplete;
-    }
+    bool complete() { return _state == AsyncState::State::kComplete; }
 
 protected:
-    //All functions below this line are async, so they must be able to be ran concurrently
-    void setState(State newState) {
-        State currentState = _state.load(std::memory_order_consume);
-        switch (newState) {
-        case State::kError :
-        case State::kComplete :
-            do {
-                fassert(-6661, currentState != State::kComplete);
-            } while (!_state.compare_exchange_weak(currentState, newState, std::memory_order_acquire));
-            break;
-        default :
-            do {
-                fassert(6661, currentState != State::kComplete);
-                if (currentState != State::kError)
-                    break;
-            } while (!_state.compare_exchange_weak(currentState, newState, std::memory_order_acquire));
-
-        }
-
-    }
-
     void setErrored() {
-        _state = State::kError;
+        _state = AsyncState::State::kError;
     }
 
-private:
-    std::atomic<State> _state { State::kInit };
+    AsyncState _state;
 };
 
 OpRunnerPtr createOpRunnerClient(network::AsyncMessagePort* const connInfo,

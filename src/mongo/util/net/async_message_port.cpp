@@ -77,10 +77,7 @@ void AsyncMessagePort::asyncReceiveMessage() {
     const auto msgSize = getMsgData().getLen();
     //Forcing into the nearest 1024 size block.  Assuming this was to always hit a tcmalloc size?
     _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
-    //Message size may be -1 to check endian
-    fassert(-8, msgSize >= 0);
-    if (!_socket.is_open())
-        log() << "Socket is closed" << std::endl;
+    //Message size may be -1 to check endian, not sure if this is currently supported though
     if (!validMsgSize(msgSize)) {
         log() << "Error during receive: Got an invalid message length in the header(" << msgSize
                 << ")" << ". From: " << remoteAddr() << std::endl;

@@ -62,6 +62,7 @@ private:
         MessagePipeline* const _owner;
     };
 
+    //TODO: Move opcounters here and sum them when requested across pipelines
     OpStats opStats;
     //TODO: Get a better concurrency structure
     std::mutex _mutex;
