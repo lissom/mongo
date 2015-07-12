@@ -14,7 +14,7 @@
 #include <thread>
 #include <unordered_set>
 
-#include "abstract_operation_executor.h"
+#include "mongo/s/abstract_operation_executor.h"
 #include "mongo/s/abstract_message_pipeline.h"
 
 namespace mongo {
@@ -34,6 +34,7 @@ struct CurrentOp {
 /*
  * Splitting by # of threads so we scale linearly with it
  */
+// TODO: RCU pipeline
 class MessagePipeline final : public AbstractMessagePipeline {
 public:
     MONGO_DISALLOW_COPYING(MessagePipeline);

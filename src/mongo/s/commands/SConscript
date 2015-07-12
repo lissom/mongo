@@ -17,8 +17,6 @@ env.Library(
 env.Library(
     target='cluster_commands',
     source=[
-	'bulk_write_cmd_executor',
-	'client_operation_executor',
         'cluster_add_shard_cmd.cpp',
         'cluster_commands_common.cpp',
         'cluster_count_cmd.cpp',
@@ -59,6 +57,7 @@ env.Library(
         'cluster_whats_my_uri_cmd.cpp',
         'cluster_write_cmd.cpp',
         'commands_public.cpp',
+	'command_identifiers.cpp',
         'run_on_all_shards_cmd.cpp',
     ],
     LIBDEPS=[

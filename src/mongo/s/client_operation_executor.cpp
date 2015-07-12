@@ -15,7 +15,7 @@
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/db/stats/counters.h"
-#include "client_operation_executor.h"
+#include "mongo/s/client_operation_executor.h"
 #include "mongo/s/client/shard_connection.h" //remove
 #include "mongo/s/cluster_last_error_info.h"
 #include "mongo/s/request.h" //remove when legacy operations are no longer needed
@@ -26,23 +26,20 @@
 
 namespace mongo {
 
-ClientOperationExecutor::ClientOperationExecutor(network::ClientAsyncMessagePort* const connInfo,
-                                               Client* clientInfo,
-                                               Message* const message,
-                                               DbMessage* const dbMessage,
-                                               NamespaceString* const nss)
-    : _port(connInfo),
-      _clientInfo(clientInfo),
-      _protocolMessage(*message),
+//TODO: Clean this up, pass a message frame
+ClientOperationExecutor::ClientOperationExecutor(network::ClientAsyncMessagePort* const port)
+    : _port(port),
+      _clientInfo(port->clientInfo()),
+      _protocolMessage(port->getBuffer(), false),
 	  //dbmessage references message, so it has to be constructed here
       _dbMessage(_protocolMessage),
-      _queryMessage(_dbMessage),
+      _queryMessage(*[this] { _dbMessage.markSet(); return &_dbMessage; }),
       _operationCtx(_clientInfo->makeOperationContext()),
       _result(32768),
       _requestId(_protocolMessage.header().getId()),
       _requestOp(static_cast<Operations>(_protocolMessage.operation())),
-      _nss(std::move(*nss)),
-	  _dbName(_nss.ns()) {
+      _executionNss(_dbMessage.getns()),
+	  _dbName(_executionNss.ns()) {
 	// TODO: b.skip(sizeof(QueryResult::Value)); on the full async skip this
 }
 
@@ -60,7 +57,7 @@ void ClientOperationExecutor::run() {
 }
 
 void ClientOperationExecutor::initializeCommand() {
-	LOG(logLevelOp) << "ClientOperationRunner begin ns: " << _nss << " request id: " << _requestId
+	LOG(logLevelOp) << "ClientOperationRunner begin ns: " << _executionNss << " request id: " << _requestId
 		   << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
 
 	LastError::get(_clientInfo).startRequest();
@@ -69,11 +66,11 @@ void ClientOperationExecutor::initializeCommand() {
 	if (_dbMessage.messageShouldHaveNs()) {
 		uassert(ErrorCodes::IllegalOperation,
 				"can't use 'local' database through mongos",
-				_nss.db() != "local");
+				_executionNss.db() != "local");
 
 		uassert(ErrorCodes::InvalidNamespace,
-				str::stream() << "Invalid ns [" << _nss.ns() << "]",
-				_nss.isValid());
+				str::stream() << "Invalid ns [" << _executionNss.ns() << "]",
+				_executionNss.isValid());
 	}
 
 	_cmdObjBson = _queryMessage.query;
@@ -121,7 +118,7 @@ void ClientOperationExecutor::runLegacyCommand() {
         onContextStart();
         processMessage();
         if (!_usedLegacy) {
-			LOG(logLevelOp) << "ClientOperationRunner end ns: " << _nss << " request id: " << _requestId
+			LOG(logLevelOp) << "ClientOperationRunner end ns: " << _executionNss << " request id: " << _requestId
 					<< " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis() << std::endl;
         }
         setState(State::kComplete);
@@ -136,7 +133,7 @@ void ClientOperationExecutor::runLegacyCommand() {
 void ClientOperationExecutor::processMessage() {
 	try {
 		// Funnel non-commands and special commands to the legacy runner
-		if (!_nss.isCommand()) {
+		if (!_executionNss.isCommand()) {
 			_usedLegacy = true;
 			return runLegacyRequest();
 		}
@@ -189,7 +186,7 @@ void ClientOperationExecutor::processMessage() {
 }
 
 void ClientOperationExecutor::runCommand() {
-    std::string _dbname = nsToDatabase(_nss.ns());
+    std::string _dbname = nsToDatabase(_executionNss.ns());
 
 	if (_cmdObjBson.getBoolField("help")) {
 		std::stringstream help;
@@ -263,7 +260,7 @@ BSONObj ClientOperationExecutor::buildErrReply(const DBException& ex) {
 void ClientOperationExecutor::logExceptionAndReply(int logLevel,
                                                   const char* const messageStart,
                                                   const DBException& ex) {
-    LOG(logLevel) << messageStart << " while processing op " << _requestOp << " for " << _nss
+    LOG(logLevel) << messageStart << " while processing op " << _requestOp << " for " << _executionNss
                   << causedBy(ex);
     if (doesOpGetAResponse(_requestOp)) {
         //_message is passed just to extract the response to ID, so make sure it's set

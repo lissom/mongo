@@ -46,18 +46,18 @@ class OpCounters {
 public:
     OpCounters();
     void incInsertInWriteLock(int n);
-    void gotInsert();
-    void gotQuery();
-    void gotUpdate();
-    void gotDelete();
-    void gotGetMore();
-    void gotCommand();
+    void gotInsert(int n = 1);
+    void gotQuery(int n = 1);
+    void gotUpdate(int n = 1);
+    void gotDelete(int n = 1);
+    void gotGetMore(int n = 1);
+    void gotCommand(int n = 1);
 
     void gotOp(int op, bool isCommand);
 
     BSONObj getObj() const;
 
-    // thse are used by snmp, and other things, do not remove
+    // these are used by snmp, and other things, do not remove
     const AtomicUInt32* getInsert() const {
         return &_insert;
     }

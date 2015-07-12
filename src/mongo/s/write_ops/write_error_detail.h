@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "mongo/base/string_data.h"
+#include "mongo/base/status.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/s/bson_serializable.h"
 
@@ -63,6 +64,8 @@ public:
 
     /** Copies all the fields present in 'this' to 'other'. */
     void cloneTo(WriteErrorDetail* other) const;
+
+    void setError(const Status& status);
 
     //
     // bson serializable interface implementation

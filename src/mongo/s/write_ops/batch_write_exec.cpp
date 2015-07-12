@@ -69,8 +69,7 @@ typedef OwnedPointerMap<ConnectionString, TargetedWriteBatch> OwnedHostBatchMap;
 }
 
 static void buildErrorFrom(const Status& status, WriteErrorDetail* error) {
-    error->setErrCode(status.code());
-    error->setErrMessage(status.reason());
+    error->setError(status);
 }
 
 // Helper to note several stale errors from a response

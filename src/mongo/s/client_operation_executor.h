@@ -7,8 +7,11 @@
 
 #pragma once
 
+#include <memory>
+
 #include "mongo/s/abstract_operation_executor.h"
 #include "mongo/db/commands.h"
+#include "mongo/util/factory.h"
 #include "mongo/util/net/client_async_message_port.h"
 
 namespace mongo {
@@ -16,11 +19,15 @@ namespace mongo {
 //TODO: may need to separate out client operation runner and command operation runner
 //TODO: Pool these
 //TODO: Align, both on the object and check the data ordering
+/*
+ * All operations that are in the pipeline from a client derive from this.
+ * _dataNss should be set by the child, the rest of the values are initialized by COE.
+ *
+ */
 class ClientOperationExecutor : public AbstractOperationExecutor {
 public:
     MONGO_DISALLOW_COPYING(ClientOperationExecutor);
-    ClientOperationExecutor(network::ClientAsyncMessagePort* const connInfo, Client* clientInfo,
-            Message* const message, DbMessage* const dbMessage, NamespaceString* const nss);
+    ClientOperationExecutor(network::ClientAsyncMessagePort* const port);
     ~ClientOperationExecutor();
 
     void run() final;
@@ -30,6 +37,8 @@ public:
     Client* cc() = delete;  //cc() should never be called in a COE
 
 protected:
+    void OnErrored() { };
+
     static const size_t logLevelOp = 0;
     void initializeCommand();
 
@@ -72,7 +81,8 @@ protected:
     const MSGID _requestId;
     const Operations _requestOp;
     // TODO: Move this out, only applies to query operations
-    const NamespaceString _nss;
+    const NamespaceString _executionNss;
+    NamespaceString _dataNss;
     const std::string _dbName;
     std::string _errorMsg;
     int _queryOptions{};

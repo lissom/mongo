@@ -48,6 +48,11 @@ public:
         //Set the mongo thread name, not the setThreadName function here
     }
 
+    // Waiting for async operations to complete
+    bool readyToRun() {
+        return clientInfo() != nullptr;
+    }
+
 private:
     void rawInit();
     void asyncDoneReceievedMessage() override;
@@ -55,6 +60,7 @@ private:
 
     PersistantState _persistantState;
     std::unique_ptr<AbstractOperationExecutor> _runner;
+    size_t _clientWaitFails{};
 };
 } /* namespace network */
 } /* namespace mongo */

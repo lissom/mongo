@@ -29,6 +29,8 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/base/error_codes.h"
+
+#include "command_identifiers.h"
 #include "mongo/db/client.h"
 #include "mongo/db/client_basic.h"
 #include "mongo/db/commands.h"
@@ -214,7 +216,8 @@ private:
 
 class ClusterCmdInsert : public ClusterWriteCmd {
 public:
-    ClusterCmdInsert() : ClusterWriteCmd("insert", BatchedCommandRequest::BatchType_Insert) {}
+    ClusterCmdInsert() :
+        ClusterWriteCmd(CMD_BATCH_INSERT, BatchedCommandRequest::BatchType_Insert) {}
 
     void help(stringstream& help) const {
         help << "insert documents";
@@ -224,7 +227,8 @@ public:
 
 class ClusterCmdUpdate : public ClusterWriteCmd {
 public:
-    ClusterCmdUpdate() : ClusterWriteCmd("update", BatchedCommandRequest::BatchType_Update) {}
+    ClusterCmdUpdate() :
+        ClusterWriteCmd(CMD_BATCH_UPDATE, BatchedCommandRequest::BatchType_Update) {}
 
     void help(stringstream& help) const {
         help << "update documents";
@@ -234,7 +238,8 @@ public:
 
 class ClusterCmdDelete : public ClusterWriteCmd {
 public:
-    ClusterCmdDelete() : ClusterWriteCmd("delete", BatchedCommandRequest::BatchType_Delete) {}
+    ClusterCmdDelete() :
+        ClusterWriteCmd(CMD_BATCH_DELETE, BatchedCommandRequest::BatchType_Delete) {}
 
     void help(stringstream& help) const {
         help << "delete documents";

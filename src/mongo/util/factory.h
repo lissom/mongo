@@ -28,19 +28,22 @@ namespace mongo {
  * Assumes all initializations are before main, this is meant to be part of the type system
  * (i.e. this is only thread safe for reads)
  *
- * Example Usage:
-
+ * Example 1 Usage (see usage 2 for what the fields are):
+ FACTORY_DECLARE(std::unique_ptr, Foo, arg1type, arg2type);
+ * There is no macro for the register function
+ *
+ * Example 2 Usage
  //Factory return type
  using FooPtr = std::unique_ptr<Foo>;
 
  //Factory function signature
  using FooCreator =
- std::function<FooPtr(type1 arg1, type2 arg2)>;
+ std::function<FooPtr(arg1type, arg2type)>;
 
  //Factory
- using FooFactory = tools::RegisterFactory<FooPtr, FooCreator>;
+ using FooFactory = mongo::RegisterFactory<FooPtr, FooCreator>;
 
- //register the type creation function
+ //register the type creation function, a lamba can also be used instead of a member function
  static const bool Foo_X::_registerFactory = FooFactory::registerCreator(CONST_KEY_Foo_X,
  &Foo_X::create);
  */
@@ -51,6 +54,11 @@ class RegisterFactoryImpl {
     static Container& getMap() {
         static Container container;
         return container;
+    }
+
+    static Factory& defaultFactory() {
+        static Factory defaultFactory;
+        return defaultFactory;
     }
 
 public:
@@ -64,7 +72,11 @@ public:
         //ensure it doesn't already exist to avoid double inserts
         verify(result);
         return result;
+    }
 
+    static bool registerDefault(Factory&& factory) {
+        defaultFactory() = factory;
+        return true;
     }
 
     /**
@@ -74,6 +86,14 @@ public:
     template<typename ...Args>
     static ObjectPtr createObject(const Key& key, Args ... args) {
         return getMap().at(key)(args...);
+    }
+
+    template<typename ...Args>
+    static ObjectPtr createObjectOrDefault(const Key& key, Args ... args) {
+        auto factoryFunc = getMap().find(key);
+        if (factoryFunc != getMap().end())
+            return factoryFunc->second(args...);
+        return defaultFactory(args...);
     }
 
     static std::string getKeysPretty() {
@@ -98,6 +118,13 @@ public:
 template<typename ObjectPtr, typename Factory, typename Key = std::string,
         typename Map = std::unordered_map<Key, Factory>> using
 RegisterFactory = RegisterFactoryImpl<ObjectPtr, Factory, Key, Map>;
+
+// TODO: Type checking so we print pretty errors
+#define REGISETER_FACTORY_DECLARE(POINTERTYPE, CREATETYPE, ...) \
+using CREATETYPE##Ptr = POINTERTYPE<CREATETYPE>; \
+using CREATETYPE##Creator = std::function<CREATETYPE##Ptr(__VA_ARGS__)>; \
+using CREATETYPE##Factory = mongo::RegisterFactory<CREATETYPE##Ptr, CREATETYPE##Creator>; \
+
 
 }  //namespace tools
 

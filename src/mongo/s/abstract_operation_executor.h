@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 
 #include "mongo/platform/basic.h"
@@ -68,18 +69,28 @@ public:
 
 protected:
     //All functions below this line are async, so they must be able to be ran concurrently
-    void setState(State state) {
+    void setState(State newState) {
         State currentState = _state.load(std::memory_order_consume);
-        while ( (currentState == State::kError && state != State::kComplete )
-        		|| !_state.compare_exchange_weak(currentState, state, std::memory_order_acquire)) { };
-    }
+        switch (newState) {
+        case State::kError :
+        case State::kComplete :
+            do {
+                fassert(-6661, currentState != State::kComplete);
+            } while (!_state.compare_exchange_weak(currentState, newState, std::memory_order_acquire));
+            break;
+        default :
+            do {
+                fassert(6661, currentState != State::kComplete);
+                if (currentState != State::kError)
+                    break;
+            } while (!_state.compare_exchange_weak(currentState, newState, std::memory_order_acquire));
 
-    // Must be multithreaded safe
-    virtual void OnErrored() { };
+        }
+
+    }
 
     void setErrored() {
         _state = State::kError;
-        OnErrored();
     }
 
 private:

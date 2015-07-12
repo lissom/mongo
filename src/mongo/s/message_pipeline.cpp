@@ -10,7 +10,7 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/db/client.h"
-#include "bulk_write_cmd_executor.h"
+#include "mongo/s/bulk_write_cmd_executor.h"
 #include "mongo/s/message_pipeline.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/client_async_message_port.h"
@@ -55,26 +55,28 @@ MessagePipeline::MessageProcessor::MessageProcessor(MessagePipeline* const owner
 
 void MessagePipeline::MessageProcessor::run() {
     while (!inShutdown()) {
-        network::ClientAsyncMessagePort* clientConn =
+        network::ClientAsyncMessagePort* port =
                 _owner->getNextSocketWithWaitingRequest();
-        if (clientConn == nullptr)
+        if (port == nullptr)
             continue;
 
-        Message message(clientConn->getBuffer(), false);
+        Message message(port->getBuffer(), false);
         DbMessage dbMessage(message);
         dbMessage.markSet();
         NamespaceString nss(dbMessage.getns());
 
-        clientConn->restoreThreadName();
-        fassert(-37, clientConn->clientInfo());
+        if (!port->clientInfo()) {
+            port->restoreThreadName();
+            fassert(-37, port->clientInfo());
+        }
+
     	// TODO: turn this into a factory based on message operation
         std::unique_ptr<AbstractOperationExecutor> upRunner(
-                new ClientOperationExecutor(clientConn, clientConn->clientInfo(),
-                        &message, &dbMessage, &nss));
+                new ClientOperationExecutor(port));
 
         //Take a raw pointer for general use before ownership transfer
         AbstractOperationExecutor* _runner = upRunner.get();
-        clientConn->setOpRunner(std::move(upRunner));
+        port->setOpRunner(std::move(upRunner));
         _runner->run();
     }
 }

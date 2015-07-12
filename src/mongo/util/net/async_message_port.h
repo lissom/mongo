@@ -272,6 +272,7 @@ private:
 class Connections {
 public:
 	MONGO_DISALLOW_COPYING(Connections);
+	//TODO: Remove std::function and replace with direct calls, type erase is expensive
 	using MessageReadyHandler = std::function<void(AsyncMessagePort*)>;
     Connections(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
             _server(server), _messageReadyHandler(messageReadyHandler) {

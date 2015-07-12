@@ -232,7 +232,9 @@ env.Library(
 env.Library(
     target='mongoscore',
     source=[
+        'bulk_write_cmd_executor.cpp',
         'balance.cpp',
+        'client_operation_executor.cpp',
         'cluster_last_error_info.cpp',
         'cursors.cpp',
         "message_pipeline.cpp",

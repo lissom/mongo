@@ -48,34 +48,34 @@ void OpCounters::incInsertInWriteLock(int n) {
     _insert.fetchAndAdd(n);
 }
 
-void OpCounters::gotInsert() {
+void OpCounters::gotInsert(int n) {
     RARELY _checkWrap();
-    _insert.fetchAndAdd(1);
+    _insert.fetchAndAdd(n);
 }
 
-void OpCounters::gotQuery() {
+void OpCounters::gotQuery(int n) {
     RARELY _checkWrap();
-    _query.fetchAndAdd(1);
+    _query.fetchAndAdd(n);
 }
 
-void OpCounters::gotUpdate() {
+void OpCounters::gotUpdate(int n) {
     RARELY _checkWrap();
-    _update.fetchAndAdd(1);
+    _update.fetchAndAdd(n);
 }
 
-void OpCounters::gotDelete() {
+void OpCounters::gotDelete(int n) {
     RARELY _checkWrap();
-    _delete.fetchAndAdd(1);
+    _delete.fetchAndAdd(n);
 }
 
-void OpCounters::gotGetMore() {
+void OpCounters::gotGetMore(int n) {
     RARELY _checkWrap();
-    _getmore.fetchAndAdd(1);
+    _getmore.fetchAndAdd(n);
 }
 
-void OpCounters::gotCommand() {
+void OpCounters::gotCommand(int n) {
     RARELY _checkWrap();
-    _command.fetchAndAdd(1);
+    _command.fetchAndAdd(n);
 }
 
 void OpCounters::gotOp(int op, bool isCommand) {
