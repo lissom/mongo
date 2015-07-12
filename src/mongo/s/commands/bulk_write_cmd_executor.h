@@ -26,29 +26,13 @@ public:
 		return _writeType;
 	}
 
+	void run();
+
 protected:
 	void buildBatchError(ErrorCodes::Error error);
 	void toBatchError(const Status& status);
 
 private:
-	// Changing visibility of virtual functions shouldn't matter
-    bool asyncAvailable() { return true; }
-    void asyncStart() override;
-    void write();
-    void asyncProcessResults() final override;
-
-    /*
-     * Must be able to ran multiple times
-     */
-    void cleanup() {
-        if (!operationActive()) {
-            remove();
-        }
-    }
-
-    void remove() {
-
-    }
 
     FastSyncBSONObjPtr _results;
     BatchedCommandRequest _originalRequest;

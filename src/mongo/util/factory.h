@@ -57,7 +57,7 @@ class RegisterFactoryImpl {
     }
 
     static Factory& defaultFactory() {
-        static Factory defaultFactory;
+        static Factory defaultFactory = nullptr;
         return defaultFactory;
     }
 

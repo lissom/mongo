@@ -32,7 +32,7 @@ using OpRunnerClientCreator = std::function<OpRunnerPtr(
 using OpRunnerClientFactory =  RegisterFactory<OpRunnerPtr, OpRunnerClientCreator>;
 
 /*
- * AsyncMessagePort(AMP) and OperationRunner(OpRunner) are tightly bound
+ * AsyncMessagePort(AMP) and OperationExecutor(OpExec) are tightly bound
  * AMP starts a receive, then passes itself to a pipeline, which generates an OperationRunner
  * AMP should not go into State::receive with an OperationRunner in existence
  * AMP should not be in State::send without an OperationRUnner active
@@ -47,11 +47,18 @@ public:
     }
 
     virtual void run() = 0;
-    bool complete() { return _state == AsyncState::State::kComplete; }
+    /*
+     * Called by owned objects to let the OpExector know results are ready, the opExec should own
+     * all resources so nothing should need to be returned.
+     * This is a hack b/c we don't immediately surface the commands type in the message for creating
+     * a class from.
+     */
+    virtual void results() = 0;
+    bool isComplete() { return _state == AsyncState::State::kComplete; }
 
 protected:
     void setErrored() {
-        _state = AsyncState::State::kError;
+        _state.setState(AsyncState::State::kError);
     }
 
     AsyncState _state;

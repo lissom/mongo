@@ -21,23 +21,25 @@ namespace mongo {
 //TODO: Pool these
 //TODO: Align, both on the object and check the data ordering
 //TODO: Make these reusable
+//TODO: Make a reply replyToQuery, takes a BSONObjBuilder
 /*
- * All operations that are in the pipeline from a client derive from this.
- *
+ *  All client operations in the pipeline use this class
  */
-class ClientOperationExecutor : public AbstractOperationExecutor {
+class ClientOperationExecutor final : public AbstractOperationExecutor {
 public:
     MONGO_DISALLOW_COPYING(ClientOperationExecutor);
     ClientOperationExecutor(network::ClientAsyncMessagePort* const port);
     ~ClientOperationExecutor();
 
-    void run() final;
+    void run() override;
 
     const MSGID& requestId() const { return _requestId; }
 
     Client* cc() = delete;  //cc() should never be called in a COE
 
 protected:
+    // Called by async operations when they're done
+    void results() override;
     void OnErrored() { };
 
     static const size_t logLevelOp = 0;
@@ -52,10 +54,6 @@ protected:
     void initializeCommand();
     void processCommand();
 
-    //Runs the async version of the command
-    virtual bool asyncAvailable() { return false; }
-    virtual void asyncStart() { fassert(-100, false); }
-    virtual void asyncProcessResults() { fassert(-100, false); }
     //by default expects results in _result to be sent
     void asyncSendResponse();
 
@@ -75,7 +73,6 @@ protected:
     Client* const _clientInfo;
     Message _protocolMessage;
     DbMessage _dbMessage;
-    QueryMessage _queryMessage;
     ServiceContext::UniqueOperationContext _operationCtx;
     Command* _command = nullptr;
     std::unique_ptr<AbstractCmdExecutor> _executor;
@@ -84,11 +81,9 @@ protected:
     const MSGID _requestId;
     const Operations _requestOp;
     // TODO: Move this out, only applies to query operations
-    const NamespaceString _nss;
-    const std::string _dbName;
+    NamespaceString _nss;
     std::string _errorMsg;
     BSONObj _cmdObjBson;
-    int _queryOptions{};
     int _retries = 5;
     Timer operationRunTimer;
     bool _usedLegacy{};
