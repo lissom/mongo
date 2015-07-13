@@ -30,7 +30,7 @@ public:
     // Deletes the opRunner
     void opRunnerComplete();
 
-    Client* clientInfo() {
+    Client* client() {
         return _persistantState.get();
     }
 
@@ -50,7 +50,7 @@ public:
 
     // Waiting for async operations to complete
     bool readyToRun() {
-        return clientInfo() != nullptr;
+        return client() != nullptr;
     }
 
 private:

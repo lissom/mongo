@@ -70,7 +70,7 @@ protected:
     void noSuchCommand(const std::string& commandName);
 
     network::ClientAsyncMessagePort* const _port;
-    Client* const _clientInfo;
+    Client* const _client;
     Message _protocolMessage;
     DbMessage _dbMessage;
     ServiceContext::UniqueOperationContext _operationCtx;
@@ -82,6 +82,7 @@ protected:
     const Operations _requestOp;
     // TODO: Move this out, only applies to query operations
     NamespaceString _nss;
+    const std::string _dbName;
     std::string _errorMsg;
     BSONObj _cmdObjBson;
     int _retries = 5;

@@ -30,15 +30,16 @@ namespace mongo {
 //TODO: Clean this up, pass a message frame
 ClientOperationExecutor::ClientOperationExecutor(network::ClientAsyncMessagePort* const port)
     : _port(port),
-      _clientInfo(port->clientInfo()),
+      _client(port->client()),
       _protocolMessage(port->getBuffer(), false),
 	  //dbmessage references message, so it has to be constructed here
       _dbMessage(_protocolMessage),
-      _operationCtx(_clientInfo->makeOperationContext()),
+      _operationCtx(_client->makeOperationContext()),
       _result(32768),
       _requestId(_protocolMessage.header().getId()),
       _requestOp(static_cast<Operations>(_protocolMessage.operation())),
-      _nss(_dbMessage.getns()) {
+      _nss(_dbMessage.getns()),
+      _dbName (_nss.db().toString()) {
     _dbMessage.markSet();
 	// TODO: b.skip(sizeof(QueryResult::Value)); on the full async skip this, need replyToQuery
 }
@@ -72,9 +73,9 @@ void ClientOperationExecutor::initializeCommon() {
            << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis()
            << std::endl;
 
-    LastError::get(_clientInfo).startRequest();
-    ClusterLastErrorInfo::get(_clientInfo).newRequest();
-    AuthorizationSession::get(_clientInfo)->startRequest(NULL);
+    LastError::get(_client).startRequest();
+    ClusterLastErrorInfo::get(_client).newRequest();
+    AuthorizationSession::get(_client)->startRequest(NULL);
 }
 
 void ClientOperationExecutor::initializeCommand() {
@@ -145,8 +146,7 @@ void ClientOperationExecutor::initializeCommand() {
         return;
     }
 
-    Status status = Command::_checkAuthorization(_command, _clientInfo, _nss.db().toString(),
-            _cmdObjBson);
+    Status status = Command::_checkAuthorization(_command, _client, _dbName, _cmdObjBson);
     if (!status.isOK()) {
         Command::appendCommandStatus(_result, status);
         return;
@@ -154,7 +154,9 @@ void ClientOperationExecutor::initializeCommand() {
 
     _command->_commandsExecuted.increment();
 
-    _executor = AbstractCmdExecutorFactory::createObject(commandName);
+    AbstractCmdExecutor::Settings settings(this, _operationCtx.get(), _dbName, &_cmdObjBson,
+            queryMessage.queryOptions, &_errorMsg, &_result);
+    _executor = AbstractCmdExecutorFactory::createObjectIfExists(commandName, settings);
 
 }
 
@@ -187,11 +189,11 @@ void ClientOperationExecutor::runCommand() {
     for(;; --_retries) {
         try {
             //In theory here we should break out into a thread here, but we aren't
-            /*Command::execCommandClientBasic(_operationCtx.get(), _command, *_clientInfo,
+            /*Command::execCommandClientBasic(_operationCtx.get(), _command, *_client,
                     _queryOptions, _queryMessage.ns, _cmdObjBson, _result);*/
             bool ok;
             try {
-                ok = _command->run(_operationCtx.get(), _nss.db().toString(), _cmdObjBson, 0, _errorMsg,
+                ok = _command->run(_operationCtx.get(), _dbName, _cmdObjBson, 0, _errorMsg,
                         _result);
             } catch (const DBException& e) {
                 ok = false;
@@ -268,7 +270,7 @@ void ClientOperationExecutor::logExceptionAndReply(int logLevel,
         replyToQuery(ResultFlag_ErrSet, _port, _protocolMessage, buildErrReply(ex));
     }
     // We *always* populate the last error for now
-    LastError::get(_port->clientInfo()).setLastError(ex.getCode(), ex.what());
+    LastError::get(_port->client()).setLastError(ex.getCode(), ex.what());
 }
 
 void ClientOperationExecutor::asyncSendResponse() {

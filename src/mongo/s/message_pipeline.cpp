@@ -65,9 +65,9 @@ void MessagePipeline::MessageProcessor::run() {
         dbMessage.markSet();
         NamespaceString nss(dbMessage.getns());
 
-        if (!port->clientInfo()) {
+        if (!port->client()) {
             port->restoreThreadName();
-            fassert(-37, port->clientInfo());
+            fassert(-37, port->client());
         }
 
     	// TODO: turn this into a factory based on message operation

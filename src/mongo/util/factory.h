@@ -85,12 +85,32 @@ public:
      */
     template<typename ...Args>
     static ObjectPtr createObject(const Key& key, Args ... args) {
+        /*
+         * No matching call error here?  Check that args matched for what was declared and what is
+         * called.
+         */
         return getMap().at(key)(args...);
+    }
+
+    template<typename ...Args>
+    static ObjectPtr createObjectIfExists(const Key& key, Args ... args) {
+        auto factoryFunc = getMap().find(key);
+        /*
+         * No matching call error here?  Check that args matched for what was declared and what is
+         * called.
+         */
+        if (factoryFunc != getMap().end())
+            return factoryFunc->second(args...);
+        return ObjectPtr();
     }
 
     template<typename ...Args>
     static ObjectPtr createObjectOrDefault(const Key& key, Args ... args) {
         auto factoryFunc = getMap().find(key);
+        /*
+         * No matching call error here?  Check that args matched for what was declared and what is
+         * called.
+         */
         if (factoryFunc != getMap().end())
             return factoryFunc->second(args...);
         return defaultFactory(args...);
@@ -122,9 +142,10 @@ RegisterFactory = RegisterFactoryImpl<ObjectPtr, Factory, Key, Map>;
 // TODO: Type checking so we print pretty errors
 #define REGISTER_FACTORY_DECLARE(POINTERTYPE, CREATETYPE, ...) \
 using CREATETYPE##Ptr = POINTERTYPE<CREATETYPE>; \
-using CREATETYPE##Creator = std::function<CREATETYPE##Ptr(__VA_ARGS__)>; \
-using CREATETYPE##Factory = mongo::RegisterFactory<CREATETYPE##Ptr, CREATETYPE##Creator>; \
+using CREATETYPE##Creator = CREATETYPE##Ptr(*)(__VA_ARGS__)>; \
+using CREATETYPE##Factory = mongo::RegisterFactory<CREATETYPE##Ptr, CREATETYPE##Creator>;
 
+//using CREATETYPE##Creator = std::function<CREATETYPE##Ptr(__VA_ARGS__)>; \
 
 }  //namespace tools
 

@@ -20,20 +20,21 @@ namespace mongo {
 class BulkWriteCmdExecutor : public AbstractCmdExecutor {
 public:
     MONGO_DISALLOW_COPYING(BulkWriteCmdExecutor);
-    BulkWriteCmdExecutor(BatchedCommandRequest::BatchType writeType);
+    BulkWriteCmdExecutor(AbstractCmdExecutor::Settings* settings,
+            BatchedCommandRequest::BatchType writeType);
 
 	BatchedCommandRequest::BatchType writeType() const {
 		return _writeType;
 	}
 
-	void run();
+	void initialize() final;
 
 protected:
 	void buildBatchError(ErrorCodes::Error error);
 	void toBatchError(const Status& status);
+	void processResults();
 
 private:
-
     FastSyncBSONObjPtr _results;
     BatchedCommandRequest _originalRequest;
     BatchedCommandRequest* _request{};
