@@ -47,10 +47,12 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/executor/network_interface.h"
 #include "mongo/rpc/get_status_from_command_result.h"
+#include "mongo/s/catalog/config_server_version.h"
 #include "mongo/s/catalog/dist_lock_manager.h"
 #include "mongo/s/catalog/type_actionlog.h"
 #include "mongo/s/catalog/type_changelog.h"
 #include "mongo/s/catalog/type_collection.h"
+#include "mongo/s/catalog/type_config_version.h"
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_database.h"
 #include "mongo/s/catalog/type_settings.h"
@@ -112,7 +114,7 @@ Status CatalogManagerReplicaSet::init(const ConnectionString& configCS,
     return Status::OK();
 }
 
-Status CatalogManagerReplicaSet::startup(bool upgrade) {
+Status CatalogManagerReplicaSet::startup() {
     return Status::OK();
 }
 
@@ -131,23 +133,12 @@ void CatalogManagerReplicaSet::shutDown() {
     _distLockManager->shutDown();
 }
 
-Status CatalogManagerReplicaSet::enableSharding(const std::string& dbName) {
-    return notYetImplemented;
-}
-
 Status CatalogManagerReplicaSet::shardCollection(OperationContext* txn,
                                                  const string& ns,
                                                  const ShardKeyPattern& fieldsAndOrder,
                                                  bool unique,
                                                  vector<BSONObj>* initPoints,
                                                  set<ShardId>* initShardsIds) {
-    return notYetImplemented;
-}
-
-StatusWith<string> CatalogManagerReplicaSet::addShard(OperationContext* txn,
-                                                      const std::string* shardProposedName,
-                                                      const ConnectionString& shardConnectionString,
-                                                      const long long maxSize) {
     return notYetImplemented;
 }
 
@@ -283,7 +274,7 @@ StatusWith<DatabaseType> CatalogManagerReplicaSet::getDatabase(const std::string
 
     const auto& docs = findStatus.getValue();
     if (docs.empty()) {
-        return {ErrorCodes::NamespaceNotFound, stream() << "database " << dbName << " not found"};
+        return {ErrorCodes::DatabaseNotFound, stream() << "database " << dbName << " not found"};
     }
 
     invariant(docs.size() == 1);
@@ -519,8 +510,10 @@ Status CatalogManagerReplicaSet::getChunks(const BSONObj& query,
         return readHostStatus.getStatus();
     }
 
+    // Convert boost::optional<int> to boost::optional<long long>.
+    auto longLimit = limit ? boost::optional<long long>(*limit) : boost::none;
     auto findStatus = grid.shardRegistry()->exhaustiveFind(
-        readHostStatus.getValue(), NamespaceString(ChunkType::ConfigNS), query, sort, limit);
+        readHostStatus.getValue(), NamespaceString(ChunkType::ConfigNS), query, sort, longLimit);
     if (!findStatus.isOK()) {
         return findStatus.getStatus();
     }
@@ -763,7 +756,8 @@ StatusWith<BSONObj> CatalogManagerReplicaSet::_runConfigServerCommandWithNotMast
     MONGO_UNREACHABLE;
 }
 
-Status CatalogManagerReplicaSet::_checkDbDoesNotExist(const string& dbName) const {
+Status CatalogManagerReplicaSet::_checkDbDoesNotExist(const string& dbName,
+                                                      DatabaseType* db) const {
     BSONObjBuilder queryBuilder;
     queryBuilder.appendRegex(
         DatabaseType::name(), (string) "^" + pcrecpp::RE::QuoteMeta(dbName) + "$", "i");
@@ -791,6 +785,15 @@ Status CatalogManagerReplicaSet::_checkDbDoesNotExist(const string& dbName) cons
     BSONObj dbObj = docs.front();
     std::string actualDbName = dbObj[DatabaseType::name()].String();
     if (actualDbName == dbName) {
+        if (db) {
+            auto parseDBStatus = DatabaseType::fromBSON(dbObj);
+            if (!parseDBStatus.isOK()) {
+                return parseDBStatus.getStatus();
+            }
+
+            *db = parseDBStatus.getValue();
+        }
+
         return Status(ErrorCodes::NamespaceExists,
                       str::stream() << "database " << dbName << " already exists");
     }
@@ -798,6 +801,49 @@ Status CatalogManagerReplicaSet::_checkDbDoesNotExist(const string& dbName) cons
     return Status(ErrorCodes::DatabaseDifferCase,
                   str::stream() << "can't have 2 databases that just differ on case "
                                 << " have: " << actualDbName << " want to add: " << dbName);
+}
+
+StatusWith<std::string> CatalogManagerReplicaSet::_generateNewShardName() const {
+    const auto configShard = grid.shardRegistry()->getShard("config");
+    const auto readHost = configShard->getTargeter()->findHost(kConfigReadSelector);
+    if (!readHost.isOK()) {
+        return readHost.getStatus();
+    }
+
+    BSONObjBuilder shardNameRegex;
+    shardNameRegex.appendRegex(ShardType::name(), "/^shard/");
+
+    auto findStatus = grid.shardRegistry()->exhaustiveFind(readHost.getValue(),
+                                                           NamespaceString(ShardType::ConfigNS),
+                                                           shardNameRegex.obj(),
+                                                           BSON(ShardType::name() << -1),
+                                                           1);
+    if (!findStatus.isOK()) {
+        return findStatus.getStatus();
+    }
+
+    const auto& docs = findStatus.getValue();
+
+    int count = 0;
+    if (!docs.empty()) {
+        const auto shardStatus = ShardType::fromBSON(docs.front());
+        if (!shardStatus.isOK()) {
+            return shardStatus.getStatus();
+        }
+
+        std::istringstream is(shardStatus.getValue().getName().substr(5));
+        is >> count;
+        count++;
+    }
+
+    // TODO fix so that we can have more than 10000 automatically generated shard names
+    if (count < 9999) {
+        std::stringstream ss;
+        ss << "shard" << std::setfill('0') << std::setw(4) << count;
+        return ss.str();
+    }
+
+    return Status(ErrorCodes::OperationFailed, "unable to generate new shard name");
 }
 
 StatusWith<long long> CatalogManagerReplicaSet::_runCountCommand(const HostAndPort& target,
@@ -822,6 +868,123 @@ StatusWith<long long> CatalogManagerReplicaSet::_runCountCommand(const HostAndPo
     }
 
     return result;
+}
+
+Status CatalogManagerReplicaSet::checkAndUpgrade(bool checkOnly) {
+    auto versionStatus = _getConfigVersion();
+    if (!versionStatus.isOK()) {
+        return versionStatus.getStatus();
+    }
+
+    auto versionInfo = versionStatus.getValue();
+    if (versionInfo.getMinCompatibleVersion() > CURRENT_CONFIG_VERSION) {
+        return {ErrorCodes::IncompatibleShardingConfigVersion,
+                str::stream() << "current version v" << CURRENT_CONFIG_VERSION
+                              << " is older than the cluster min compatible v"
+                              << versionInfo.getMinCompatibleVersion()};
+    }
+
+    if (versionInfo.getCurrentVersion() == UpgradeHistory_EmptyVersion) {
+        VersionType newVersion;
+        newVersion.setClusterId(OID::gen());
+
+        // For v3.2, only v3.2 binaries can talk to RS Config servers.
+        newVersion.setMinCompatibleVersion(CURRENT_CONFIG_VERSION);
+        newVersion.setCurrentVersion(CURRENT_CONFIG_VERSION);
+
+        BSONObj versionObj(newVersion.toBSON());
+
+        return update(VersionType::ConfigNS,
+                      versionObj,
+                      versionObj,
+                      true /* upsert*/,
+                      false /* multi */,
+                      nullptr);
+    }
+
+    if (versionInfo.getCurrentVersion() == UpgradeHistory_UnreportedVersion) {
+        return {ErrorCodes::IncompatibleShardingConfigVersion,
+                "Assuming config data is old since the version document cannot be found in the"
+                "config server and it contains databases aside 'local' and 'admin'. "
+                "Please upgrade if this is the case. Otherwise, make sure that the config "
+                "server is clean."};
+    }
+
+    if (versionInfo.getCurrentVersion() < CURRENT_CONFIG_VERSION) {
+        return {ErrorCodes::IncompatibleShardingConfigVersion,
+                str::stream() << "need to upgrade current cluster version to v"
+                              << CURRENT_CONFIG_VERSION << "; currently at v"
+                              << versionInfo.getCurrentVersion()};
+    }
+
+    return Status::OK();
+}
+
+StatusWith<VersionType> CatalogManagerReplicaSet::_getConfigVersion() {
+    const auto configShard = grid.shardRegistry()->getShard("config");
+    const auto readHostStatus = configShard->getTargeter()->findHost(kConfigReadSelector);
+    if (!readHostStatus.isOK()) {
+        return readHostStatus.getStatus();
+    }
+
+    auto readHost = readHostStatus.getValue();
+    auto findStatus = grid.shardRegistry()->exhaustiveFind(readHost,
+                                                           NamespaceString(VersionType::ConfigNS),
+                                                           BSONObj(),
+                                                           BSONObj(),
+                                                           boost::none /* no limit */);
+    if (!findStatus.isOK()) {
+        return findStatus.getStatus();
+    }
+
+    auto queryResults = findStatus.getValue();
+
+    if (queryResults.size() > 1) {
+        return {ErrorCodes::RemoteValidationError,
+                str::stream() << "should only have 1 document in " << VersionType::ConfigNS};
+    }
+
+    if (queryResults.empty()) {
+        auto cmdStatus =
+            grid.shardRegistry()->runCommand(readHost, "admin", BSON("listDatabases" << 1));
+        if (!cmdStatus.isOK()) {
+            return cmdStatus.getStatus();
+        }
+
+        const BSONObj& cmdResult = cmdStatus.getValue();
+
+        Status cmdResultStatus = getStatusFromCommandResult(cmdResult);
+        if (!cmdResultStatus.isOK()) {
+            return cmdResultStatus;
+        }
+
+        for (const auto& dbEntry : cmdResult["databases"].Obj()) {
+            const string& dbName = dbEntry["name"].String();
+
+            if (dbName != "local" && dbName != "admin") {
+                VersionType versionInfo;
+                versionInfo.setMinCompatibleVersion(UpgradeHistory_UnreportedVersion);
+                versionInfo.setCurrentVersion(UpgradeHistory_UnreportedVersion);
+                return versionInfo;
+            }
+        }
+
+        VersionType versionInfo;
+        versionInfo.setMinCompatibleVersion(UpgradeHistory_EmptyVersion);
+        versionInfo.setCurrentVersion(UpgradeHistory_EmptyVersion);
+        return versionInfo;
+    }
+
+    BSONObj versionDoc = queryResults.front();
+    VersionType versionInfo;
+    string errMsg;
+    if (!versionInfo.parseBSON(versionDoc, &errMsg) || !versionInfo.isValid(&errMsg)) {
+        return Status(ErrorCodes::UnsupportedFormat,
+                      str::stream() << "invalid config version document " << versionDoc
+                                    << causedBy(errMsg.c_str()));
+    }
+
+    return versionInfo;
 }
 
 }  // namespace mongo

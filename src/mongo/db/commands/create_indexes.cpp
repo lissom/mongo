@@ -47,7 +47,8 @@
 #include "mongo/db/op_observer.h"
 #include "mongo/db/ops/insert.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
-#include "mongo/s/d_state.h"
+#include "mongo/db/s/collection_metadata.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/s/shard_key_pattern.h"
 
 namespace mongo {
@@ -292,8 +293,8 @@ private:
         invariant(txn->lockState()->isCollectionLockedForMode(ns, MODE_X));
 
         if (shardingState.enabled()) {
-            CollectionMetadataPtr metadata(shardingState.getCollectionMetadata(ns.toString()));
-
+            std::shared_ptr<CollectionMetadata> metadata(
+                shardingState.getCollectionMetadata(ns.toString()));
             if (metadata) {
                 ShardKeyPattern shardKeyPattern(metadata->getKeyPattern());
                 if (!shardKeyPattern.isUniqueIndexCompatible(newIdxKey)) {

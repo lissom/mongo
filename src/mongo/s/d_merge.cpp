@@ -1,5 +1,5 @@
 /**
- *    Copyright (C) 2013 10gen Inc.
+ *    Copyright (C) 2013-2015 MongoDB Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -17,13 +17,13 @@
  *    code of portions of this program with the OpenSSL library under certain
  *    conditions as described in each individual source file and distribute
  *    linked combinations including the program with the OpenSSL library. You
- *    must comply with the GNU Affero General Public License in all respects
- *    for all of the code used other than as permitted herein. If you modify
- *    file(s) with this exception, you may extend this exception to your
- *    version of the file(s), but you are not obligated to do so. If you do not
- *    wish to do so, delete this exception statement from your version. If you
- *    delete this exception statement from all source files in the program,
- *    then also delete it in the license file.
+ *    must comply with the GNU Affero General Public License in all respects for
+ *    all of the code used other than as permitted herein. If you modify file(s)
+ *    with this exception, you may extend this exception to your version of the
+ *    file(s), but you are not obligated to do so. If you do not wish to do so,
+ *    delete this exception statement from your version. If you delete this
+ *    exception statement from all source files in the program, then also delete
+ *    it in the license file.
  */
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kSharding
@@ -33,13 +33,16 @@
 #include <vector>
 
 #include "mongo/client/connpool.h"
+#include "mongo/db/client.h"
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
+#include "mongo/db/s/collection_metadata.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/s/catalog/catalog_manager.h"
+#include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/chunk.h"
 #include "mongo/s/config.h"
-#include "mongo/s/d_state.h"
 #include "mongo/s/catalog/dist_lock_manager.h"
 #include "mongo/s/grid.h"
 #include "mongo/util/log.h"
@@ -47,7 +50,7 @@
 
 namespace mongo {
 
-using std::endl;
+using std::shared_ptr;
 using std::string;
 using mongoutils::str::stream;
 
@@ -58,8 +61,6 @@ static Status runApplyOpsCmd(const std::vector<ChunkType>&,
 static BSONObj buildMergeLogEntry(const std::vector<ChunkType>&,
                                   const ChunkVersion&,
                                   const ChunkVersion&);
-
-static bool isEmptyChunk(const ChunkType&);
 
 bool mergeChunks(OperationContext* txn,
                  const NamespaceString& nss,
@@ -73,7 +74,7 @@ bool mergeChunks(OperationContext* txn,
 
     ConnectionString configLoc = ConnectionString::parse(shardingState.getConfigServer(), *errMsg);
     if (!configLoc.isValid()) {
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -90,7 +91,7 @@ bool mergeChunks(OperationContext* txn,
                            << " to merge chunks in [" << minKey << "," << maxKey << ")"
                            << causedBy(scopedDistLock.getStatus());
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -105,7 +106,7 @@ bool mergeChunks(OperationContext* txn,
         *errMsg = str::stream() << "could not merge chunks, failed to refresh metadata for "
                                 << nss.ns() << causedBy(status.reason());
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -115,17 +116,17 @@ bool mergeChunks(OperationContext* txn,
                            << "(sent epoch : " << epoch.toString()
                            << ", current epoch : " << shardVersion.epoch().toString() << ")";
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
-    CollectionMetadataPtr metadata = shardingState.getCollectionMetadata(nss.ns());
+    shared_ptr<CollectionMetadata> metadata = shardingState.getCollectionMetadata(nss.ns());
 
     if (!metadata || metadata->getKeyPattern().isEmpty()) {
         *errMsg = stream() << "could not merge chunks, collection " << nss.ns()
                            << " is not sharded";
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -137,7 +138,7 @@ bool mergeChunks(OperationContext* txn,
                            << " for collection " << nss.ns() << " with key pattern "
                            << metadata->getKeyPattern();
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -166,7 +167,7 @@ bool mergeChunks(OperationContext* txn,
                            << " range starting at " << minKey << " and ending at " << maxKey
                            << " does not belong to shard " << shardingState.getShardName();
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -184,7 +185,7 @@ bool mergeChunks(OperationContext* txn,
                            << " range starting at " << minKey << " does not belong to shard "
                            << shardingState.getShardName();
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -198,7 +199,7 @@ bool mergeChunks(OperationContext* txn,
                            << " range ending at " << maxKey << " does not belong to shard "
                            << shardingState.getShardName();
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -212,7 +213,7 @@ bool mergeChunks(OperationContext* txn,
                            << (!validRangeStartKey && !validRangeEndKey ? " or " : "")
                            << (!validRangeEndKey ? "ending at " + maxKey.toString() : "");
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -220,7 +221,7 @@ bool mergeChunks(OperationContext* txn,
         *errMsg = stream() << "could not merge chunks, collection " << nss.ns()
                            << " already contains chunk for " << rangeToString(minKey, maxKey);
 
-        warning() << *errMsg << endl;
+        warning() << *errMsg;
         return false;
     }
 
@@ -232,7 +233,7 @@ bool mergeChunks(OperationContext* txn,
                          << " has a hole in the range " << rangeToString(minKey, maxKey) << " at "
                          << rangeToString(chunksToMerge[i - 1].getMax(), chunksToMerge[i].getMin());
 
-            warning() << *errMsg << endl;
+            warning() << *errMsg;
             return false;
         }
     }

@@ -64,6 +64,9 @@
 #include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/mmap_v1/dur.h"
+#include "mongo/db/s/collection_metadata.h"
+#include "mongo/db/s/sharded_connection_info.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/write_concern.h"
 #include "mongo/logger/ramlog.h"
 #include "mongo/s/catalog/catalog_manager.h"
@@ -1125,8 +1128,9 @@ public:
                 warning() << errmsg;
                 return false;
             }
-            string configdb = cmdObj["configdb"].String();
-            ShardingState::initialize(configdb);
+
+            const string configdb = cmdObj["configdb"].String();
+            shardingState.initialize(configdb);
         }
 
         // Initialize our current shard name in the shard state if needed
@@ -1223,7 +1227,8 @@ public:
         }
 
         // Get collection metadata
-        const CollectionMetadataPtr origCollMetadata(shardingState.getCollectionMetadata(ns));
+        const std::shared_ptr<CollectionMetadata> origCollMetadata(
+            shardingState.getCollectionMetadata(ns));
 
         // With nonzero shard version, we must have metadata
         invariant(NULL != origCollMetadata);
@@ -1556,7 +1561,8 @@ public:
             // if we have chunks left on the FROM shard, update the version of one of them as
             // well.  we can figure that out by grabbing the metadata installed on 5.a
 
-            const CollectionMetadataPtr bumpedCollMetadata(shardingState.getCollectionMetadata(ns));
+            const std::shared_ptr<CollectionMetadata> bumpedCollMetadata(
+                shardingState.getCollectionMetadata(ns));
             if (bumpedCollMetadata->getNumChunks() > 0) {
                 // get another chunk on that shard
                 ChunkType bumpChunk;
@@ -2679,7 +2685,7 @@ public:
         if (!shardingState.enabled()) {
             if (!cmdObj["configServer"].eoo()) {
                 dassert(cmdObj["configServer"].type() == String);
-                ShardingState::initialize(cmdObj["configServer"].String());
+                shardingState.initialize(cmdObj["configServer"].String());
             } else {
                 errmsg = str::stream()
                     << "cannot start recv'ing chunk, "

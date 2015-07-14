@@ -50,11 +50,11 @@
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/query/query_planner_params.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/server_parameters.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/s/chunk_version.h"
-#include "mongo/s/d_state.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/util/fail_point_service.h"
@@ -112,14 +112,14 @@ ScopedRecoveryUnitSwapper::~ScopedRecoveryUnitSwapper() {
  * If ntoreturn is non-zero, the we stop building the first batch once we either have ntoreturn
  * results, or when the result set exceeds 4 MB.
  */
-bool enoughForFirstBatch(const LiteParsedQuery& pq, int numDocs, int bytesBuffered) {
+bool enoughForFirstBatch(const LiteParsedQuery& pq, long long numDocs, int bytesBuffered) {
     if (!pq.getBatchSize()) {
         return (bytesBuffered > 1024 * 1024) || numDocs >= LiteParsedQuery::kDefaultBatchSize;
     }
     return numDocs >= *pq.getBatchSize() || bytesBuffered > MaxBytesToReturnToClientAtOnce;
 }
 
-bool enoughForGetMore(int ntoreturn, int numDocs, int bytesBuffered) {
+bool enoughForGetMore(long long ntoreturn, long long numDocs, int bytesBuffered) {
     return (ntoreturn && numDocs >= ntoreturn) || (bytesBuffered > MaxBytesToReturnToClientAtOnce);
 }
 
@@ -178,8 +178,8 @@ bool shouldSaveCursorGetMore(PlanExecutor::ExecState finalState,
 void beginQueryOp(OperationContext* txn,
                   const NamespaceString& nss,
                   const BSONObj& queryObj,
-                  int ntoreturn,
-                  int ntoskip) {
+                  long long ntoreturn,
+                  long long ntoskip) {
     auto curop = CurOp::get(txn);
     curop->debug().query = queryObj;
     curop->debug().ntoreturn = ntoreturn;
@@ -192,7 +192,7 @@ void beginQueryOp(OperationContext* txn,
 void endQueryOp(OperationContext* txn,
                 const PlanExecutor& exec,
                 int dbProfilingLevel,
-                int numResults,
+                long long numResults,
                 CursorId cursorId) {
     auto curop = CurOp::get(txn);
 
