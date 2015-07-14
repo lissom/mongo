@@ -162,7 +162,7 @@ void ClientOperationExecutor::initializeCommand() {
 }
 
 void ClientOperationExecutor::processCommand() {
-    bool worked = safeCall([this] {
+    safeCall([this] {
             initializeCommon();
             initializeCommand();
             if (!_command)
@@ -175,12 +175,12 @@ void ClientOperationExecutor::processCommand() {
             }
     });
     if (_executor.get())
-        return onContextEnd();
+        return;
     _state.setState(AsyncState::State::kComplete);
+    //Thread name was set in safeCall
     LOG(logLevelOp) << "ClientOperationRunner end ns: " << _nss << " request id: " << _requestId
             << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis()
             << std::endl;
-	onContextEnd();
 }
 
 void ClientOperationExecutor::runCommand() {
