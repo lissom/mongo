@@ -53,7 +53,7 @@ public:
      * This is a hack b/c we don't immediately surface the commands type in the message for creating
      * a class from.
      */
-    virtual void results() = 0;
+    virtual void asyncNotifyResultsReady() = 0;
     bool isComplete() { return _state == AsyncState::State::kComplete; }
 
 protected:

@@ -37,9 +37,28 @@ public:
 
     Client* cc() = delete;  //cc() should never be called in a COE
 
+    /*
+     * Calls functions wrapped in handlers for exceptions
+     */
+    template<typename T>
+    bool safeCall(T t) {
+        onContextStart();
+        bool execption = true;
+        try {
+            t();
+            execption = false;
+        } catch (const AssertionException& ex) {
+            logExceptionAndReply(ex.isUserAssertion() ? 1 : 0, "Assertion failed", ex);
+        } catch (const DBException& ex) {
+            logExceptionAndReply(0, "Exception thrown", ex);
+        }
+        onContextEnd();
+        return execption;
+    }
+
 protected:
     // Called by async operations when they're done
-    void results() override;
+    void asyncNotifyResultsReady() override;
     void OnErrored() { };
 
     static const size_t logLevelOp = 0;

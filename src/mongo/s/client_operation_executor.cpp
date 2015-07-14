@@ -61,11 +61,12 @@ void ClientOperationExecutor::run() {
 	runLegacyRequest();
 }
 
-void ClientOperationExecutor::results() {
+void ClientOperationExecutor::asyncNotifyResultsReady() {
     asyncSendResponse();
     LOG(logLevelOp) << "ClientOperationRunner end ns: " << _nss << " request id: " << _requestId
             << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis()
             << std::endl;
+    _state.setState(AsyncState::State::kComplete);
 }
 
 void ClientOperationExecutor::initializeCommon() {
@@ -156,30 +157,30 @@ void ClientOperationExecutor::initializeCommand() {
 
     AbstractCmdExecutor::Settings settings(this, _operationCtx.get(), _dbName, &_cmdObjBson,
             queryMessage.queryOptions, &_errorMsg, &_result);
-    _executor = AbstractCmdExecutorFactory::createObjectIfExists(commandName, settings);
+    _executor = AbstractCmdExecutorFactory::createObjectIfExists(commandName, &settings);
 
 }
 
 void ClientOperationExecutor::processCommand() {
-    onContextStart();
-	try {
-	    initializeCommon();
-		initializeCommand();
-		if (!_command)
-			return;
+    bool worked = safeCall([this] {
+            initializeCommon();
+            initializeCommand();
+            if (!_command)
+                return;
 
-		if (_executor.get()) {
-		    _executor->run();
-		} else {
-		    runCommand();
-		}
-	} catch (const AssertionException& ex) {
-		logExceptionAndReply(ex.isUserAssertion() ? 1 : 0, "Assertion failed", ex);
-	} catch (const DBException& ex) {
-		logExceptionAndReply(0, "Exception thrown", ex);
-	}
+            if (_executor.get()) {
+                _executor->run();
+            } else {
+                runCommand();
+            }
+    });
+    if (_executor.get())
+        return onContextEnd();
+    _state.setState(AsyncState::State::kComplete);
+    LOG(logLevelOp) << "ClientOperationRunner end ns: " << _nss << " request id: " << _requestId
+            << " op: " << opToString(_requestOp) << " timer: " << _port->messageTimer().millis()
+            << std::endl;
 	onContextEnd();
-	_state.setState(AsyncState::State::kComplete);
 }
 
 void ClientOperationExecutor::runCommand() {

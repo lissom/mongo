@@ -36,9 +36,9 @@ namespace mongo {
  //Factory return type
  using FooPtr = std::unique_ptr<Foo>;
 
- //Factory function signature
- using FooCreator =
- std::function<FooPtr(arg1type, arg2type)>;
+ //Factory function signature - this may need to be std::function to cover all heterogeneous use
+ //cases, but no immediate pressing reason comes to mind
+ using FooCreator = FooPtr(*)(arg1type, arg2type);
 
  //Factory
  using FooFactory = mongo::RegisterFactory<FooPtr, FooCreator>;
@@ -75,7 +75,7 @@ public:
     }
 
     static bool registerDefault(Factory&& factory) {
-        defaultFactory() = factory;
+        defaultFactory() = std::forward<Factory>(factory);
         return true;
     }
 
@@ -142,10 +142,7 @@ RegisterFactory = RegisterFactoryImpl<ObjectPtr, Factory, Key, Map>;
 // TODO: Type checking so we print pretty errors
 #define REGISTER_FACTORY_DECLARE(POINTERTYPE, CREATETYPE, ...) \
 using CREATETYPE##Ptr = POINTERTYPE<CREATETYPE>; \
-using CREATETYPE##Creator = CREATETYPE##Ptr(*)(__VA_ARGS__)>; \
+using CREATETYPE##Creator = CREATETYPE##Ptr(*)(__VA_ARGS__); \
 using CREATETYPE##Factory = mongo::RegisterFactory<CREATETYPE##Ptr, CREATETYPE##Creator>;
 
-//using CREATETYPE##Creator = std::function<CREATETYPE##Ptr(__VA_ARGS__)>; \
-
 }  //namespace tools
-

@@ -8,7 +8,6 @@
 #pragma once
 
 #include "mongo/s/commands/abstract_cmd_executor.h"
-#include "mongo/s/fast_sync_container.h"
 #include "mongo/s/chunk_manager_targeter.h"
 #include "mongo/s/client_operation_executor.h"
 #include "mongo/s/cluster_write.h"
@@ -35,7 +34,6 @@ protected:
 	void processResults();
 
 private:
-    FastSyncBSONObjPtr _results;
     BatchedCommandRequest _originalRequest;
     BatchedCommandRequest* _request{};
 	BatchedCommandResponse _response;
