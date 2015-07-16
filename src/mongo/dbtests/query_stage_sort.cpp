@@ -317,7 +317,7 @@ public:
 
         unique_ptr<PlanExecutor> exec(makePlanExecutorWithSortStage(coll));
         SortStage* ss = static_cast<SortStage*>(exec->getRootStage());
-        QueuedDataStage* ms = static_cast<QueuedDataStage*>(ss->getChildren()[0]);
+        QueuedDataStage* ms = static_cast<QueuedDataStage*>(ss->getChildren()[0].get());
 
         // Have sort read in data from the queued data stage.
         const int firstRead = 5;
@@ -345,7 +345,7 @@ public:
             coll->updateDocument(&_txn, *it, oldDoc, newDoc, false, false, NULL, args);
             wuow.commit();
         }
-        exec->restoreState(&_txn);
+        exec->restoreState();
 
         // Read the rest of the data from the queued data stage.
         while (!ms->isEOF()) {
@@ -364,7 +364,7 @@ public:
                 wuow.commit();
             }
         }
-        exec->restoreState(&_txn);
+        exec->restoreState();
 
         // Verify that it's sorted, the right number of documents are returned, and they're all
         // in the expected range.
@@ -426,7 +426,7 @@ public:
 
         unique_ptr<PlanExecutor> exec(makePlanExecutorWithSortStage(coll));
         SortStage* ss = static_cast<SortStage*>(exec->getRootStage());
-        QueuedDataStage* ms = static_cast<QueuedDataStage*>(ss->getChildren()[0]);
+        QueuedDataStage* ms = static_cast<QueuedDataStage*>(ss->getChildren()[0].get());
 
         const int firstRead = 10;
         // Have sort read in data from the queued data stage.
@@ -444,7 +444,7 @@ public:
             coll->deleteDocument(&_txn, *it++, false, false, NULL);
             wuow.commit();
         }
-        exec->restoreState(&_txn);
+        exec->restoreState();
 
         // Read the rest of the data from the queued data stage.
         while (!ms->isEOF()) {
@@ -461,7 +461,7 @@ public:
                 wuow.commit();
             }
         }
-        exec->restoreState(&_txn);
+        exec->restoreState();
 
         // Regardless of storage engine, all the documents should come back with their objects
         int count = 0;

@@ -84,7 +84,7 @@ public:
     }
 
     RemoteCommandTargeterMock* targeter() {
-        return &_targeter;
+        return RemoteCommandTargeterMock::get(_shardRegistry->getShard("config")->getTargeter());
     }
 
     DistLockCatalogImpl* catalog() {
@@ -101,8 +101,6 @@ public:
 
 private:
     void setUp() override {
-        _targeter.setFindHostReturnValue(dummyHost);
-
         auto networkUniquePtr = stdx::make_unique<executor::NetworkInterfaceMock>();
         executor::NetworkInterfaceMock* network = networkUniquePtr.get();
         auto executor =
@@ -110,15 +108,14 @@ private:
 
         _networkTestEnv = stdx::make_unique<NetworkTestEnv>(executor.get(), network);
 
-        _shardRegistry =
-            stdx::make_unique<ShardRegistry>(stdx::make_unique<RemoteCommandTargeterFactoryMock>(),
-                                             std::move(executor),
-                                             network,
-                                             &_catalogMgr);
+        _shardRegistry = stdx::make_unique<ShardRegistry>(
+            stdx::make_unique<RemoteCommandTargeterFactoryMock>(), std::move(executor), network);
+        _shardRegistry->init(&_catalogMgr);
         _shardRegistry->startup();
 
-        _distLockCatalog =
-            stdx::make_unique<DistLockCatalogImpl>(&_targeter, _shardRegistry.get(), kWTimeout);
+        _distLockCatalog = stdx::make_unique<DistLockCatalogImpl>(_shardRegistry.get(), kWTimeout);
+
+        targeter()->setFindHostReturnValue(dummyHost);
     }
 
     void tearDown() override {
@@ -129,7 +126,6 @@ private:
 
     std::unique_ptr<executor::NetworkTestEnv> _networkTestEnv;
 
-    RemoteCommandTargeterMock _targeter;
     CatalogManagerMock _catalogMgr;
 
     std::unique_ptr<ShardRegistry> _shardRegistry;

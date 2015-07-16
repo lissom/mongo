@@ -73,8 +73,6 @@ public:
 
     Status getCollections(const std::string* dbName, std::vector<CollectionType>* collections);
 
-    Status dropCollection(OperationContext* txn, const std::string& collectionNs);
-
     Status getDatabasesForShard(const std::string& shardName,
                                 std::vector<std::string>* dbs) override;
 
@@ -90,8 +88,6 @@ public:
                                            const ChunkType& chunk) override;
 
     Status getAllShards(std::vector<ShardType>* shards) override;
-
-    bool isShardHost(const ConnectionString& shardConnectionString) override;
 
     /**
      * Grabs a distributed lock and runs the command on all config servers.

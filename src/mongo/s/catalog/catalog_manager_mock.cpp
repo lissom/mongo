@@ -101,10 +101,6 @@ Status CatalogManagerMock::getCollections(const string* dbName,
     return Status::OK();
 }
 
-Status CatalogManagerMock::dropCollection(OperationContext* txn, const string& collectionNs) {
-    return Status::OK();
-}
-
 Status CatalogManagerMock::getDatabasesForShard(const string& shardName, vector<string>* dbs) {
     return Status::OK();
 }
@@ -128,10 +124,6 @@ StatusWith<string> CatalogManagerMock::getTagForChunk(const string& collectionNs
 
 Status CatalogManagerMock::getAllShards(vector<ShardType>* shards) {
     return Status::OK();
-}
-
-bool CatalogManagerMock::isShardHost(const ConnectionString& shardConnectionString) {
-    return false;
 }
 
 bool CatalogManagerMock::runUserManagementWriteCommand(const string& commandName,

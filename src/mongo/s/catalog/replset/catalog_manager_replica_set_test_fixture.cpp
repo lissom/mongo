@@ -85,6 +85,7 @@ void CatalogManagerReplSetTestFixture::setUp() {
         stdx::make_unique<repl::ReplicationExecutor>(network.release(), nullptr, 0));
 
     _networkTestEnv = stdx::make_unique<NetworkTestEnv>(executor.get(), _mockNetwork);
+    _executor = executor.get();
 
     std::unique_ptr<CatalogManagerReplicaSet> cm(stdx::make_unique<CatalogManagerReplicaSet>());
 
@@ -98,7 +99,8 @@ void CatalogManagerReplSetTestFixture::setUp() {
     _targeterFactory->addTargeterToReturn(cm->connectionString(), std::move(configTargeter));
 
     auto shardRegistry(stdx::make_unique<ShardRegistry>(
-        std::move(targeterFactory), std::move(executor), _mockNetwork, cm.get()));
+        std::move(targeterFactory), std::move(executor), _mockNetwork));
+    shardRegistry->init(cm.get());
     shardRegistry->startup();
 
     // For now initialize the global grid object. All sharding objects will be accessible
@@ -114,6 +116,12 @@ void CatalogManagerReplSetTestFixture::tearDown() {
     _opCtx.reset();
     _client.reset();
     _service.reset();
+}
+
+void CatalogManagerReplSetTestFixture::shutdownExecutor() {
+    if (_executor) {
+        _executor->shutdown();
+    }
 }
 
 CatalogManagerReplicaSet* CatalogManagerReplSetTestFixture::catalogManager() const {

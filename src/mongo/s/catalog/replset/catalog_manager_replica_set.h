@@ -77,8 +77,6 @@ public:
     Status getCollections(const std::string* dbName,
                           std::vector<CollectionType>* collections) override;
 
-    Status dropCollection(OperationContext* txn, const std::string& collectionNs) override;
-
     Status getDatabasesForShard(const std::string& shardName,
                                 std::vector<std::string>* dbs) override;
 
@@ -94,8 +92,6 @@ public:
                                            const ChunkType& chunk) override;
 
     Status getAllShards(std::vector<ShardType>* shards) override;
-
-    bool isShardHost(const ConnectionString& shardConnectionString) override;
 
     bool runUserManagementWriteCommand(const std::string& commandName,
                                        const std::string& dbname,

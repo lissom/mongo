@@ -58,13 +58,13 @@ CollectionScan::CollectionScan(OperationContext* txn,
                                const CollectionScanParams& params,
                                WorkingSet* workingSet,
                                const MatchExpression* filter)
-    : _txn(txn),
+    : PlanStage(kStageType),
+      _txn(txn),
       _workingSet(workingSet),
       _filter(filter),
       _params(params),
       _isDead(false),
-      _wsidForFetch(_workingSet->allocate()),
-      _commonStats(kStageType) {
+      _wsidForFetch(_workingSet->allocate()) {
     // Explain reports the direction of the collection scan.
     _specificStats.direction = params.direction;
 }
@@ -191,9 +191,9 @@ bool CollectionScan::isEOF() {
     return _commonStats.isEOF || _isDead;
 }
 
-void CollectionScan::invalidate(OperationContext* txn, const RecordId& id, InvalidationType type) {
-    ++_commonStats.invalidates;
-
+void CollectionScan::doInvalidate(OperationContext* txn,
+                                  const RecordId& id,
+                                  InvalidationType type) {
     // We don't care about mutations since we apply any filters to the result when we (possibly)
     // return it.
     if (INVALIDATION_DELETION != type) {
@@ -214,29 +214,32 @@ void CollectionScan::invalidate(OperationContext* txn, const RecordId& id, Inval
     }
 }
 
-void CollectionScan::saveState() {
-    _txn = NULL;
-    ++_commonStats.yields;
+void CollectionScan::doSaveState() {
     if (_cursor) {
         _cursor->savePositioned();
     }
 }
 
-void CollectionScan::restoreState(OperationContext* opCtx) {
-    invariant(_txn == NULL);
-    _txn = opCtx;
-    ++_commonStats.unyields;
+void CollectionScan::doRestoreState() {
     if (_cursor) {
-        if (!_cursor->restore(opCtx)) {
-            warning() << "Could not restore RecordCursor for CollectionScan: " << opCtx->getNS();
+        if (!_cursor->restore()) {
+            warning() << "Could not restore RecordCursor for CollectionScan: " << _txn->getNS();
             _isDead = true;
         }
     }
 }
 
-vector<PlanStage*> CollectionScan::getChildren() const {
-    vector<PlanStage*> empty;
-    return empty;
+void CollectionScan::doDetachFromOperationContext() {
+    _txn = NULL;
+    if (_cursor)
+        _cursor->detachFromOperationContext();
+}
+
+void CollectionScan::doReattachToOperationContext(OperationContext* opCtx) {
+    invariant(_txn == NULL);
+    _txn = opCtx;
+    if (_cursor)
+        _cursor->reattachToOperationContext(opCtx);
 }
 
 unique_ptr<PlanStageStats> CollectionScan::getStats() {
@@ -250,10 +253,6 @@ unique_ptr<PlanStageStats> CollectionScan::getStats() {
     unique_ptr<PlanStageStats> ret = make_unique<PlanStageStats>(_commonStats, STAGE_COLLSCAN);
     ret->specific = make_unique<CollectionScanStats>(_specificStats);
     return ret;
-}
-
-const CommonStats* CollectionScan::getCommonStats() const {
-    return &_commonStats;
 }
 
 const SpecificStats* CollectionScan::getSpecificStats() const {

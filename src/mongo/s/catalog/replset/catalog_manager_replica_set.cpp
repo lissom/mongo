@@ -436,11 +436,6 @@ Status CatalogManagerReplicaSet::getCollections(const std::string* dbName,
     return Status::OK();
 }
 
-Status CatalogManagerReplicaSet::dropCollection(OperationContext* txn,
-                                                const std::string& collectionNs) {
-    return notYetImplemented;
-}
-
 void CatalogManagerReplicaSet::logAction(const ActionLogType& actionLog) {
     if (_actionLogCollectionCreated.load() == 0) {
         BSONObj createCmd = BSON("create" << ActionLogType::ConfigNS << "capped" << true << "size"
@@ -715,10 +710,6 @@ Status CatalogManagerReplicaSet::getAllShards(vector<ShardType>* shards) {
     }
 
     return Status::OK();
-}
-
-bool CatalogManagerReplicaSet::isShardHost(const ConnectionString& connectionString) {
-    return false;
 }
 
 bool CatalogManagerReplicaSet::runUserManagementWriteCommand(const std::string& commandName,

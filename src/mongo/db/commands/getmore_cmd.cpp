@@ -52,10 +52,15 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
 #include "mongo/util/scopeguard.h"
 
 namespace mongo {
+
+namespace {
+MONGO_FP_DECLARE(rsStopGetMoreCmd);
+}  // namespace
 
 /**
  * A command for running getMore() against an existing cursor registered with a CursorManager.
@@ -198,6 +203,14 @@ public:
                                      << "', but cursor belongs to a different namespace"));
         }
 
+        if (request.nss.isOplog() && MONGO_FAIL_POINT(rsStopGetMoreCmd)) {
+            return appendCommandStatus(
+                result,
+                Status(ErrorCodes::CommandFailed,
+                       str::stream() << "getMore on " << request.nss.ns()
+                                     << " rejected due to active fail point rsStopGetMoreCmd"));
+        }
+
         const bool hasOwnMaxTime = CurOp::get(txn)->isMaxTimeSet();
 
         // Validation related to awaitData.
@@ -231,14 +244,8 @@ public:
         // On early return, get rid of the cursor.
         ScopeGuard cursorFreer = MakeGuard(&GetMoreCmd::cleanupCursor, txn, &ccPin, request);
 
-        if (!cursor->hasRecoveryUnit()) {
-            // Start using a new RecoveryUnit.
-            cursor->setOwnedRecoveryUnit(
-                getGlobalServiceContext()->getGlobalStorageEngine()->newRecoveryUnit());
-        }
-
-        // Swap RecoveryUnit(s) between the ClientCursor and OperationContext.
-        ScopedRecoveryUnitSwapper ruSwapper(cursor, txn);
+        if (cursor->isReadCommitted())
+            uassertStatusOK(txn->recoveryUnit()->setReadFromMajorityCommittedSnapshot());
 
         // Reset timeout timer on the cursor since the cursor is still in use.
         cursor->setIdleTime(0);
@@ -257,7 +264,8 @@ public:
         }
 
         PlanExecutor* exec = cursor->getExecutor();
-        exec->restoreState(txn);
+        exec->reattachToOperationContext(txn);
+        exec->restoreState();
 
         // If we're tailing a capped collection, retrieve a monotonically increasing insert
         // counter.
@@ -278,7 +286,7 @@ public:
         }
 
         // If this is an await data cursor, and we hit EOF without generating any results, then
-        // we block waiting for new oplog data to arrive.
+        // we block waiting for new data to arrive.
         if (isCursorAwaitData(cursor) && state == PlanExecutor::IS_EOF && numResults == 0) {
             // Retrieve the notifier which we will wait on until new data arrives. We make sure
             // to do this in the lock because once we drop the lock it is possible for the
@@ -296,7 +304,7 @@ public:
             notifier.reset();
 
             ctx.reset(new AutoGetCollectionForRead(txn, request.nss));
-            exec->restoreState(txn);
+            exec->restoreState();
 
             // We woke up because either the timed_wait expired, or there was more data. Either
             // way, attempt to generate another batch of results.
@@ -310,6 +318,7 @@ public:
             respondWithId = request.cursorid;
 
             exec->saveState();
+            exec->detachFromOperationContext();
 
             // If maxTimeMS was set directly on the getMore rather than being rolled over
             // from a previous find, then don't roll remaining micros over to the next
@@ -319,12 +328,6 @@ public:
             }
 
             cursor->incPos(numResults);
-
-            if (isCursorTailable(cursor) && state == PlanExecutor::IS_EOF) {
-                // Rather than swapping their existing RU into the client cursor, tailable
-                // cursors should get a new recovery unit.
-                ruSwapper.dismiss();
-            }
         } else {
             CurOp::get(txn)->debug().cursorExhausted = true;
         }
