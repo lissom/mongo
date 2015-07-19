@@ -5,6 +5,7 @@
  *    it under the terms of the GNU Affero General Public License, version 3,
  *    as published by the Free Software Foundation.
  *
+ *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
  *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -26,46 +27,27 @@
  *    it in the license file.
  */
 
-#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kQuery
+#pragma once
 
-#include "mongo/platform/basic.h"
+#include "mongo/db/index/s2_indexing_params.h"
+#include "mongo/db/query/index_bounds.h"
+#include "third_party/s2/s2cellid.h"
 
-#include "mongo/s/query/cluster_client_cursor.h"
-
-#include "mongo/util/scopeguard.h"
-
+// Functions for abstracting S2CellIds and index keys
 namespace mongo {
 
-ClusterClientCursor::ClusterClientCursor(executor::TaskExecutor* executor,
-                                         const ClusterClientCursorParams& params,
-                                         const std::vector<HostAndPort>& remotes)
-    : _executor(executor), _params(params), _accc(executor, params, remotes) {}
+long long S2CellIdToIndexKey(const S2CellId& cellId);
 
-StatusWith<boost::optional<BSONObj>> ClusterClientCursor::next() {
-    // On error, kill the underlying ACCC.
-    ScopeGuard cursorKiller = MakeGuard(&ClusterClientCursor::kill, this);
+// Initializes a new S2CellId from the passed index key
+S2CellId S2CellIdFromIndexKey(long long indexKey);
 
-    while (!_accc.ready()) {
-        auto nextEventStatus = _accc.nextEvent();
-        if (!nextEventStatus.isOK()) {
-            return nextEventStatus.getStatus();
-        }
-        auto event = nextEventStatus.getValue();
+void S2CellIdsToIntervals(const std::vector<S2CellId>& intervalSet,
+                          const S2IndexingParams& indexParams,
+                          OrderedIntervalList* oilOut);
 
-        // Block until there are further results to return.
-        _executor->waitForEvent(event);
-    }
-
-    auto statusWithNext = _accc.nextReady();
-    if (statusWithNext.isOK()) {
-        cursorKiller.Dismiss();
-    }
-    return statusWithNext;
+// Creates an ordered interval list from range intervals and
+// traverses cell parents for exact intervals up to coarsestIndexedLevel
+void S2CellIdsToIntervalsWithParents(const std::vector<S2CellId>& interval,
+                                     const S2IndexingParams& indexParams,
+                                     OrderedIntervalList* out);
 }
-
-void ClusterClientCursor::kill() {
-    auto killEvent = _accc.kill();
-    _executor->waitForEvent(killEvent);
-}
-
-}  // namespace mongo

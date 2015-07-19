@@ -28,7 +28,7 @@
 
 #include "mongo/platform/basic.h"
 
-#include "mongo/s/query/cluster_client_cursor.h"
+#include "mongo/s/query/async_cluster_client_cursor.h"
 
 #include "mongo/db/json.h"
 #include "mongo/db/query/getmore_response.h"
@@ -42,6 +42,9 @@
 namespace mongo {
 
 namespace {
+
+using executor::RemoteCommandRequest;
+using executor::RemoteCommandResponse;
 
 class AsyncClusterClientCursorTest : public repl::ReplicationExecutorTest {
 public:

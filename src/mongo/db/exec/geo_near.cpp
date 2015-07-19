@@ -45,6 +45,7 @@
 #include "mongo/db/query/expression_index.h"
 #include "mongo/db/query/expression_index_knobs.h"
 #include "mongo/db/index/expression_params.h"
+#include "mongo/db/index/s2_keys.h"
 #include "mongo/util/log.h"
 
 #include <algorithm>
@@ -810,6 +811,7 @@ GeoNear2DSphereStage::GeoNear2DSphereStage(const GeoNearParams& nearParams,
       _boundsIncrement(0.0) {
     _specificStats.keyPattern = s2Index->keyPattern();
     _specificStats.indexName = s2Index->indexName();
+    ExpressionParams::parse2dsphereParams(s2Index->infoObj(), &_indexParams);
 }
 
 GeoNear2DSphereStage::~GeoNear2DSphereStage() {}
@@ -823,18 +825,31 @@ S2Region* buildS2Region(const R2Annulus& sphereBounds) {
 
     vector<S2Region*> regions;
 
-    S2Cap innerCap = S2Cap::FromAxisAngle(
-        latLng.ToPoint(), S1Angle::Radians(sphereBounds.getInner() / kRadiusOfEarthInMeters));
-    innerCap = innerCap.Complement();
-    regions.push_back(new S2Cap(innerCap));
+    const double inner = sphereBounds.getInner();
+    const double outer = sphereBounds.getOuter();
+
+    if (inner > 0) {
+        // TODO: Currently a workaround to fix occasional floating point errors
+        // in S2, where sometimes points near the axis will not be returned
+        // if inner == 0
+        S2Cap innerCap = S2Cap::FromAxisAngle(latLng.ToPoint(),
+                                              S1Angle::Radians(inner / kRadiusOfEarthInMeters));
+        innerCap = innerCap.Complement();
+        regions.push_back(new S2Cap(innerCap));
+    }
 
     // We only need to max bound if this is not a full search of the Earth
     // Using the constant here is important since we use the min of kMaxEarthDistance
     // and the actual bounds passed in to set up the search area.
-    if (sphereBounds.getOuter() < kMaxEarthDistanceInMeters) {
-        S2Cap outerCap = S2Cap::FromAxisAngle(
-            latLng.ToPoint(), S1Angle::Radians(sphereBounds.getOuter() / kRadiusOfEarthInMeters));
+    if (outer < kMaxEarthDistanceInMeters) {
+        S2Cap outerCap = S2Cap::FromAxisAngle(latLng.ToPoint(),
+                                              S1Angle::Radians(outer / kRadiusOfEarthInMeters));
         regions.push_back(new S2Cap(outerCap));
+    }
+
+    // if annulus is entire world, return a full cap
+    if (regions.empty()) {
+        regions.push_back(new S2Cap(S2Cap::Full()));
     }
 
     // Takes ownership of caps
@@ -847,8 +862,12 @@ S2Region* buildS2Region(const R2Annulus& sphereBounds) {
  */
 class TwoDSphereKeyInRegionExpression : public LeafMatchExpression {
 public:
-    TwoDSphereKeyInRegionExpression(const R2Annulus& bounds, StringData twoDSpherePath)
-        : LeafMatchExpression(INTERNAL_2DSPHERE_KEY_IN_REGION), _region(buildS2Region(bounds)) {
+    TwoDSphereKeyInRegionExpression(const R2Annulus& bounds,
+                                    S2IndexVersion indexVersion,
+                                    StringData twoDSpherePath)
+        : LeafMatchExpression(INTERNAL_2DSPHERE_KEY_IN_REGION),
+          _region(buildS2Region(bounds)),
+          _indexVersion(indexVersion) {
         initPath(twoDSpherePath);
     }
 
@@ -859,9 +878,16 @@ public:
     }
 
     virtual bool matchesSingleElement(const BSONElement& e) const {
-        // Something has gone terribly wrong if this doesn't hold.
-        invariant(String == e.type());
-        S2Cell keyCell = S2Cell(S2CellId::FromString(e.str()));
+        S2Cell keyCell;
+        if (_indexVersion < S2_INDEX_VERSION_3) {
+            // Something has gone terribly wrong if this doesn't hold.
+            invariant(String == e.type());
+            keyCell = S2Cell(S2CellId::FromString(e.str()));
+        } else {
+            // Something has gone terribly wrong if this doesn't hold.
+            invariant(NumberLong == e.type());
+            keyCell = S2Cell(S2CellIdFromIndexKey(e.numberLong()));
+        }
         return _region->MayIntersect(keyCell);
     }
 
@@ -889,6 +915,7 @@ public:
 
 private:
     const unique_ptr<S2Region> _region;
+    const S2IndexVersion _indexVersion;
 };
 }
 
@@ -897,15 +924,17 @@ class GeoNear2DSphereStage::DensityEstimator {
 public:
     DensityEstimator(PlanStage::Children* children,
                      const IndexDescriptor* s2Index,
-                     const GeoNearParams* nearParams)
-        : _children(children), _s2Index(s2Index), _nearParams(nearParams), _currentLevel(0) {
-        S2IndexingParams params;
-        ExpressionParams::parse2dsphereParams(_s2Index->infoObj(), &params);
-        // Since cellId.AppendVertexNeighbors(level, output) requires level < cellId.level(),
-        // we have to start to find documents at most S2::kMaxCellLevel - 1. Thus the finest
-        // search area is 16 * finest cell area at S2::kMaxCellLevel, which is less than
-        // (1.4 inch X 1.4 inch) on the earth.
-        _currentLevel = std::max(0, params.finestIndexedLevel - 1);
+                     const GeoNearParams* nearParams,
+                     const S2IndexingParams& indexParams)
+        : _children(children),
+          _s2Index(s2Index),
+          _nearParams(nearParams),
+          _indexParams(indexParams),
+          _currentLevel(0) {
+        // cellId.AppendVertexNeighbors(level, output) requires level < finest,
+        // so we use the minimum of max_level - 1 and the user specified finest
+        int level = std::min(S2::kMaxCellLevel - 1, internalQueryS2GeoFinestLevel);
+        _currentLevel = std::max(0, level);
     }
 
     // Search for a document in neighbors at current level.
@@ -922,6 +951,7 @@ private:
     PlanStage::Children* _children;    // Points to PlanStage::_children in the NearStage.
     const IndexDescriptor* _s2Index;   // Not owned here.
     const GeoNearParams* _nearParams;  // Not owned here.
+    const S2IndexingParams _indexParams;
     int _currentLevel;
     IndexScan* _indexScan = nullptr;  // Owned in PlanStage::_children.
 };
@@ -952,22 +982,7 @@ void GeoNear2DSphereStage::DensityEstimator::buildIndexScan(OperationContext* tx
     invariant(_currentLevel < centerId.level());
     centerId.AppendVertexNeighbors(_currentLevel, &neighbors);
 
-    // Convert S2CellId to string and sort
-    vector<string> neighborKeys;
-    for (vector<S2CellId>::const_iterator it = neighbors.begin(); it != neighbors.end(); it++) {
-        neighborKeys.push_back(it->toString());
-    }
-    std::sort(neighborKeys.begin(), neighborKeys.end());
-
-    for (vector<string>::const_iterator it = neighborKeys.begin(); it != neighborKeys.end(); it++) {
-        // construct interval [*it, end) for this cell.
-        std::string end = *it;
-        end[end.size() - 1]++;
-        coveredIntervals->intervals.push_back(
-            IndexBoundsBuilder::makeRangeInterval(*it, end, true, false));
-    }
-
-    invariant(coveredIntervals->isValidFor(1));
+    S2CellIdsToIntervals(neighbors, _indexParams, coveredIntervals);
 
     // Index scan
     invariant(!_indexScan);
@@ -1023,7 +1038,8 @@ PlanStage::StageState GeoNear2DSphereStage::initialize(OperationContext* txn,
                                                        Collection* collection,
                                                        WorkingSetID* out) {
     if (!_densityEstimator) {
-        _densityEstimator.reset(new DensityEstimator(&_children, _s2Index, &_nearParams));
+        _densityEstimator.reset(
+            new DensityEstimator(&_children, _s2Index, &_nearParams, _indexParams));
     }
 
     double estimatedDistance;
@@ -1103,10 +1119,9 @@ StatusWith<NearStage::CoveredInterval*>  //
     OrderedIntervalList* coveredIntervals = &scanParams.bounds.fields[s2FieldPosition];
 
     TwoDSphereKeyInRegionExpression* keyMatcher =
-        new TwoDSphereKeyInRegionExpression(_currBounds, s2Field);
+        new TwoDSphereKeyInRegionExpression(_currBounds, _indexParams.indexVersion, s2Field);
 
-    ExpressionMapping::cover2dsphere(
-        keyMatcher->getRegion(), _s2Index->infoObj(), coveredIntervals);
+    ExpressionMapping::cover2dsphere(keyMatcher->getRegion(), _indexParams, coveredIntervals);
 
     // IndexScan owns the hash matcher
     IndexScan* scan = new IndexScanWithMatch(txn, scanParams, workingSet, keyMatcher);

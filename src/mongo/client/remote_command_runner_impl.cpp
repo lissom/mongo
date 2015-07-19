@@ -42,6 +42,9 @@
 namespace mongo {
 namespace {
 
+using executor::RemoteCommandRequest;
+using executor::RemoteCommandResponse;
+
 /**
  * Calculates the timeout for a network operation expiring at "expDate", given
  * that it is now "nowDate".
@@ -185,6 +188,13 @@ Status runDownconvertedGetMoreCommand(DBClientConnection* conn,
 
     std::unique_ptr<DBClientCursor> cursor =
         conn->getMore(ns, req.cursorid, req.batchSize.value_or(0));
+
+    if (!cursor) {
+        return {ErrorCodes::HostUnreachable,
+                str::stream() << "cursor initialization failed due to connection problems with "
+                              << conn->getServerAddress()};
+    }
+
     cursor->decouple();
 
     Status status = getStatusFromCursorResult(*cursor);
