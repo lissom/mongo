@@ -19,15 +19,15 @@ namespace network {
  */
 //TODO: MONGO_ALIGN_TO_CACHE
 //TODO: Init function to create 1000 idle ports, maybe based on shards?
-class AsyncConnectionPool {
+class AsyncClientPool {
 public:
-    MONGO_DISALLOW_COPYING(AsyncConnectionPool);
+    MONGO_DISALLOW_COPYING(AsyncClientPool);
     //TODO: Remove std::function and replace with direct calls, type erase is expensive
     using MessageReadyHandler = std::function<void(AsyncMessagePort*)>;
-    AsyncConnectionPool(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
+    AsyncClientPool(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
             _server(server), _messageReadyHandler(messageReadyHandler) {
     }
-    ~AsyncConnectionPool();
+    ~AsyncClientPool();
 
     void newConnHandler(asio::ip::tcp::socket&& socket);
     // The port is connected starting

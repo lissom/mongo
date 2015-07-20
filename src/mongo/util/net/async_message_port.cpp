@@ -149,7 +149,7 @@ void AsyncMessagePort::setState(State newState) {
     }
 }
 
-AsyncConnectionPool::~AsyncConnectionPool() {
+AsyncClientPool::~AsyncClientPool() {
 	fassert(-6, _activeConns.empty());
 	FreeQueue::Container toFree;
 	_freeConns.swap(&toFree);

@@ -44,7 +44,7 @@ namespace network {
  */
 using BufferSet = std::vector< std::pair<char*, int>>;
 const auto HEADERSIZE = size_t(sizeof(MSGHEADER::Value));
-class AsyncConnectionPool;
+class AsyncClientPool;
 class AsioAsyncServer;
 
 //TODO: Test array& vs individual

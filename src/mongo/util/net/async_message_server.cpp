@@ -37,7 +37,7 @@ const std::string NETWORK_PREFIX = "conn";
 
 AsioAsyncServer::AsioAsyncServer(Options options, AbstractMessagePipeline* const pipeline) :
         _connections(
-                new AsyncConnectionPool(this,
+                new AsyncClientPool(this,
                         [this](AsyncMessagePort* const port) {this->handlerMessageReady(port);})),
 						_pipeline(pipeline), _options(std::move(options)),
 						_timerThread([this] {updateTime();}) {

@@ -65,7 +65,7 @@ private:
     void updateTime();
 
     //Connections can outlive the server, no point presently
-    std::unique_ptr<AsyncConnectionPool> _connections;
+    std::unique_ptr<AsyncClientPool> _connections;
     asio::io_service _ioService;
     //Holds the end points and currently waiting socket
     std::vector<boost::thread> _threads;

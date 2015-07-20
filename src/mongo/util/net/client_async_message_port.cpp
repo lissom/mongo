@@ -15,7 +15,7 @@
 namespace mongo {
 namespace network {
 
-ClientAsyncMessagePort::ClientAsyncMessagePort(AsyncConnectionPool* const owner,
+ClientAsyncMessagePort::ClientAsyncMessagePort(AsyncClientPool* const owner,
 		asio::ip::tcp::socket socket) :
     	AsyncMessagePort(std::move(socket)), _owner(owner) {
 	rawInit();
