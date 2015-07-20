@@ -10,6 +10,7 @@
 namespace mongo {
 namespace network {
 
+// TODO: create a holder for all of this
 AsyncClusterConnection::AsyncClusterConnection(asio::ip::tcp::socket socket):
     AsyncMessagePort(std::move(socket)) {
 }

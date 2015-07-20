@@ -18,7 +18,8 @@ namespace network {
 
 std::atomic<uint64_t> connectionCount{};
 
-AsyncMessagePort::AsyncMessagePort(asio::ip::tcp::socket&& socket) : _socket(std::move(socket)), _buf(0) {
+AsyncMessagePort::AsyncMessagePort(asio::ip::tcp::socket&& socket) : _socket(std::move(socket)),
+        _buf(0) {
 	rawInit();
 }
 

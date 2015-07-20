@@ -36,12 +36,12 @@ const size_t NETWORK_DEFAULT_STACK_SIZE = 1024 * 1024;
 /*
  *  Network MessageServer using ASIO
  */
-class AsioAsyncServer: public MessageServer {
+class AsioAsyncServer final: public MessageServer {
 public:
     MONGO_DISALLOW_COPYING(AsioAsyncServer);
     //using Options = MessageServer::Options;
     AsioAsyncServer(const Options options, AbstractMessagePipeline* const pipeline);
-    ~AsioAsyncServer() final;
+    ~AsioAsyncServer();
     void run() final;
 
     /*
