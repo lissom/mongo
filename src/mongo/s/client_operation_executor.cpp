@@ -161,6 +161,7 @@ void ClientOperationExecutor::initializeCommand() {
 
 }
 
+// TODO: retry Stale config exception
 void ClientOperationExecutor::processCommand() {
     safeCall([this] {
             initializeCommon();

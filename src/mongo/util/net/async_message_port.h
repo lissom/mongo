@@ -44,7 +44,7 @@ namespace network {
  */
 using BufferSet = std::vector< std::pair<char*, int>>;
 const auto HEADERSIZE = size_t(sizeof(MSGHEADER::Value));
-class Connections;
+class AsyncConnectionPool;
 class AsioAsyncServer;
 
 //TODO: Test array& vs individual
@@ -83,7 +83,7 @@ public:
         kInit, kWait, kReceieve, kSend, kOperation, kError, kComplete
     };
 
-    AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket&& socket);
+    AsyncMessagePort(asio::ip::tcp::socket&& socket);
     virtual ~AsyncMessagePort();
     /*
      * initialize and retire implement pooling ctor and dtor
@@ -168,8 +168,10 @@ public:
 protected:
     virtual void asyncDoneReceievedMessage() = 0;
     virtual void asyncDoneSendMessage() = 0;
-    virtual void asyncErrorSend() { };
-    virtual void asyncErrorReceive() { };
+    //Last function called on error before unwind
+    virtual void asyncErrorSend() = 0;
+    //Last function called on error before unwind
+    virtual void asyncErrorReceive() = 0;
     void complete() { setState(State::kComplete); }
     //Used when returning the connection the pool for instance
     void wait() { setState(State::kWait); }
@@ -191,8 +193,6 @@ protected:
                                 _threadName,
                                 logger::LogSeverity::Log());
     }
-
-    Connections* const _owner;
 
 private:
     void rawInit();
@@ -222,12 +222,10 @@ private:
     void onReceiveError() {
         setState(State::kError);
         asyncErrorReceive();
-        asyncSocketShutdownRemove();
     }
     void onSendError() {
         setState(State::kError);
         asyncErrorSend();
-        asyncSocketShutdownRemove();
     }
 
     bool validMsgSize(MessageSize msgSize) {
@@ -260,45 +258,6 @@ private:
     // TODO: Loglevel 5 print timing for the message
     Timer _networkMessageTimer;
     std::string _threadName;
-};
-
-/*
- * TODO: NUMA aware handling will be added one day, so NONE of this is static
- * All functions starting with async are calling from async functions, should not
- * take locks if at all possible
- */
-//TODO: MONGO_ALIGN_TO_CACHE
-//TODO: Init function to create 1000 idle ports, maybe based on shards?
-class Connections {
-public:
-	MONGO_DISALLOW_COPYING(Connections);
-	//TODO: Remove std::function and replace with direct calls, type erase is expensive
-	using MessageReadyHandler = std::function<void(AsyncMessagePort*)>;
-    Connections(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
-            _server(server), _messageReadyHandler(messageReadyHandler) {
-    }
-    ~Connections();
-    void newConnHandler(asio::ip::tcp::socket&& socket);
-    //Passing message, which shouldn't allocate any buffers
-    void handlerOperationReady(AsyncMessagePort* port);
-    bool getCachedConn(AsyncMessagePort** port) {
-    	return _freeConns.pop(port);
-    }
-    const ConnStats& getStats() const {
-        return _stats;
-    }
-
-private:
-    friend class AsyncMessagePort;
-    using FreeQueue = ThreadSafeQueue<AsyncMessagePort*>;
-
-    void handlerPortClosed(AsyncMessagePort* port);
-
-    AsioAsyncServer* const _server;
-    MessageReadyHandler _messageReadyHandler;
-    UnboundedContainer<AsyncMessagePort*> _activeConns;
-    FreeQueue _freeConns;
-    ConnStats _stats;
 };
 
 } //namespace mongo

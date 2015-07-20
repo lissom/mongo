@@ -41,6 +41,8 @@ env.Library(
 env.Library(
     target='network',
     source=[
+	"async_connection_pool.cpp",
+	"async_client_connection.cpp",
         "async_message_server.cpp",
         "async_message_port.cpp",
         "client_async_message_port.cpp",

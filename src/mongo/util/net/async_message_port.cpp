@@ -18,8 +18,7 @@ namespace network {
 
 std::atomic<uint64_t> connectionCount{};
 
-AsyncMessagePort::AsyncMessagePort(Connections* const owner, asio::ip::tcp::socket&& socket) :
-        _owner(owner), _socket(std::move(socket)), _buf(0) {
+AsyncMessagePort::AsyncMessagePort(asio::ip::tcp::socket&& socket) : _socket(std::move(socket)), _buf(0) {
 	rawInit();
 }
 
@@ -27,6 +26,8 @@ AsyncMessagePort::~AsyncMessagePort() {
     //This object should only be destroyed if a runner cannot call back into it
     //Ensure there is no possibility of a _runner that can calling back
     fassert(-6, safeToDelete() == true);
+    if (_socket.is_open())
+        retire();
 }
 
 void AsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
@@ -38,7 +39,6 @@ void AsyncMessagePort::rawInit() {
     _networkMessageTimer.reset();
 	setConnectionId(++connectionCount);
 	_state = State::kInit;
-	_owner->_activeConns.insert(this);
 }
 
 void AsyncMessagePort::retire() {
@@ -61,7 +61,7 @@ void AsyncMessagePort::asyncReceiveStart() {
 
 void AsyncMessagePort::asyncReceiveHeader() {
     static_assert(NETWORK_MIN_MESSAGE_SIZE > HEADERSIZE, "Min alloc must be > message header size");
-    _buf.clear();
+    //_buf.clear();
     _buf.resize(NETWORK_MIN_MESSAGE_SIZE);
     _socket.async_receive(asio::buffer(_buf.data(), HEADERSIZE),
             [this](const std::error_code& ec, const size_t len) {
@@ -110,10 +110,6 @@ void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code
     setState(State::kError);
 }
 
-void AsyncMessagePort::asyncSocketShutdownRemove() {
-    _owner->handlerPortClosed(this);
-}
-
 void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {
     fassert(-3, toSend.buf() != 0);
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
@@ -138,14 +134,13 @@ void AsyncMessagePort::asyncSendMessage() {
     _socket.async_send(asio::buffer(_buf.data(), msgSize),
             [this, msgSize] (const std::error_code& ec, const size_t len) {
                 if (!asyncStatusCheck("send", "message body", ec, len, msgSize))
-                    onSendError();
+                    return onSendError();
                 setState(State::kOperation);
                 asyncDoneSendMessage();
             });
 }
 
 void AsyncMessagePort::setState(State newState) {
-
     State currentState = _state;
     while (currentState != State::kComplete &&
     		!(currentState == State::kError && newState != State::kComplete)) {
@@ -154,7 +149,7 @@ void AsyncMessagePort::setState(State newState) {
     }
 }
 
-Connections::~Connections() {
+AsyncConnectionPool::~AsyncConnectionPool() {
 	fassert(-6, _activeConns.empty());
 	FreeQueue::Container toFree;
 	_freeConns.swap(&toFree);
@@ -162,16 +157,6 @@ Connections::~Connections() {
 		delete toFree.front();
 		toFree.pop();
 	}
-}
-
-void Connections::handlerOperationReady(AsyncMessagePort* conn) {
-    _messageReadyHandler(conn);
-}
-
-void Connections::handlerPortClosed(AsyncMessagePort* port) {
-	_activeConns.erase(port);
-	port->retire();
-	_freeConns.emplace(std::move(port));
 }
 
 } //namespace mongo

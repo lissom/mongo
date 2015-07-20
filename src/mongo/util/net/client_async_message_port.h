@@ -9,6 +9,7 @@
 
 #include "../../s/abstract_operation_executor.h"
 #include "mongo/util/net/async_message_port.h"
+#include "mongo/util/net/async_connection_pool.h"
 
 namespace mongo {
 namespace network {
@@ -20,8 +21,8 @@ public:
 
     MONGO_DISALLOW_COPYING(ClientAsyncMessagePort);
 
-    ClientAsyncMessagePort(Connections* const owner, asio::ip::tcp::socket socket);
-    ~ClientAsyncMessagePort() { /* All tear down should be in retire*/ };
+    ClientAsyncMessagePort(AsyncConnectionPool* const owner, asio::ip::tcp::socket socket);
+    ~ClientAsyncMessagePort() { /* All tear should have already taken place */ };
     void initialize(asio::ip::tcp::socket&& socket) override;
     void retire() override;
 
@@ -53,11 +54,16 @@ public:
         return client() != nullptr;
     }
 
+protected:
+    void asyncErrorSend() override;
+    void asyncErrorReceive() override;
+
 private:
     void rawInit();
     void asyncDoneReceievedMessage() override;
     void asyncDoneSendMessage() override;
 
+    AsyncConnectionPool* const _owner;
     PersistantState _persistantState;
     std::unique_ptr<AbstractOperationExecutor> _runner;
     size_t _clientWaitFails{};

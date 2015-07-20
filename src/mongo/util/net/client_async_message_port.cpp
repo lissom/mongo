@@ -15,9 +15,9 @@
 namespace mongo {
 namespace network {
 
-ClientAsyncMessagePort::ClientAsyncMessagePort(Connections* const owner,
+ClientAsyncMessagePort::ClientAsyncMessagePort(AsyncConnectionPool* const owner,
 		asio::ip::tcp::socket socket) :
-    	AsyncMessagePort(owner, std::move(socket)) {
+    	AsyncMessagePort(std::move(socket)), _owner(owner) {
 	rawInit();
 }
 
@@ -46,6 +46,7 @@ void ClientAsyncMessagePort::rawInit() {
 		//TODO: return error and shutdown port
 		fassert(-83, false);
 	}
+	_owner->handlerPortActive(this);
 	asyncReceiveStart();
 }
 
@@ -89,6 +90,14 @@ void ClientAsyncMessagePort::setOpRunner(std::unique_ptr<AbstractOperationExecut
 
 void ClientAsyncMessagePort::opRunnerComplete() {
 	_runner.reset();
+}
+
+void ClientAsyncMessagePort::asyncErrorSend() {
+    _owner->handlerPortClosed(this);
+}
+
+void ClientAsyncMessagePort::asyncErrorReceive() {
+    _owner->handlerPortClosed(this);
 }
 
 
