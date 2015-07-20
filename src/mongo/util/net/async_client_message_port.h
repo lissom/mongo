@@ -8,21 +8,21 @@
 #pragma once
 
 #include "../../s/abstract_operation_executor.h"
+#include "async_client_message_port_pool.h"
 #include "mongo/util/net/async_message_port.h"
-#include "mongo/util/net/async_client_pool.h"
 
 namespace mongo {
 namespace network {
 
 //TODO: Release the _runner after send
-class ClientAsyncMessagePort final : public AsyncMessagePort {
+class AsyncClientMessagePort final : public AsyncMessagePort {
 public:
     using PersistantState = ServiceContext::UniqueClient;
 
-    MONGO_DISALLOW_COPYING(ClientAsyncMessagePort);
+    MONGO_DISALLOW_COPYING(AsyncClientMessagePort);
 
-    ClientAsyncMessagePort(AsyncClientPool* const owner, asio::ip::tcp::socket socket);
-    ~ClientAsyncMessagePort() { /* All tear should have already taken place */ };
+    AsyncClientMessagePort(AsyncClientMessagePortPool* const owner, asio::ip::tcp::socket socket);
+    ~AsyncClientMessagePort() { /* All tear should have already taken place */ };
     void initialize(asio::ip::tcp::socket&& socket) override;
     void retire() override;
 
@@ -63,7 +63,7 @@ private:
     void asyncDoneReceievedMessage() override;
     void asyncDoneSendMessage() override;
 
-    AsyncClientPool* const _owner;
+    AsyncClientMessagePortPool* const _owner;
     PersistantState _persistantState;
     std::unique_ptr<AbstractOperationExecutor> _runner;
     size_t _clientWaitFails{};

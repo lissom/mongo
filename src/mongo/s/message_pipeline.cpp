@@ -13,7 +13,7 @@
 #include "commands/bulk_write_cmd_executor.h"
 #include "mongo/s/message_pipeline.h"
 #include "mongo/util/log.h"
-#include "mongo/util/net/client_async_message_port.h"
+#include "../util/net/async_client_message_port.h"
 
 namespace mongo {
 
@@ -30,20 +30,20 @@ MessagePipeline::~MessagePipeline() {
     _terminate = true;
 }
 
-void MessagePipeline::enqueueMessage(network::ClientAsyncMessagePort* conn) {
+void MessagePipeline::enqueueMessage(network::AsyncClientMessagePort* conn) {
     std::unique_lock<std::mutex> lock(_mutex);
     _newMessages.push(conn);
     _notifyNewMessages.notify_one();
 }
 
-network::ClientAsyncMessagePort* MessagePipeline::getNextSocketWithWaitingRequest() {
+network::AsyncClientMessagePort* MessagePipeline::getNextSocketWithWaitingRequest() {
     std::unique_lock<std::mutex> lock(_mutex);
     _notifyNewMessages.wait(lock, [this] {
         return _newMessages.size() || _terminate;
     });
     if (_terminate)
         return nullptr;
-    network::ClientAsyncMessagePort* result;
+    network::AsyncClientMessagePort* result;
     result = _newMessages.front();
     _newMessages.pop();
     return result;
@@ -55,7 +55,7 @@ MessagePipeline::MessageProcessor::MessageProcessor(MessagePipeline* const owner
 
 void MessagePipeline::MessageProcessor::run() {
     while (!inShutdown()) {
-        network::ClientAsyncMessagePort* port =
+        network::AsyncClientMessagePort* port =
                 _owner->getNextSocketWithWaitingRequest();
         if (port == nullptr)
             continue;

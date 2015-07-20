@@ -34,7 +34,10 @@
 
 #include "mongo/base/disallow_copying.h"
 
-
+/**
+ * TODO: better concurrency model
+ * Managers pointers to a resource
+ */
 template<typename T>
 class ThreadSafeQueue {
 public:

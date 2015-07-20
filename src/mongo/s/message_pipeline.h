@@ -46,8 +46,8 @@ public:
      * Iterate over the message runners for running currentOps and then the queues for "waiting" currentOps
      */
     std::unique_ptr<CurrentOp> currentOp();
-    void enqueueMessage(network::ClientAsyncMessagePort* conn) final;
-    network::ClientAsyncMessagePort* getNextSocketWithWaitingRequest();
+    void enqueueMessage(network::AsyncClientMessagePort* conn) final;
+    network::AsyncClientMessagePort* getNextSocketWithWaitingRequest();
 
 private:
     /*
@@ -67,7 +67,7 @@ private:
     //TODO: Get a better concurrency structure
     std::mutex _mutex;
     std::condition_variable _notifyNewMessages;
-    std::queue<network::ClientAsyncMessagePort*> _newMessages;
+    std::queue<network::AsyncClientMessagePort*> _newMessages;
     std::atomic<bool> _terminate { };
     std::vector<std::thread> _threads;
 };

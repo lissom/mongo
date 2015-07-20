@@ -9,11 +9,11 @@
 
 #include <memory>
 
+#include "../util/net/async_client_message_port.h"
 #include "mongo/s/commands/abstract_cmd_executor.h"
 #include "mongo/s/abstract_operation_executor.h"
 #include "mongo/db/commands.h"
 #include "mongo/util/factory.h"
-#include "mongo/util/net/client_async_message_port.h"
 
 namespace mongo {
 
@@ -28,7 +28,7 @@ namespace mongo {
 class ClientOperationExecutor final : public AbstractOperationExecutor {
 public:
     MONGO_DISALLOW_COPYING(ClientOperationExecutor);
-    ClientOperationExecutor(network::ClientAsyncMessagePort* const port);
+    ClientOperationExecutor(network::AsyncClientMessagePort* const port);
     ~ClientOperationExecutor();
 
     void run() override;
@@ -88,7 +88,7 @@ protected:
     BSONObj buildErrReply(const DBException& ex);
     void noSuchCommand(const std::string& commandName);
 
-    network::ClientAsyncMessagePort* const _port;
+    network::AsyncClientMessagePort* const _port;
     Client* const _client;
     Message _protocolMessage;
     DbMessage _dbMessage;

@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "mongo/util/net/client_async_message_port.h"
+#include "mongo/util/net/async_client_message_port.h"
 
 namespace mongo {
 namespace network {
@@ -19,15 +19,15 @@ namespace network {
  */
 //TODO: MONGO_ALIGN_TO_CACHE
 //TODO: Init function to create 1000 idle ports, maybe based on shards?
-class AsyncClientPool {
+class AsyncClientMessagePortPool {
 public:
-    MONGO_DISALLOW_COPYING(AsyncClientPool);
+    MONGO_DISALLOW_COPYING(AsyncClientMessagePortPool);
     //TODO: Remove std::function and replace with direct calls, type erase is expensive
     using MessageReadyHandler = std::function<void(AsyncMessagePort*)>;
-    AsyncClientPool(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
+    AsyncClientMessagePortPool(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
             _server(server), _messageReadyHandler(messageReadyHandler) {
     }
-    ~AsyncClientPool();
+    ~AsyncClientMessagePortPool();
 
     void newConnHandler(asio::ip::tcp::socket&& socket);
     // The port is connected starting
@@ -42,10 +42,6 @@ public:
     bool getCachedConn(AsyncMessagePort** port) {
         return _freeConns.pop(port);
     }
-    const ConnStats& getStats() const {
-        return _stats;
-    }
-
 
 private:
     using FreeQueue = ThreadSafeQueue<AsyncMessagePort*>;

@@ -10,23 +10,23 @@
 #include "mongo/db/client.h"
 #include "mongo/db/service_context.h"
 #include "mongo/util/log.h"
-#include "mongo/util/net/client_async_message_port.h"
+#include "async_client_message_port.h"
 
 namespace mongo {
 namespace network {
 
-ClientAsyncMessagePort::ClientAsyncMessagePort(AsyncClientPool* const owner,
+AsyncClientMessagePort::AsyncClientMessagePort(AsyncClientMessagePortPool* const owner,
 		asio::ip::tcp::socket socket) :
     	AsyncMessagePort(std::move(socket)), _owner(owner) {
 	rawInit();
 }
 
-void ClientAsyncMessagePort::initialize(asio::ip::tcp::socket&& socket) {
+void AsyncClientMessagePort::initialize(asio::ip::tcp::socket&& socket) {
 	AsyncMessagePort::initialize(std::move(socket));
 	rawInit();
 }
 
-void ClientAsyncMessagePort::rawInit() {
+void AsyncClientMessagePort::rawInit() {
 	try {
 		Client::initThread("conn", getGlobalServiceContext(), this);
 		setThreadName(getThreadName());
@@ -50,7 +50,7 @@ void ClientAsyncMessagePort::rawInit() {
 	asyncReceiveStart();
 }
 
-void ClientAsyncMessagePort::retire() {
+void AsyncClientMessagePort::retire() {
     fassert(-89, safeToDelete());
 	if (!serverGlobalParams.quiet) {
 		log() << "ended connection from " << socket().remote_endpoint() << std::endl;
@@ -59,7 +59,7 @@ void ClientAsyncMessagePort::retire() {
     AsyncMessagePort::retire();
 }
 
-void ClientAsyncMessagePort::asyncDoneReceievedMessage() {
+void AsyncClientMessagePort::asyncDoneReceievedMessage() {
     /*
      * This is the last possible place we check for the operation to be ready to run
      * TODO: Perf this and move this into the queue stage if real async needs it
@@ -79,24 +79,24 @@ void ClientAsyncMessagePort::asyncDoneReceievedMessage() {
     _owner->handlerOperationReady(this);
 }
 
-void ClientAsyncMessagePort::asyncDoneSendMessage() {
+void AsyncClientMessagePort::asyncDoneSendMessage() {
     asyncReceiveStart();
 }
 
-void ClientAsyncMessagePort::setOpRunner(std::unique_ptr<AbstractOperationExecutor> newOpRunner) {
+void AsyncClientMessagePort::setOpRunner(std::unique_ptr<AbstractOperationExecutor> newOpRunner) {
 	fassert(-84, state() == State::kOperation);
 	_runner = std::move(newOpRunner);
 }
 
-void ClientAsyncMessagePort::opRunnerComplete() {
+void AsyncClientMessagePort::opRunnerComplete() {
 	_runner.reset();
 }
 
-void ClientAsyncMessagePort::asyncErrorSend() {
+void AsyncClientMessagePort::asyncErrorSend() {
     _owner->handlerPortClosed(this);
 }
 
-void ClientAsyncMessagePort::asyncErrorReceive() {
+void AsyncClientMessagePort::asyncErrorReceive() {
     _owner->handlerPortClosed(this);
 }
 

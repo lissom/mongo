@@ -37,7 +37,7 @@ const std::string NETWORK_PREFIX = "conn";
 
 AsioAsyncServer::AsioAsyncServer(Options options, AbstractMessagePipeline* const pipeline) :
         _connections(
-                new AsyncClientPool(this,
+                new AsyncClientMessagePortPool(this,
                         [this](AsyncMessagePort* const port) {this->handlerMessageReady(port);})),
 						_pipeline(pipeline), _options(std::move(options)),
 						_timerThread([this] {updateTime();}) {
@@ -69,7 +69,7 @@ AsioAsyncServer::~AsioAsyncServer() {
 }
 
 void AsioAsyncServer::handlerMessageReady(AsyncMessagePort* port) {
-    _pipeline->enqueueMessage(checked_cast<network::ClientAsyncMessagePort*>(port));
+    _pipeline->enqueueMessage(checked_cast<network::AsyncClientMessagePort*>(port));
 }
 
 void AsioAsyncServer::startAllWaits() {
@@ -86,7 +86,7 @@ void AsioAsyncServer::startWait(Initiator* const initiator) {
         	AsyncMessagePort* port;
             if (!_connections->getCachedConn(&port))
             	//New AsyncMessagePorts take care of RAII on themselves
-            	(void)new ClientAsyncMessagePort(_connections.get(), std::move(initiator->_socket));
+            	(void)new AsyncClientMessagePort(_connections.get(), std::move(initiator->_socket));
             else
             	port->initialize(std::move(initiator->_socket));
         } else {

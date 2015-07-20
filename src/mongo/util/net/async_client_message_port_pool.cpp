@@ -5,16 +5,16 @@
  *      Author: charlie
  */
 
-#include "mongo/util/net/async_client_pool.h"
+#include "async_client_message_port_pool.h"
 
 namespace mongo {
 namespace network {
 
-void AsyncClientPool::handlerOperationReady(AsyncMessagePort* conn) {
+void AsyncClientMessagePortPool::handlerOperationReady(AsyncMessagePort* conn) {
     _messageReadyHandler(conn);
 }
 
-void AsyncClientPool::handlerPortClosed(AsyncMessagePort* port) {
+void AsyncClientMessagePortPool::handlerPortClosed(AsyncMessagePort* port) {
     _activeConns.erase(port);
     _freeConns.emplace(std::move(port));
 }

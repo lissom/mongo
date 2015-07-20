@@ -28,7 +28,7 @@
 namespace mongo {
 
 //TODO: Clean this up, pass a message frame
-ClientOperationExecutor::ClientOperationExecutor(network::ClientAsyncMessagePort* const port)
+ClientOperationExecutor::ClientOperationExecutor(network::AsyncClientMessagePort* const port)
     : _port(port),
       _client(port->client()),
       _protocolMessage(port->getBuffer(), false),

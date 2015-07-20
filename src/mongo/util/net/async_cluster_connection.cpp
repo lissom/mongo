@@ -5,16 +5,16 @@
  *      Author: charlie
  */
 
-#include "../../util/net/async_client_connection.h"
+#include "async_cluster_connection.h"
 
 namespace mongo {
 namespace network {
 
-AsyncClientConnection::AsyncClientConnection(asio::ip::tcp::socket socket):
+AsyncClusterConnection::AsyncClusterConnection(asio::ip::tcp::socket socket):
     AsyncMessagePort(std::move(socket)) {
 }
 
-AsyncClientConnection::~AsyncClientConnection() {
+AsyncClusterConnection::~AsyncClusterConnection() {
 }
 
 } /* namespace network */

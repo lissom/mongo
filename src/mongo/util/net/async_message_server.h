@@ -14,11 +14,11 @@
 #include <vector>
 #include <unordered_map>
 
+#include "async_client_message_port.h"
 #include "mongo/util/concurrency/unbounded_container.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/platform/platform_specific.h"
 #include "mongo/s/abstract_message_pipeline.h"
-#include "mongo/util/net/client_async_message_port.h"
 #include "mongo/util/net/message_server.h"
 #include "mongo/util/net/clock.h"
 
@@ -65,7 +65,7 @@ private:
     void updateTime();
 
     //Connections can outlive the server, no point presently
-    std::unique_ptr<AsyncClientPool> _connections;
+    std::unique_ptr<AsyncClientMessagePortPool> _connections;
     asio::io_service _ioService;
     //Holds the end points and currently waiting socket
     std::vector<boost::thread> _threads;
