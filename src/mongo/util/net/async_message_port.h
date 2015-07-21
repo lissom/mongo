@@ -211,11 +211,10 @@ private:
             asyncSocketError(state, ec);
             return false;
         }
-        /*
         if (lenGot != lenExpected) {
             asyncSizeError(state, desc, lenGot, lenExpected);
             return false;
-        }*/
+        }
         return true;
     }
     void asyncSizeError(const char* state, const char* desc, const size_t lenGot,

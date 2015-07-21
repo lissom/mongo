@@ -60,9 +60,13 @@ void AsyncClientMessagePort::retire() {
 
 void AsyncClientMessagePort::asyncDoneReceievedMessage() {
     _clientWaitFails = 0;
+    checkMessageReady();
+}
+
+void AsyncClientMessagePort::checkMessageReady() {
     /*
      * This is the last possible place we check for the operation to be ready to run
-     * TODO: Perf this and move this into the queue stage if real async needs it
+     * TODO: Perf this and move this into the queue stage
      */
     if (!readyToRun()) {
         //TODO: Set this to log level one after testing is over and only record once
@@ -72,10 +76,10 @@ void AsyncClientMessagePort::asyncDoneReceievedMessage() {
         socket().get_io_service().post([this] {
             asyncDoneReceievedMessage();
         });
-       return;
+        return;
     }
     if (_clientWaitFails != 0)
-        log() << "Client returned: " << _clientWaitFails<< std::endl;
+        log() << "Client returned: " << _clientWaitFails << std::endl;
     _owner->handlerOperationReady(this);
 }
 

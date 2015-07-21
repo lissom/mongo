@@ -297,8 +297,6 @@ printjson(admin.runCommand({moveChunk : collSh + "",
                             _waitForDelete: true}));
 
 
-jsTest.log("222222222222222222222")
-
 assert.writeOK(staleCollSh.insert(inserts));
 
 //
@@ -339,7 +337,6 @@ printjson(admin.runCommand({moveChunk : collSh + "",
                             to : shards[0]._id,
                             _waitForDelete: true}));
 
-jsTest.log("xxxxxxxxxxxx1")
 assert.writeOK(staleCollSh.insert(inserts));
 
 st.stop()

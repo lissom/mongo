@@ -96,10 +96,13 @@ void AsyncMessagePort::asyncReceiveMessageContinue() {
         [this](const std::error_code& ec, const size_t len) {
             bytesIn(len);
             _TotalMessageBytesReceived += len;
-            if (_TotalMessageBytesReceived != _TotalMessageBytes) {
-                asyncReceiveMessageContinue();
+            // Continue until we we don't get bytes or we've got all the bytes
+            // TODO: Look into timeouts
+            if (_TotalMessageBytesReceived != _TotalMessageBytes && len) {
+                return asyncReceiveMessageContinue();
             }
-            if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen() - HEADERSIZE))
+            if (!asyncStatusCheck("receive", "message body", ec, _TotalMessageBytesReceived,
+            		_TotalMessageBytes))
                 return onReceiveError();
             setState(State::kOperation);
             asyncDoneReceievedMessage();

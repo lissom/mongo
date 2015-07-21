@@ -62,6 +62,7 @@ private:
     void rawInit();
     void asyncDoneReceievedMessage() override;
     void asyncDoneSendMessage() override;
+    void checkMessageReady();
 
     AsyncClientMessagePortPool* const _owner;
     PersistantState _persistantState;

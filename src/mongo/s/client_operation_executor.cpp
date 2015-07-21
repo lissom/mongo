@@ -169,7 +169,7 @@ void ClientOperationExecutor::processCommand() {
             if (!_command)
                 return;
 
-            if (_executor.get()) {
+            if (false) {//_executor.get()) {
                 _executor->run();
             } else {
                 runCommand();
