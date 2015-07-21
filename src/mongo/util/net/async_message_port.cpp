@@ -111,8 +111,9 @@ void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code
     setState(State::kError);
 }
 
-void AsyncMessagePort::asyncStartSend(void* data, size_t size) {
-
+//Function currently doesn't do anything, but want to keep outside callers seperate from internal
+void AsyncMessagePort::asyncStartSend(void* buff, size_t size) {
+    asyncSendMessage(buff, size);
 }
 
 void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {

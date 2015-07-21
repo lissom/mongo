@@ -109,7 +109,6 @@ void AsioAsyncServer::serviceRun() {
         _ioService.run(ec);
         if (ec) {
             log() << "Error running service: " << ec << std::endl;
-            fassert(-102, !ec);
         }
     } catch (std::exception& e) {
         log() << "Exception running io_service: " << e.what() << std::endl;

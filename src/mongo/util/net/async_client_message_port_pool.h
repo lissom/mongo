@@ -22,7 +22,7 @@ namespace network {
 class AsyncClientMessagePortPool {
 public:
     MONGO_DISALLOW_COPYING(AsyncClientMessagePortPool);
-    //TODO: Remove std::function and replace with direct calls, type erase is expensive
+    //TODO: Remove std::function and replace with direct calls, type erase is too expensive
     using MessageReadyHandler = std::function<void(AsyncMessagePort*)>;
     AsyncClientMessagePortPool(AsioAsyncServer* const server, MessageReadyHandler messageReadyHandler) :
             _server(server), _messageReadyHandler(messageReadyHandler) {

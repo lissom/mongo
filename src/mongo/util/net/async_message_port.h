@@ -83,6 +83,7 @@ public:
         kInit, kWait, kReceieve, kSend, kOperation, kError, kComplete
     };
 
+    AsyncMessagePort(asio::io_service* ioService) : _socket(*ioService), _buf(0) { }
     AsyncMessagePort(asio::ip::tcp::socket&& socket);
     virtual ~AsyncMessagePort();
     /*
@@ -126,7 +127,7 @@ public:
     //Preferred functions to use
     void asyncReceiveStart();
     void asyncSendStart(Message& toSend, MSGID responseTo);
-    void asyncStartSend(void* data, size_t size);
+    void asyncStartSend(void* buff, size_t size);
 
     bool stateGood() {
         return isValid(state());
@@ -173,9 +174,9 @@ protected:
     virtual void asyncErrorSend() = 0;
     //Last function called on error before unwind
     virtual void asyncErrorReceive() = 0;
-    void complete() { setState(State::kComplete); }
     //Used when returning the connection the pool for instance
     void wait() { setState(State::kWait); }
+    void complete() { setState(State::kComplete); }
     const asio::ip::tcp::socket& socket() const { return _socket; }
     asio::ip::tcp::socket& socket() { return _socket; }
 
@@ -218,8 +219,6 @@ private:
     void asyncSizeError(const char* state, const char* desc, const size_t lenGot,
             const size_t lenExpected);
     void asyncSocketError(const char* state, const std::error_code ec);
-    //Deletes this, there must be no re-entry into the class after calling asyncSocketShutdownRemove
-    void asyncSocketShutdownRemove();
     void onReceiveError() {
         setState(State::kError);
         asyncErrorReceive();

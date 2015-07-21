@@ -68,7 +68,7 @@ private:
     std::unique_ptr<AsyncClientMessagePortPool> _connections;
     asio::io_service _ioService;
     //Holds the end points and currently waiting socket
-    std::vector<boost::thread> _threads;
+    std::vector<std::thread> _threads;
     AbstractMessagePipeline* const _pipeline;
     std::vector<Initiator> _endPoints;
     //Options should be last, they are very cold

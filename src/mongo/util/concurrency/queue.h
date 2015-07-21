@@ -57,9 +57,11 @@ public:
 	}
 
 	//Remove the pointer, a raw pointer is enough
-	void emplace(T&& t) {
+	template <typename... Args>
+	void emplace(Args... args) {
+	    //TODO: Construct outside of the lock?
 		std::unique_lock<std::mutex> lock(_mutex);
-		_queue.emplace(t);
+		_queue.emplace(args...);
 	}
 
 	void swap(Container* other) {

@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "../../s/abstract_operation_executor.h"
+#include "mongo/s/abstract_operation_executor.h"
 #include "async_client_message_port_pool.h"
 #include "mongo/util/net/async_message_port.h"
 
