@@ -15,6 +15,7 @@
 namespace mongo {
 namespace network {
 
+//TODO: change the buffer in async message port to void* so we don't have to copy
 class AsyncClusterConnection: public AsyncMessagePort {
 public:
     AsyncClusterConnection(asio::ip::tcp::socket socket);

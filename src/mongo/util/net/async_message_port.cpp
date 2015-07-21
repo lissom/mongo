@@ -111,6 +111,10 @@ void AsyncMessagePort::asyncSocketError(const char* state, const std::error_code
     setState(State::kError);
 }
 
+void AsyncMessagePort::asyncStartSend(void* data, size_t size) {
+
+}
+
 void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {
     fassert(-3, toSend.buf() != 0);
     //TODO: get rid of nextMessageId, it's a global atomic, crypto seq. per message thread?
@@ -124,15 +128,14 @@ void AsyncMessagePort::asyncSendStart(Message& toSend, MSGID responseToMsgId) {
 		memcpy(_buf.data(), toSend.singleData().view2ptr(), size);
     }
     //No more interaction with the message is required at this point
-    asyncSendMessage();
+    asyncSendMessage(_buf.data(), getMsgData().getLen());
 }
 
-void AsyncMessagePort::asyncSendMessage() {
+void AsyncMessagePort::asyncSendMessage(void* buff, size_t msgSize) {
 	fassert(-4, state() != State::kError && state() != State::kComplete);
 	setState(State::kSend);
-    MessageSize msgSize = getMsgData().getLen();
     fassert(-5, validMsgSize(msgSize));
-    _socket.async_send(asio::buffer(_buf.data(), msgSize),
+    _socket.async_send(asio::buffer(buff, msgSize),
             [this, msgSize] (const std::error_code& ec, const size_t len) {
                 if (!asyncStatusCheck("send", "message body", ec, len, msgSize))
                     return onSendError();

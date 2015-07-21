@@ -44,7 +44,7 @@ env.Library(
         "async_client_message_port.cpp",
 	"async_client_message_port_pool.cpp",
 	"async_cluster_connection.cpp",
-	"async_cluster_connection_pool.cpp",
+	"async_cluster_end_point_pool.cpp",
         "async_message_server.cpp",
         "async_message_port.cpp",
         "clock.cpp",

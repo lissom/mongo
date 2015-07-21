@@ -126,6 +126,7 @@ public:
     //Preferred functions to use
     void asyncReceiveStart();
     void asyncSendStart(Message& toSend, MSGID responseTo);
+    void asyncStartSend(void* data, size_t size);
 
     bool stateGood() {
         return isValid(state());
@@ -198,7 +199,7 @@ private:
     void rawInit();
 
     //Send start assumes a synchronous sender that needs to be detached from
-    void asyncSendMessage();
+    void asyncSendMessage(void* buff, size_t msgSize);
 
     void asyncReceiveHeader();
     void asyncReceiveMessage();

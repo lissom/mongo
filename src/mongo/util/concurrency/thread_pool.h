@@ -81,6 +81,13 @@ public:
         // If the pool has had at least one idle thread for this much time, it may consider reaping
         // a thread.
         Milliseconds maxIdleThreadAge = Seconds{30};
+
+        Options() { }
+        Options(const std::string& poolName__, const std::string& threadNamePrefix__,
+                const size_t minThreads__, const size_t maxThreads__,
+                const Milliseconds maxIdleThreadAge__ = Seconds{30}) : poolName(poolName__),
+                        threadNamePrefix(threadNamePrefix__), minThreads(minThreads__),
+                        maxThreads(maxThreads__), maxIdleThreadAge(maxIdleThreadAge__){ }
     };
 
     /**
