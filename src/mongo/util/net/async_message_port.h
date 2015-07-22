@@ -204,16 +204,18 @@ private:
 
     void asyncReceiveHeader();
     void asyncReceiveMessage();
+    void asyncReceiveMessageContinue();
     inline bool asyncStatusCheck(const char* state, const char* desc, const std::error_code ec,
             const size_t lenGot, const size_t lenExpected) {
         if (ec) {
             asyncSocketError(state, ec);
             return false;
         }
+        /*
         if (lenGot != lenExpected) {
             asyncSizeError(state, desc, lenGot, lenExpected);
             return false;
-        }
+        }*/
         return true;
     }
     void asyncSizeError(const char* state, const char* desc, const size_t lenGot,
@@ -258,6 +260,8 @@ private:
     // TODO: Loglevel 5 print timing for the message
     Timer _networkMessageTimer;
     std::string _threadName;
+    size_t _TotalMessageBytesReceived{};
+    size_t _TotalMessageBytes{};
 };
 
 } //namespace mongo

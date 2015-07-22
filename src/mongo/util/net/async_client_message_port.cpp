@@ -59,13 +59,14 @@ void AsyncClientMessagePort::retire() {
 }
 
 void AsyncClientMessagePort::asyncDoneReceievedMessage() {
+    _clientWaitFails = 0;
     /*
      * This is the last possible place we check for the operation to be ready to run
      * TODO: Perf this and move this into the queue stage if real async needs it
      */
     if (!readyToRun()) {
-        //TODO: Set this to log level one after testing is over
-        if (_clientWaitFails == 0)
+        //TODO: Set this to log level one after testing is over and only record once
+        if (++_clientWaitFails == 1)
             log() << "Long wait for client to be returned" << std::endl;
         // Post is used instead of dispatch so the loop wait yields (dispatch would spin)
         socket().get_io_service().post([this] {
@@ -74,7 +75,7 @@ void AsyncClientMessagePort::asyncDoneReceievedMessage() {
        return;
     }
     if (_clientWaitFails != 0)
-        log() << "Client returned" << std::endl;
+        log() << "Client returned: " << _clientWaitFails<< std::endl;
     _owner->handlerOperationReady(this);
 }
 

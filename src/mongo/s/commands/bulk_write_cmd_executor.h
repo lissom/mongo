@@ -36,6 +36,7 @@ protected:
 	void buildBatchError(ErrorCodes::Error error);
 	void toBatchError(const Status& status);
 	void processResults();
+	void splitIfNeeded(const NamespaceString& nss, const TargeterStats& stats);
 
 private:
     BatchedCommandRequest _originalRequest;

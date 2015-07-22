@@ -44,7 +44,7 @@ public:
     }
     void restoreClientState() {
         restoreThreadName();
-        fassert(668, _persistantState.get());
+        fassert(-668, _persistantState.get());
         persist::setClient(std::move(_persistantState));
         //Set the mongo thread name, not the setThreadName function here
     }

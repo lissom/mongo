@@ -70,34 +70,45 @@ void AsyncMessagePort::asyncReceiveHeader() {
                 if (!asyncStatusCheck("receive", "message header", ec, len, HEADERSIZE))
                     return onReceiveError();
                 //Start the timer as soon as we get a good header so everything is captured
+                _networkMessageTimer.reset();
+                _TotalMessageBytesReceived = len;
                 asyncReceiveMessage();
             });
 }
 
 void AsyncMessagePort::asyncReceiveMessage() {
-    const auto msgSize = getMsgData().getLen();
-    //Forcing into the nearest 1024 size block.  Assuming this was to always hit a tcmalloc size?
-    _buf.resize((msgSize + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
+    _TotalMessageBytes = getMsgData().getLen();
     //Message size may be -1 to check endian, not sure if this is currently supported though
-    if (!validMsgSize(msgSize)) {
-        log() << "Error during receive: Got an invalid message length in the header(" << msgSize
+    if (!validMsgSize(_TotalMessageBytes)) {
+        log() << "Error during receive: Got an invalid message length in the header(" << _TotalMessageBytes
                 << ")" << ". From: " << remoteAddr() << std::endl;
         //TODO: Should we return an error on the socket to the client?
         onReceiveError();
     }
-    _socket.async_receive(asio::buffer(_buf.data() + HEADERSIZE, msgSize - HEADERSIZE),
-            [this](const std::error_code& ec, const size_t len) {
-                bytesIn(len);
-                if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen() - HEADERSIZE))
-                    return onReceiveError();
-                setState(State::kOperation);
-                asyncDoneReceievedMessage();
-            });
+    //Forcing into the nearest 1024 size block.  Assuming this was to always hit a tcmalloc size?
+    _buf.resize((_TotalMessageBytes + NETWORK_MIN_MESSAGE_SIZE - 1) & 0xfffffc00);
+    asyncReceiveMessageContinue();
+}
+
+void AsyncMessagePort::asyncReceiveMessageContinue() {
+    _socket.async_receive(asio::buffer(_buf.data() + _TotalMessageBytesReceived,
+            _TotalMessageBytes - _TotalMessageBytesReceived),
+        [this](const std::error_code& ec, const size_t len) {
+            bytesIn(len);
+            _TotalMessageBytesReceived += len;
+            if (_TotalMessageBytesReceived != _TotalMessageBytes) {
+                asyncReceiveMessageContinue();
+            }
+            if (!asyncStatusCheck("receive", "message body", ec, len, getMsgData().getLen() - HEADERSIZE))
+                return onReceiveError();
+            setState(State::kOperation);
+            asyncDoneReceievedMessage();
+        });
 }
 
 void AsyncMessagePort::asyncSizeError(const char* state, const char* desc, const size_t lenGot,
         const size_t lenExpected) {
-    log() << "Error during " << state << ": " << desc << " size expected( " << lenExpected
+    log() << "Error during " << state << ": " << desc << " size expected(" << lenExpected
             << ") was not received" << ". Length: " << lenGot << ". Remote: " << remoteAddr()
             << std::endl;
     setState(State::kError);

@@ -296,6 +296,9 @@ printjson(admin.runCommand({moveChunk : collSh + "",
                             to : shards[0]._id,
                             _waitForDelete: true}));
 
+
+jsTest.log("222222222222222222222")
+
 assert.writeOK(staleCollSh.insert(inserts));
 
 //
@@ -325,6 +328,7 @@ var inserts = [{ukey : 1,
 
 staleCollSh = staleMongos.getCollection(collSh + "");
 
+
 staleCollSh.findOne();
 printjson(admin.runCommand({moveChunk : collSh + "",
                             find : {ukey : 0},
@@ -335,6 +339,7 @@ printjson(admin.runCommand({moveChunk : collSh + "",
                             to : shards[0]._id,
                             _waitForDelete: true}));
 
+jsTest.log("xxxxxxxxxxxx1")
 assert.writeOK(staleCollSh.insert(inserts));
 
 st.stop()

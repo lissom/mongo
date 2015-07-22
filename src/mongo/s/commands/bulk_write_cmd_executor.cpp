@@ -10,11 +10,15 @@
 #include "mongo/db/lasterror.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/s/dbclient_shard_resolver.h"
+#include "mongo/s/catalog/catalog_cache.h"
 #include "mongo/s/catalog/catalog_manager.h"
+#include "mongo/s/chunk.h"
+#include "mongo/s/chunk_manager.h"
 #include "mongo/s/client/dbclient_multi_command.h"
+#include "mongo/s/cluster_last_error_info.h"
 #include "mongo/s/commands/bulk_write_cmd_executor.h"
 #include "mongo/s/commands/command_identifiers.h"
-#include "mongo/s/cluster_last_error_info.h"
+#include "mongo/s/config.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/write_ops/batch_upconvert.h"
 #include "mongo/s/write_ops/batch_write_exec.h"
@@ -95,15 +99,14 @@ void BulkWriteCmdExecutor::initialize() {
             BatchWriteExec exec(&targeter, &resolver, &dispatcher);
             exec.executeBatch(*_request, &_response);
 
-            /* TODO: Figure out where to do splits. Are these even still on mongoS?
-            if (_autoSplit) {
-                splitIfNeeded(request.getNS(), *targeter.getStats());
+            if (Chunk::ShouldAutoSplit) {
+                splitIfNeeded(nss, *targeter.getStats());
             }
-            */
 
             _stats.setShardStats(exec.releaseStats());
         }
     }
+    processResults();
 }
 
 void BulkWriteCmdExecutor::processResults() {
@@ -148,6 +151,40 @@ void BulkWriteCmdExecutor::processResults() {
     _owner->asyncNotifyResultsReady();
     _state.setState(AsyncState::State::kComplete);
 }
+
+void BulkWriteCmdExecutor::splitIfNeeded(const NamespaceString& nss, const TargeterStats& stats) {
+    auto status = grid.catalogCache()->getDatabase(nss.db().toString());
+    if (!status.isOK()) {
+        warning() << "failed to get database config for " << nss
+                  << " while checking for auto-split: " << status.getStatus();
+        return;
+    }
+
+    std::shared_ptr<DBConfig> config = status.getValue();
+
+    ChunkManagerPtr chunkManager;
+    ShardPtr dummyShard;
+    config->getChunkManagerOrPrimary(nss.ns(), chunkManager, dummyShard);
+
+    if (!chunkManager) {
+        return;
+    }
+
+    for (std::map<BSONObj, int>::const_iterator it = stats.chunkSizeDelta.begin();
+         it != stats.chunkSizeDelta.end();
+         ++it) {
+        ChunkPtr chunk;
+        try {
+            chunk = chunkManager->findIntersectingChunk(it->first);
+        } catch (const AssertionException& ex) {
+            warning() << "could not find chunk while checking for auto-split: " << causedBy(ex);
+            return;
+        }
+
+        chunk->splitIfShould(it->second);
+    }
+}
+
 
 void BulkWriteCmdExecutor::toBatchError(const Status& status) {
     _response.clear();

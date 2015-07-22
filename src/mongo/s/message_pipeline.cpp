@@ -60,11 +60,6 @@ void MessagePipeline::MessageProcessor::run() {
         if (port == nullptr)
             continue;
 
-        Message message(port->getBuffer(), false);
-        DbMessage dbMessage(message);
-        dbMessage.markSet();
-        NamespaceString nss(dbMessage.getns());
-
         if (!port->client()) {
             port->restoreThreadName();
             fassert(-37, port->client());
