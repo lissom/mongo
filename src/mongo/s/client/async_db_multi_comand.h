@@ -9,7 +9,7 @@
 
 #include <atomic>
 
-#include "multi_command_dispatch.h"
+#include "mongo/s/client/multi_command_dispatch.h"
 
 namespace mongo {
 

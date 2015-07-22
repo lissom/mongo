@@ -99,6 +99,7 @@ void BulkWriteCmdExecutor::initialize() {
             BatchWriteExec exec(&targeter, &resolver, &dispatcher);
             exec.executeBatch(*_request, &_response);
 
+            //TODO: Still needed or mongoD?  Move to after results are returned, interacts with stats after this line if moved?
             if (Chunk::ShouldAutoSplit) {
                 splitIfNeeded(nss, *targeter.getStats());
             }
@@ -109,7 +110,7 @@ void BulkWriteCmdExecutor::initialize() {
     processResults();
 }
 
-void BulkWriteCmdExecutor::processResults() {
+void BulkWriteCmdExecutor::finalize() {
     dassert(_response.isValid(NULL));
 
     LastError* cmdLastError = &LastError::get(client());

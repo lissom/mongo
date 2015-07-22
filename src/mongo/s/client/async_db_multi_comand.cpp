@@ -5,7 +5,8 @@
  *      Author: charlie
  */
 
-#include "async_db_multi_comand.h"
+#include "mongo/s/client/async_db_multi_comand.h"
+#include "mongo/util/net/async_cluster_end_point_pool.h"
 
 namespace mongo {
 
@@ -18,7 +19,10 @@ AsyncDBMultiComand::~AsyncDBMultiComand() {
 void AsyncDBMultiComand::addCommand(const ConnectionString& endpoint,
                     StringData dbName,
                     const BSONObj& request) {
+    auto outPool = network::clusterEndPointPool;
 
+    AsyncData asyncData(endPoint);
+    outPool->asyncSendData();
 }
 
 

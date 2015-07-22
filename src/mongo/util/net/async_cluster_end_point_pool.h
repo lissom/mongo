@@ -72,5 +72,8 @@ private:
     std::vector<std::thread> _threads;
 };
 
+// Lifetime is not managed, need to figure out what it should be
+extern AsyncClusterEndPointPool* clusterEndPointPool;
+
 } /* namespace network */
 } /* namespace mongo */

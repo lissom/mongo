@@ -50,7 +50,7 @@ public:
     virtual ~AbstractCmdExecutor() {
     }
 
-    bool complete() {
+    bool hasResults() {
         return _state == AsyncState::State::kComplete || _state == AsyncState::State::kResultsReady;
     }
 
@@ -59,8 +59,14 @@ public:
      */
     void run();
 
+    /*
+     * Callback for async
+     */
+    void processResults() { finalize(); }
+
 protected:
     virtual void initialize() = 0;
+    virtual void finalize() = 0;
     Client* client() { return _operationCtx->getClient(); }
 
     FastSyncBSONObjPtr _results;

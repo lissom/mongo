@@ -26,19 +26,22 @@ public:
 		return _writeType;
 	}
 
-	void initialize() final;
-
 protected:
+
+	void initialize() final;
 	/*
 	 * These functions mirror the legacy implementation
 	 * TODO: Clean up
 	 */
 	void buildBatchError(ErrorCodes::Error error);
 	void toBatchError(const Status& status);
-	void processResults();
+	void finalize() final;
 	void splitIfNeeded(const NamespaceString& nss, const TargeterStats& stats);
 
 private:
+	//std::unique_ptr<NSTargeter> targeter;
+	//std::unique_ptr<ShardResolver> dispatcher;
+
     BatchedCommandRequest _originalRequest;
     BatchedCommandRequest* _request{};
 	BatchedCommandResponse _response;

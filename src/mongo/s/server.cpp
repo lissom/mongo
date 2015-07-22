@@ -75,8 +75,9 @@
 #include "mongo/util/exception_filter_win32.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
-#include "mongo/util/net/message.h"
+#include "mongo/util/net/async_cluster_end_point_pool.h"
 #include "mongo/util/net/async_message_server.h"
+#include "mongo/util/net/message.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/ntservice.h"
 #include "mongo/util/options_parser/startup_options.h"
@@ -181,6 +182,8 @@ void start(const MessageServer::Options& opts) {
 
     //ShardedMessageHandler handler;
     //MessageServer* server = mongo::createServer(opts, &handler);
+    network::clusterEndPointPool = new network::AsyncClusterEndPointPool(
+            std::thread::hardware_concurrency());
     MessagePipeline pipeline(std::thread::hardware_concurrency() * 2);
     MessageServer* server = new network::AsioAsyncServer(opts, &pipeline);
     server->setAsTimeTracker();

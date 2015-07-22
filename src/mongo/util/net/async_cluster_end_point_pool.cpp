@@ -14,6 +14,8 @@
 namespace mongo {
 namespace network {
 
+AsyncClusterEndPointPool* clusterEndPointPool;
+
 AsyncClusterEndPointPool::AsyncClusterEndPointPool(const size_t threads) :
     _lock("AsyncClusterEndPointPool") {
     startThreads(threads);
