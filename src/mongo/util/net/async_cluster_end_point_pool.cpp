@@ -5,9 +5,11 @@
  *      Author: charlie
  */
 
-#include "mongo/util/net/async_cluster_end_point_pool.h"
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
 
 #include "mongo/util/concurrency/thread_pool.h"
+#include "mongo/util/net/async_cluster_end_point_pool.h"
+#include "mongo/util/log.h"
 
 namespace mongo {
 namespace network {

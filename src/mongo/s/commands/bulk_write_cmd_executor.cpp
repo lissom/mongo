@@ -9,10 +9,16 @@
 
 #include "mongo/db/lasterror.h"
 #include "mongo/db/stats/counters.h"
+#include "mongo/s/dbclient_shard_resolver.h"
+#include "mongo/s/catalog/catalog_manager.h"
+#include "mongo/s/client/dbclient_multi_command.h"
 #include "mongo/s/commands/bulk_write_cmd_executor.h"
 #include "mongo/s/commands/command_identifiers.h"
 #include "mongo/s/cluster_last_error_info.h"
+#include "mongo/s/grid.h"
 #include "mongo/s/write_ops/batch_upconvert.h"
+#include "mongo/s/write_ops/batch_write_exec.h"
+#include "mongo/util/log.h"
 
 
 namespace mongo {
@@ -29,12 +35,74 @@ void BulkWriteCmdExecutor::initialize() {
         LastError::Disabled disableLastError(cmdLastError);
 
         // TODO: if we do namespace parsing, push this to the type
-        if (!_request->parseBSON(_dbName, *_cmdObjBson, _errorMsg) ||
-            !_request->isValid(_errorMsg)) {
+        if (!_originalRequest.parseBSON(_dbName, *_cmdObjBson, _errorMsg) ||
+            !_originalRequest.isValid(_errorMsg)) {
             return buildBatchError(ErrorCodes::FailedToParse);
         }
-        //_writer.write(_request, &_response);
 
+        std::unique_ptr<BatchedCommandRequest> idRequest(BatchedCommandRequest::cloneWithIds(
+                _originalRequest));
+        _request = (nullptr != idRequest.get()) ? idRequest.get() : &_originalRequest;
+
+        const NamespaceString& nss = _request->getNS();
+        if (!nss.isValid()) {
+            toBatchError(Status(ErrorCodes::InvalidNamespace, nss.ns() + " is not a valid namespace"));
+            return;
+        }
+
+        if (!NamespaceString::validCollectionName(nss.coll())) {
+            toBatchError(
+                Status(ErrorCodes::BadValue, str::stream() << "invalid collection name " << nss.coll()));
+            return;
+        }
+
+        if (_request->sizeWriteOps() == 0u) {
+            toBatchError(Status(ErrorCodes::InvalidLength, "no write ops were included in the batch"));
+            return;
+        }
+
+        if (_request->sizeWriteOps() > BatchedCommandRequest::kMaxWriteBatchSize) {
+            toBatchError(Status(ErrorCodes::InvalidLength,
+                                str::stream() << "exceeded maximum write batch size of "
+                                              << BatchedCommandRequest::kMaxWriteBatchSize));
+            return;
+        }
+
+        std::string errMsg;
+        if (_request->isInsertIndexRequest() && !_request->isValidIndexRequest(&errMsg)) {
+            toBatchError(Status(ErrorCodes::InvalidOptions, errMsg));
+            return;
+        }
+
+        // Config writes and shard writes are done differently
+        const std::string dbName = nss.db().toString();
+
+        if (dbName == "config" || dbName == "admin") {
+            grid.catalogManager()->writeConfigServerDirect(*_request, &_response);
+        } else {
+            ChunkManagerTargeter targeter(_request->getTargetingNSS());
+            Status targetInitStatus = targeter.init();
+
+            if (!targetInitStatus.isOK()) {
+                // Errors will be reported in response if we are unable to target
+                warning() << "could not initialize targeter for"
+                          << (_request->isInsertIndexRequest() ? " index" : "")
+                          << " write op in collection " << _request->getTargetingNS();
+            }
+
+            DBClientShardResolver resolver;
+            DBClientMultiCommand dispatcher;
+            BatchWriteExec exec(&targeter, &resolver, &dispatcher);
+            exec.executeBatch(*_request, &_response);
+
+            /* TODO: Figure out where to do splits. Are these even still on mongoS?
+            if (_autoSplit) {
+                splitIfNeeded(request.getNS(), *targeter.getStats());
+            }
+            */
+
+            _stats.setShardStats(exec.releaseStats());
+        }
     }
 }
 
@@ -79,6 +147,14 @@ void BulkWriteCmdExecutor::processResults() {
     _result->appendElements(_response.toBSON());
     _owner->asyncNotifyResultsReady();
     _state.setState(AsyncState::State::kComplete);
+}
+
+void BulkWriteCmdExecutor::toBatchError(const Status& status) {
+    _response.clear();
+    _response.setErrCode(status.code());
+    _response.setErrMessage(status.reason());
+    _response.setOk(false);
+    dassert(_response.isValid(nullptr));
 }
 
 void BulkWriteCmdExecutor::buildBatchError(ErrorCodes::Error error) {

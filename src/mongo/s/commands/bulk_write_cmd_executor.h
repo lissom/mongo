@@ -29,6 +29,10 @@ public:
 	void initialize() final;
 
 protected:
+	/*
+	 * These functions mirror the legacy implementation
+	 * TODO: Clean up
+	 */
 	void buildBatchError(ErrorCodes::Error error);
 	void toBatchError(const Status& status);
 	void processResults();

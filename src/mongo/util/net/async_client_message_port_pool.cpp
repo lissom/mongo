@@ -16,6 +16,7 @@ void AsyncClientMessagePortPool::handlerOperationReady(AsyncMessagePort* conn) {
 
 void AsyncClientMessagePortPool::handlerPortClosed(AsyncMessagePort* port) {
     _activeConns.erase(port);
+    port->retire();
     _freeConns.emplace(std::move(port));
 }
 

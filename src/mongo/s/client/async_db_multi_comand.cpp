@@ -15,4 +15,15 @@ AsyncDBMultiComand::AsyncDBMultiComand() {
 AsyncDBMultiComand::~AsyncDBMultiComand() {
 }
 
+void AsyncDBMultiComand::addCommand(const ConnectionString& endpoint,
+                    StringData dbName,
+                    const BSONObj& request) {
+
+}
+
+
+Status AsyncDBMultiComand::recvAny(ConnectionString* endpoint, BSONSerializable* response) {
+
+}
+
 } /* namespace mongo */
